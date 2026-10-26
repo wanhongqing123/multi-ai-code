@@ -87,7 +87,8 @@ function attachWebSocket(server, service, authorize = async () => null) {
       const result = await call('GET', '/v1/session-sync/sessions');
       if (socket.readyState !== WebSocket.OPEN) return;
       if (result.statusCode !== 200) { socket.close(1008, 'Account session expired'); return; }
-      send(socket, { type: 'catalog', sessions: result.body.sessions });
+      send(socket, { type: 'catalog', sessions: result.body.sessions,
+        devices: result.body.devices });
     }
     async function pushInbox() {
       if (!announced) return;
@@ -142,7 +143,8 @@ function attachWebSocket(server, service, authorize = async () => null) {
         const id = frame?.id;
         const op = frame?.op;
         if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) ||
-            !['presence', 'catalog', 'send', 'ack', 'reauth'].includes(op) ||
+            !['presence', 'catalog', 'send', 'ack', 'publish', 'history',
+              'room-delete', 'reauth'].includes(op) ||
             !frame.body || typeof frame.body !== 'object' || Array.isArray(frame.body)) {
           socket.close(1008, 'Invalid device request');
           return;
@@ -175,8 +177,10 @@ function attachWebSocket(server, service, authorize = async () => null) {
             body: { error: 'Device presence is required' } });
           return;
         }
-        const method = op === 'catalog' ? 'GET' : 'POST';
-        const path = `/v1/session-sync/${op === 'catalog' ? 'sessions' : op}`;
+        const method = op === 'catalog' || op === 'history' ? 'GET' : 'POST';
+        const path = op === 'history'
+          ? `/v1/session-sync/history?${new URLSearchParams(frame.body)}`
+          : `/v1/session-sync/${op === 'catalog' ? 'sessions' : op}`;
         const result = await call(method, path, frame.body);
         send(socket, { type: 'response', id, status: result.statusCode, body: result.body });
         if (op === 'presence' && result.statusCode === 200) {

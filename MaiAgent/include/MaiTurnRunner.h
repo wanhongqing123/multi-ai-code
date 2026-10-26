@@ -3,6 +3,7 @@
 #pragma once
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -43,7 +44,10 @@ public:
         MaiQuestionGate* questions = nullptr;
         // 可以为空：那样子 Agent 那组工具会明说「这儿起不了」。
         MaiSubAgentHost* subAgents = nullptr;
+        MaiAgent* sessionAgent = nullptr;
         std::string defaultModel;
+        std::string reasoningEffort;
+        std::function<std::string()> reasoningEffortProvider;
         std::string baseInstructions;
         // 一条临时子 Agent 回复，不保存为用户消息，也不直接显示在界面上。
         std::string specialistReply;

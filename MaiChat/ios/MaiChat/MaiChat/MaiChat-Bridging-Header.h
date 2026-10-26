@@ -11,4 +11,8 @@
 #include "Media/MaiFfplayIosBridge.h"
 #include "IM/MaiChatAuthTransport.h"
 #include "IM/MaiChatHttpTransport.h"
+#include "../../../Network/MaiCurlDownload.h"
+#include "../../../Network/MaiVideoCircleClient.h"
+#include "../../../Network/MaiCloudDriveClient.h"
+#include "../../../Media/MaiVideoCircleMark.h"
 #include "../../../SessionSync/MaiSessionSyncC.h"

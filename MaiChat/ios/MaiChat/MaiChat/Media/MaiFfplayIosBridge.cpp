@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <thread>
 
@@ -19,6 +20,7 @@ struct MaiFfplayIosSession {
     int64_t startPositionUs = 0;
     MaiFfplayHost host{};
     std::thread worker;
+    std::atomic<bool> stopRequested{false};
     std::atomic<bool> finished{false};
     std::atomic<int> result{0};
     std::atomic<bool> firstFrameLogged{false};
@@ -30,6 +32,9 @@ namespace {
 bool presentVideo(void* user, const MaiVideoFrame* frame,
                   const MaiVideoSubtitle* subtitle) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+    const bool shown = maiGraphicsPresenterShowVideoFrameWithSubtitle(
+        session->viewId, frame, subtitle, false);
+    if (!shown) return false;
     const uint64_t count = ++session->presentedFrames;
 #if !defined(NDEBUG)
     if (count % 100 == 0)
@@ -41,20 +46,22 @@ bool presentVideo(void* user, const MaiVideoFrame* frame,
                      static_cast<int>(frame->color_space), static_cast<int>(frame->color_range));
     }
 #endif
-    return maiGraphicsPresenterShowVideoFrameWithSubtitle(session->viewId,
-                                                          frame, subtitle, false);
+    return true;
 }
 
 bool presentRgba(void* user, const uint8_t* pixels,
                  uint32_t width, uint32_t height, uint32_t stride) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+    const bool shown = maiGraphicsPresenterShowFrame(session->viewId, pixels,
+                                                      width, height, stride, false);
+    if (!shown) return false;
+    ++session->presentedFrames;
 #if !defined(NDEBUG)
     if (!session->firstFrameLogged.exchange(true))
         std::fprintf(stderr, "[FFplayFrame] %ux%u format=RGBA8 stride=%u\n",
                      width, height, stride);
 #endif
-    return maiGraphicsPresenterShowFrame(session->viewId, pixels, width,
-                                         height, stride, false);
+    return true;
 }
 
 }  // namespace
@@ -88,7 +95,10 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const 
                 session->result = maiFfplayRunAtSpeed(&session->host, 5, arguments,
                                                        session->speed,
                                                        session->startPositionUs);
-                if (session->result != 0 && session->presentedFrames == 0) {
+                // FFplay reports some pre-first-frame filter failures through a
+                // quit event whose exit code is zero. The absence of a frame is
+                // the reliable signal that this decoder/render path did not open.
+                if (!session->stopRequested && session->presentedFrames == 0) {
                     session->host.present_native_frames = 0;
                     char* fallback[] = {name, &input[0]};
                     session->result = maiFfplayRunAtSpeed(&session->host, 2, fallback,
@@ -101,6 +111,8 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const 
                                                        session->speed,
                                                        session->startPositionUs);
             }
+            if (!session->stopRequested && session->presentedFrames == 0)
+                session->result = -1;
             session->finished = true;
         });
     } catch (...) {
@@ -116,7 +128,9 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* p
 
 extern "C" int maiFfplayIosCommand(MaiFfplayIosSession* session,
                                      const char* command) {
-    return session && command ? maiFfplaySendCommand(command) : 0;
+    if (!session || !command) return 0;
+    if (std::strcmp(command, "close") == 0) session->stopRequested = true;
+    return maiFfplaySendCommand(command);
 }
 
 extern "C" int maiFfplayIosSeekPercent(MaiFfplayIosSession* session,
@@ -139,8 +153,12 @@ extern "C" int maiFfplayIosExitCode(const MaiFfplayIosSession* session) {
 
 extern "C" void maiFfplayIosStop(MaiFfplayIosSession* session) {
     if (!session) return;
-    for (int attempt = 0; attempt < 100 && !session->finished; ++attempt) {
-        if (maiFfplaySendCommand("close") == 1) break;
+    session->stopRequested = true;
+    // A close may land between the hardware attempt and its software retry,
+    // when SDL has already cleared the old event queue. Keep asking until the
+    // worker exits so the retry cannot outlive its view.
+    while (!session->finished) {
+        maiFfplaySendCommand("close");
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (session->worker.joinable()) session->worker.join();

@@ -83,55 +83,44 @@ final class DesktopLoginUITests: XCTestCase {
         add(screenshot)
     }
 
-    func testDesktopLoginScannerEntry() throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
-              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
-            throw XCTSkip("需要本机测试账号")
-        }
+    @MainActor func testDesktopLoginScannerEntry() async throws {
+        let (phone, password) = try await localAccount()
         let app = launchAccountApp(phone: phone, password: password)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        tapMeTab(in: app)
-        let settings = app.buttons["设置"]
-        if !settings.waitForExistence(timeout: 2) {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.955)).tap()
-        }
-        XCTAssertTrue(settings.waitForExistence(timeout: 10))
-        settings.tap()
         dismissLocalIMError(in: app)
-        let entry = app.buttons["desktop-login-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 10))
-        let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
-        settingsScreenshot.name = "desktop-login-settings-entry"
-        settingsScreenshot.lifetime = .keepAlways
-        add(settingsScreenshot)
-        entry.tap()
-        XCTAssertTrue(app.staticTexts["扫描电脑上的二维码"].waitForExistence(timeout: 10))
+        openDesktopScanner(in: app)
+        XCTAssertTrue(app.staticTexts["扫描好友二维码或电脑登录二维码"]
+            .waitForExistence(timeout: 10))
         let scannerScreenshot = XCTAttachment(screenshot: app.screenshot())
         scannerScreenshot.name = "desktop-login-scanner"
         scannerScreenshot.lifetime = .keepAlways
         add(scannerScreenshot)
+        app.buttons["关闭"].tap()
+        XCTAssertTrue(app.buttons["im-message-actions"].waitForExistence(timeout: 5))
+        tapMeTab(in: app)
+        let settings = app.buttons["设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        XCTAssertFalse(app.buttons["desktop-login-entry"].exists)
+        XCTAssertFalse(app.staticTexts["扫码登录电脑"].exists)
+        let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        settingsScreenshot.name = "desktop-login-removed-from-settings"
+        settingsScreenshot.lifetime = .keepAlways
+        add(settingsScreenshot)
     }
 
     @MainActor func testDesktopLoginConfirmationAndCancel() async throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
-              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
-            throw XCTSkip("需要本机测试账号")
-        }
+        let (phone, password) = try await localAccount()
         let qr = try await makeDesktopRequest(platform: "mac")
         let app = launchAccountApp(phone: phone, password: password, qr: qr)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        tapMeTab(in: app)
-        let settings = app.buttons["设置"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 10))
-        settings.tap()
         dismissLocalIMError(in: app)
-        let entry = app.buttons["desktop-login-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 10))
-        entry.tap()
+        openDesktopScanner(in: app)
+        let simulatedScan = app.buttons["模拟识别二维码"]
+        XCTAssertTrue(simulatedScan.waitForExistence(timeout: 5))
+        simulatedScan.tap()
         XCTAssertTrue(app.staticTexts["desktop-login-code"].waitForExistence(timeout: 15))
         let confirmation = XCTAttachment(screenshot: app.screenshot())
         confirmation.name = "desktop-login-confirmation"
@@ -159,26 +148,21 @@ final class DesktopLoginUITests: XCTestCase {
         cancelled.name = "desktop-login-cancelled"
         cancelled.lifetime = .keepAlways
         add(cancelled)
+        app.buttons["返回消息"].tap()
+        XCTAssertTrue(app.buttons["im-message-actions"].waitForExistence(timeout: 5))
     }
 
     @MainActor func testDesktopLoginApproval() async throws {
-        let environment = ProcessInfo.processInfo.environment
-        guard let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
-              let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] else {
-            throw XCTSkip("需要本机测试账号")
-        }
+        let (phone, password) = try await localAccount()
         let qr = try await makeDesktopRequest(platform: "windows")
         let app = launchAccountApp(phone: phone, password: password, qr: qr)
         let me = app.buttons["我"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
-        tapMeTab(in: app)
-        let settings = app.buttons["设置"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 10))
-        settings.tap()
         dismissLocalIMError(in: app)
-        let entry = app.buttons["desktop-login-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 10))
-        entry.tap()
+        openDesktopScanner(in: app)
+        let simulatedScan = app.buttons["模拟识别二维码"]
+        XCTAssertTrue(simulatedScan.waitForExistence(timeout: 5))
+        simulatedScan.tap()
         XCTAssertTrue(app.staticTexts["desktop-login-code"].waitForExistence(timeout: 15))
         app.buttons["desktop-login-approve"].tap()
         XCTAssertTrue(app.staticTexts["已允许电脑登录"].waitForExistence(timeout: 15))
@@ -186,6 +170,8 @@ final class DesktopLoginUITests: XCTestCase {
         approved.name = "desktop-login-approved"
         approved.lifetime = .keepAlways
         add(approved)
+        app.buttons["返回消息"].tap()
+        XCTAssertTrue(app.buttons["im-message-actions"].waitForExistence(timeout: 5))
     }
 
     @MainActor func testReplacedPhoneSessionReturnsToLogin() async throws {
@@ -202,8 +188,6 @@ final class DesktopLoginUITests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.tap()
         dismissLocalIMError(in: app)
-        let entry = app.buttons["desktop-login-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 10))
 
         var request = URLRequest(url: URL(string: "http://127.0.0.1:18190/v1/auth/password/login")!)
         request.httpMethod = "POST"
@@ -279,11 +263,34 @@ final class DesktopLoginUITests: XCTestCase {
         return app
     }
 
+    @MainActor private func localAccount() async throws -> (String, String) {
+        let environment = ProcessInfo.processInfo.environment
+        if let phone = environment["MAICHAT_LOCAL_UI_PHONE"],
+           let password = environment["MAICHAT_LOCAL_UI_PASSWORD"] {
+            return (phone, password)
+        }
+        guard let statusURL = URL(string: "http://127.0.0.1:18190/test/status"),
+              let (_, response) = try? await URLSession.shared.data(from: statusURL),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机测试账号服务")
+        }
+        return ("sync-ui-test", "local sync UI test passphrase")
+    }
+
     private func dismissLocalIMError(in app: XCUIApplication) {
         let error = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "IM 操作失败")
         ).firstMatch
         if error.exists { error.tap() }
+    }
+
+    private func openDesktopScanner(in app: XCUIApplication) {
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        actions.tap()
+        let scan = app.buttons["扫一扫"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 5))
+        scan.tap()
     }
 
     /// SwiftUI TabView 的“我”在 iOS 26 无可点击 frame；按实际底栏中心进入个人页。

@@ -9,6 +9,10 @@
 #include <mutex>
 #include <string>
 
+#include "MaiFilePath.h"
+#include "MaiFileSystem.h"
+#include "MaiIdGenerator.h"
+
 using Json = nlohmann::json;
 
 class MaiMobileHostDispatcher {
@@ -152,6 +156,54 @@ private:
     bool mApproval = false;
 };
 
+class MaiMobileScreenCaptureTool final : public MaiTool {
+public:
+    explicit MaiMobileScreenCaptureTool(std::shared_ptr<MaiMobileHostDispatcher> dispatcher)
+        : mDispatcher(std::move(dispatcher)) {}
+
+    std::string name() const override { return "mobile_capture_screen"; }
+    std::string description() const override {
+        return "Read the most recent whole-device screen frame from a screen-sharing session "
+               "that the user started with mobile_start_screen_share. This can include other "
+               "apps. If sharing is not active or there is no recent frame, ask the user to "
+               "start sharing and visit the target app first.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{},"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override { return false; }
+    MaiToolResult execute(const std::string& argumentsJson,
+                          const MaiToolContext& context) override {
+        const Json arguments = Json::parse(argumentsJson, nullptr, false);
+        if (!arguments.is_object() || !arguments.empty())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "mobile_capture_screen expects an empty object");
+        if (context.isCanceled())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "screen capture was canceled");
+        if (context.root.empty())
+            return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                          "the Agent workspace is not configured");
+        const MaiFilePath directory = MaiFilePath::fromUtf8(context.root)
+                                          .append(MaiFilePath::fromUtf8("screenshots"));
+        const MaiError directoryError = MaiFileSystem::createDirectories(directory);
+        if (directoryError.hasError())
+            return MaiToolResult::failure(directoryError.code(), directoryError.message());
+        const MaiFilePath path = directory.append(MaiFilePath::fromUtf8(
+            MaiIdGenerator::generate("mobile_screen_") + ".png"));
+        const MaiToolResult response = callMaiMobileHostTool(
+            mDispatcher, name(), Json{{"output_path", path.toUtf8()}}.dump());
+        if (response.hasError()) return response;
+        if (!MaiFileSystem::exists(path))
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "screen capture did not write a PNG file");
+        return MaiToolResult::successWithImages(response.output(),
+                                                {MaiToolImage{path.toUtf8(), "image/png"}});
+    }
+
+private:
+    std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;
+};
+
 }  // namespace
 
 std::shared_ptr<MaiMobileHostDispatcher> makeMaiMobileHostDispatcher() {
@@ -224,6 +276,31 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_get_unread_summary", "Summarize unread MaiChat messages by contact.",
         // 不收参数，按联系人汇总未读消息。
         R"({"type":"object","properties":{}})");
+    add("maichat_remote_session_list",
+        "List Sessions on other online MaiChat devices, including devices with no Sessions. "
+        "Use this to find the destination device slot before creating or deleting a Session.",
+        R"({"type":"object","properties":{},"additionalProperties":false})");
+    add("maichat_remote_session_create",
+        "Create a Session on another online MaiChat device. Omit workspace_path to use that "
+        "device's default Workspace; on Desktop an explicit path must already exist there.",
+        R"({"type":"object","properties":{"device_slot":{"type":"string"},)"
+            R"("workspace_path":{"type":"string","maxLength":4096}},)"
+            R"("required":["device_slot"],"additionalProperties":false})");
+    add("maichat_remote_session_delete",
+        "Permanently delete a Session and its chat history on another online MaiChat device. "
+        "Requires approval for every call.",
+        R"({"type":"object","properties":{"device_slot":{"type":"string"},)"
+            R"("session_id":{"type":"string"}},"required":["device_slot","session_id"],)"
+            R"("additionalProperties":false})",
+        true);
+    add("maichat_remote_session_set_workspace",
+        "Set an existing Session's Workspace on another online Desktop device. The path must "
+        "be absolute and already exist on that device. Requires approval for every call.",
+        R"({"type":"object","properties":{"device_slot":{"type":"string"},)"
+            R"("session_id":{"type":"string"},"workspace_path":{"type":"string","maxLength":4096}},)"
+            R"("required":["device_slot","session_id","workspace_path"],)"
+            R"("additionalProperties":false})",
+        true);
     // 用户明确要求排障时才导出；只返回工作区 TXT 路径，日志正文不回灌给模型，
     // 也不自动发给联系人。AI 会话据此显示可分享的文件卡片。
     add("mobile_export_diagnostics",
@@ -373,16 +450,46 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
             R"(})");
 }
 
+void registerMobileScreenCaptureTools(
+    MaiToolRegistry& tools, const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+    addMaiMobileHostTool(
+        tools, "mobile_start_screen_share",
+        "Ask the user to start a system-approved whole-device screen-sharing session. "
+        "In the Android system picker, choose Share entire screen. "
+        "The user can then switch to another app and return before requesting a frame.",
+        R"({"type":"object","properties":{},"additionalProperties":false})",
+        dispatcher, false);
+    addMaiMobileHostTool(
+        tools, "mobile_stop_screen_share",
+        "Stop the active whole-device screen-sharing session and discard its cached frame.",
+        R"({"type":"object","properties":{},"additionalProperties":false})",
+        dispatcher, false);
+    tools.add(std::make_unique<MaiMobileScreenCaptureTool>(dispatcher));
+}
+
 // 移动端相册和播放器工具复用同一个宿主调度器；具体权限与媒体生命周期由手机宿主处理。
 // Schema 限定操作和范围，模型不能凭工具参数请求任意原生调用。
 void registerMobilePhotoTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+#if defined(MAICHAT_MOBILE_IOS)
+    tools.add(std::make_unique<MaiMobileHostTool>(
+        "maichat_camera_command",
+        "Control the iPhone camera preview without waiting for a photo. open returns immediately; "
+        "the user takes the photo in the system camera UI. status reports the current state "
+        "and last workspace photo path. close dismisses the preview; call it only when the "
+        "user asks to close or the task ends. Never take a photo without the user's action.",
+        R"({"type":"object","properties":{"action":{"type":"string",)"
+            R"("enum":["open","status","close"]}},"required":["action"],)"
+            R"("additionalProperties":false})",
+        dispatcher, false));
+#else
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_take_photo",
         "Open the device camera preview and wait for the user to take a photo. Save a new JPEG "
         "in the current Agent workspace. Cancel creates no file and never sends a message.",
         R"({"type":"object","properties":{},"additionalProperties":false})",
         dispatcher, false));
+#endif
     tools.add(std::make_unique<MaiMobileHostTool>(
         "mobile_play_local_music",
         "Play an MP3, M4A, or WAV with MaiChat's FFplay music player. Provide a relative "

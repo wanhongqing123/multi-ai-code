@@ -1,5 +1,11 @@
 # iOS App Store submission gate (2026-10-20)
 
+> This records the product scope on 2026-10-20. The private video cloud and
+> subsequent video-circle work are not covered by the review notes below. Before
+> reusing any of them for a newer build, reconcile the live feature flags and
+> store declarations with
+> [private-video-cloud-privacy-readiness-2026-10-26.md](private-video-cloud-privacy-readiness-2026-10-26.md).
+
 ## Current product scope
 
 - MaiChat has one-to-one friend chat with text, images, videos, voice and files.

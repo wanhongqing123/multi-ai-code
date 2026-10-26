@@ -11,17 +11,20 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkProxyFactory>
+#include <QNetworkProxyQuery>
 #include <QPointer>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QtMath>
 #include <QStandardPaths>
+#include <QThread>
 #include <QUrl>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include "im/DynamicTimSdkApi.h"
 
@@ -47,6 +50,11 @@ constexpr int kActivityVersion = 2;
 // 不设上限等于让别人决定我们的内存占用和渲染耗时。
 constexpr int kQuoteFieldLimit = 256;
 constexpr int kQuoteDigestLimit = 200;
+constexpr qint64 kMaximumImageBytes = 32LL * 1024 * 1024;
+constexpr qint64 kMaximumVoiceBytes = 64LL * 1024 * 1024;
+constexpr qint64 kMaximumFileBytes = 512LL * 1024 * 1024;
+constexpr qint64 kMaximumVideoBytes = 1024LL * 1024 * 1024;
+constexpr qint64 kMaximumVideoCoverBytes = 16LL * 1024 * 1024;
 
 struct ParsedCloudMetadata {
     RemoteIMMessageOrigin origin = RemoteIMMessageOrigin::Unknown;
@@ -482,8 +490,10 @@ RemoteIMSendReceipt sentMessageReceipt(const QString& jsonPayload) {
 TimSdkRemoteIMClient::TimSdkRemoteIMClient(QObject* parent)
     : TimSdkRemoteIMClient(std::make_unique<DynamicTimSdkApi>(), parent) {}
 
-TimSdkRemoteIMClient::TimSdkRemoteIMClient(std::unique_ptr<TimSdkApi> api, QObject* parent)
-    : RemoteIMClient(parent), api_(std::move(api)) {}
+TimSdkRemoteIMClient::TimSdkRemoteIMClient(std::unique_ptr<TimSdkApi> api, QObject* parent,
+                                           QByteArray attachmentCaPem)
+    : RemoteIMClient(parent), api_(std::move(api)), attachmentCaPem_(std::move(attachmentCaPem)),
+      downloadsCanceled_(mai_download_cancel_create(), mai_download_cancel_destroy) {}
 
 qint64 TimSdkRemoteIMClient::orderedMessageTime(const QString& peerId, qint64 sdkTimeMillis) {
     const qint64 second = sdkTimeMillis / 1000;
@@ -497,6 +507,7 @@ qint64 TimSdkRemoteIMClient::orderedMessageTime(const QString& peerId, qint64 sd
 }
 
 TimSdkRemoteIMClient::~TimSdkRemoteIMClient() {
+    mai_download_cancel_request(downloadsCanceled_.get());
     if (api_) {
         api_->setSelfInfoUpdatedCallback({});
         api_->removeReceiveMessageCallback();
@@ -526,6 +537,8 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
         }
         return;
     }
+    mai_download_cancel_request(downloadsCanceled_.get());
+    downloadsCanceled_.reset(mai_download_cancel_create(), mai_download_cancel_destroy);
     currentUserId_ = userId.trimmed();
     sdkAppId_ = static_cast<quint64>(sdkAppId);
     const quint64 profileSession = ++profileSession_;
@@ -539,10 +552,13 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
         return;
     }
 
-    api_->addReceiveMessageCallback([this](const QString& jsonMessages) {
-        handleIncomingMessages(jsonMessages);
-    });
     const QPointer<TimSdkRemoteIMClient> self(this);
+    api_->addReceiveMessageCallback([self](const QString& jsonMessages) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, jsonMessages] {
+            if (self) self->handleIncomingMessages(jsonMessages);
+        }, Qt::AutoConnection);
+    });
     const auto account = currentAccount();
     api_->setSelfInfoUpdatedCallback([self, account, profileSession](const QString& payload) {
         if (!self) return;
@@ -582,6 +598,7 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
 }
 
 void TimSdkRemoteIMClient::disconnectFromService(RemoteIMCompletion completion) {
+    mai_download_cancel_request(downloadsCanceled_.get());
     if (!api_) {
         if (completion) completion(true, QString());
         return;
@@ -1139,17 +1156,22 @@ void TimSdkRemoteIMClient::fetchRecentMessages(const QString& conversationId, in
     request[QStringLiteral("msg_getmsglist_param_count")] = 20;
     request[QStringLiteral("msg_getmsglist_param_is_ramble")] = true;
     request[QStringLiteral("msg_getmsglist_param_is_forward")] = false;
-    api_->getMessageList(conversationId, conversationType, compactJson(request), [this, conversationId](int code,
-                                                                                       const QString& description,
-                                                                                       const QString& jsonPayload) {
-        if (code != 0) {
-            qWarning().noquote()
-                << QStringLiteral("[im] fetch history failed: conv=%1 code=%2 %3")
-                       .arg(conversationId).arg(code).arg(description);
-            return;
-        }
-        if (jsonPayload.trimmed().isEmpty()) return;
-        handleHistoryMessagesPayload(jsonPayload);
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    api_->getMessageList(conversationId, conversationType, compactJson(request),
+                         [self, account, conversationId](int code, const QString& description,
+                                                         const QString& jsonPayload) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, conversationId, code, description, jsonPayload] {
+            if (!self || self->currentAccount() != account) return;
+            if (code != 0) {
+                qWarning().noquote()
+                    << QStringLiteral("[im] fetch history failed: conv=%1 code=%2 %3")
+                           .arg(conversationId).arg(code).arg(description);
+                return;
+            }
+            if (!jsonPayload.trimmed().isEmpty()) self->handleHistoryMessagesPayload(jsonPayload);
+        }, Qt::AutoConnection);
     });
 }
 
@@ -1642,34 +1664,68 @@ void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
     emitReceivedMessages(received, /*live=*/true);
 }
 
+void TimSdkRemoteIMClient::fetchAttachment(
+    const QString& url, const QString& targetPath, qint64 maximumBytes,
+    std::function<void(DesktopCurlAttachmentResult)> completion) {
+    if (QThread::currentThread() != thread()) {
+        const QPointer<TimSdkRemoteIMClient> self(this);
+        if (!self) return;
+        QMetaObject::invokeMethod(self.data(),
+            [self, url, targetPath, maximumBytes, completion = std::move(completion)]() mutable {
+                if (self) self->fetchAttachment(url, targetPath, maximumBytes, std::move(completion));
+            }, Qt::QueuedConnection);
+        return;
+    }
+    const QUrl location(url);
+    QNetworkProxy proxy(QNetworkProxy::DefaultProxy);
+    if (location.host() == QStringLiteral("localhost") ||
+        location.host() == QStringLiteral("127.0.0.1")) {
+        proxy = QNetworkProxy(QNetworkProxy::NoProxy);
+    } else {
+        const auto candidates = QNetworkProxyFactory::systemProxyForQuery(QNetworkProxyQuery(location));
+        for (const QNetworkProxy& candidate : candidates) {
+            if (candidate.type() == QNetworkProxy::NoProxy ||
+                candidate.type() == QNetworkProxy::HttpProxy ||
+                candidate.type() == QNetworkProxy::Socks5Proxy) {
+                proxy = candidate;
+                break;
+            }
+        }
+    }
+    const auto canceled = downloadsCanceled_;
+    const QByteArray caPem = attachmentCaPem_;
+    auto* watcher = new QFutureWatcher<DesktopCurlAttachmentResult>(this);
+    connect(watcher, &QFutureWatcher<DesktopCurlAttachmentResult>::finished, this,
+            [watcher, completion = std::move(completion)]() mutable {
+        DesktopCurlAttachmentResult result = watcher->result();
+        watcher->deleteLater();
+        completion(result);
+    });
+    watcher->setFuture(QtConcurrent::run(
+        [location, targetPath, maximumBytes, caPem, proxy, canceled] {
+            return DesktopCurlAttachmentDownload::perform(
+                location, targetPath, maximumBytes, caPem, proxy, canceled);
+        }));
+}
+
 void TimSdkRemoteIMClient::handleIncomingImageUrl(RemoteIMMessage message, const QString& url, bool live) {
     const QString targetPath = cacheImagePathForUrl(url);
     message.image.localPath = targetPath;
-    // 保留调用方合并进来的配文；只有真正无配文时才补占位文字。
     if (message.text.trimmed().isEmpty())
         message.text = QStringLiteral("[图片消息] ") + QFileInfo(targetPath).fileName();
-    if (QFile::exists(targetPath)) {
-        emitReceivedMessages({message}, live);
+    const auto origin = currentAccount();
+    if (QFileInfo(targetPath).isFile() && QFileInfo(targetPath).isReadable()) {
+        emitReceivedMessages({message}, live, origin);
         return;
     }
-
-    QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message, url, live] {
-        const QByteArray data = reply->readAll();
-        const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
-        const QString err = reply->errorString();
-        reply->deleteLater();
-        if (!ok) {
-            // 常见原因：未携带 OpenSSL 1.1 导致 HTTPS 请求失败（supportsSsl()==false）。
-            qWarning().noquote()
-                << QStringLiteral("[im] image download failed: %1 - %2").arg(err, url);
+    fetchAttachment(url, targetPath, kMaximumImageBytes,
+                    [this, message, live, origin](DesktopCurlAttachmentResult result) {
+        if (currentAccount() != origin || !connected_) return;
+        if (!result.ok()) {
+            qWarning() << "[im] image download failed:" << int(result.status) << result.transferCode;
             return;
         }
-        QFile file(message.image.localPath);
-        if (!file.open(QIODevice::WriteOnly)) return;
-        file.write(data);
-        file.close();
-        emitReceivedMessages({message}, live);
+        emitReceivedMessages({message}, live, origin);
     });
 }
 
@@ -1693,49 +1749,26 @@ void TimSdkRemoteIMClient::handleIncomingFileUrl(RemoteIMMessage message, const 
     }
 
     recordAttachmentPhase(origin, message, RemoteDiagnostics::AttachmentPhase::DownloadStarted);
-    QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message, live, origin] {
-        const QByteArray data = reply->readAll();
-        const QNetworkReply::NetworkError error = reply->error();
-        const bool ok = error == QNetworkReply::NoError && !data.isEmpty();
-        const QString replyError = reply->errorString();
-        reply->deleteLater();
-        if (!ok) {
-            // 以前这里是静默 return：附件下载失败时界面上什么都不出现，日志里也没有痕迹。
-            // 现在除了日志，还留一条**带账号归属**的固定阶段记录，
-            // 这样排障报告能回答「附件到底卡在哪一步」，而不是只剩一片沉默。
-            // 记的是错误码，不是 errorString——那是网络栈的自由文本。
+    fetchAttachment(url, targetPath, kMaximumFileBytes,
+                    [this, message, live, origin](DesktopCurlAttachmentResult result) {
+        if (currentAccount() != origin) {
             recordAttachmentPhase(origin, message,
-                                  RemoteDiagnostics::AttachmentPhase::DownloadFailed,
-                                  static_cast<int>(error));
-            qWarning().noquote()
-                << QStringLiteral("[im] attachment download failed: %1 (%2 bytes)")
-                       .arg(replyError).arg(data.size());
+                                  RemoteDiagnostics::AttachmentPhase::DroppedForAccountSwitch);
             return;
         }
-        QFile file(message.file.localPath);
-        if (!file.open(QIODevice::WriteOnly)) {
+        if (result.status == DesktopCurlAttachmentResult::Status::WriteError) {
             recordAttachmentPhase(origin, message,
                                   RemoteDiagnostics::AttachmentPhase::WriteFailed);
             return;
         }
-        // 写入不足同样是失败：文件存在但内容残缺，当成功交付会让下游
-        // 把半截 JSON 当成「对端给了个坏报告」，而不是「我们没存住」。
-        const qint64 written = file.write(data);
-        file.close();
-        if (written != data.size()) {
+        if (!result.ok() || !connected_) {
             recordAttachmentPhase(origin, message,
-                                  RemoteDiagnostics::AttachmentPhase::WriteFailed,
-                                  static_cast<int>(data.size() - written));
-            QFile::remove(message.file.localPath);
-            qWarning().noquote()
-                << QStringLiteral("[im] attachment write short: %1 of %2 bytes")
-                       .arg(written).arg(data.size());
+                                  RemoteDiagnostics::AttachmentPhase::DownloadFailed,
+                                  result.transferCode);
+            qWarning() << "[im] attachment download failed:" << int(result.status)
+                       << result.transferCode;
             return;
         }
-        // 顺序很重要：先发、再按「有没有真的发出去」记。反过来的话，
-        // 换账号被护栏丢弃时日志仍会写「已交付」——文件是下完了，
-        // 但它没有进入任何账号的会话，那就是谎报。
         recordAttachmentPhase(origin, message,
                               emitReceivedMessages({message}, live, origin)
                                   ? RemoteDiagnostics::AttachmentPhase::Delivered
@@ -1751,37 +1784,27 @@ void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
                                                    bool live) {
     const QString videoPath = cacheVideoPathForUrl(videoUrl, QStringLiteral(".mp4"));
     message.video.localPath = videoPath;
+    const auto origin = currentAccount();
 
     // 先把封面拿下来（小、快），再下视频本体。封面失败只是没有缩略图，
     // 不能因此把整条视频消息拦住——气泡会退化成深色底 + 播放角标，仍可播放。
     // message 必须按参数传进来：如果在这里按值捕获，封面回调里补上的 coverPath
     // 改的是外层那一份，拷贝进 lambda 的那份永远是空的，封面白下了。
-    const auto fetchVideo = [this, videoUrl, videoPath, live](RemoteIMMessage message) {
-        if (QFile::exists(videoPath)) {
-            emitReceivedMessages({message}, live);
+    const auto fetchVideo = [this, videoUrl, videoPath, live, origin](RemoteIMMessage message) {
+        if (currentAccount() != origin || !connected_) return;
+        if (QFileInfo(videoPath).isFile() && QFileInfo(videoPath).isReadable()) {
+            emitReceivedMessages({message}, live, origin);
             return;
         }
-        QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(videoUrl)));
-        connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
-            const QByteArray data = reply->readAll();
-            const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
-            const QString replyError = reply->errorString();
-            reply->deleteLater();
-            if (!ok) {
-                qWarning().noquote()
-                    << QStringLiteral("[im] video download failed: %1 (%2 bytes)")
-                           .arg(replyError).arg(data.size());
+        fetchAttachment(videoUrl, videoPath, kMaximumVideoBytes,
+                        [this, message, live, origin](DesktopCurlAttachmentResult result) {
+            if (currentAccount() != origin || !connected_) return;
+            if (!result.ok()) {
+                qWarning() << "[im] video download failed:" << int(result.status)
+                           << result.transferCode;
                 return;
             }
-            QFile file(message.video.localPath);
-            if (!file.open(QIODevice::WriteOnly)) {
-                qWarning().noquote()
-                    << QStringLiteral("[im] video write failed: %1").arg(message.video.localPath);
-                return;
-            }
-            file.write(data);
-            file.close();
-            emitReceivedMessages({message}, live);
+            emitReceivedMessages({message}, live, origin);
         });
     };
 
@@ -1790,25 +1813,15 @@ void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
         return;
     }
     const QString coverPath = cacheVideoPathForUrl(coverUrl, QStringLiteral(".jpg"));
-    if (QFile::exists(coverPath)) {
+    if (QFileInfo(coverPath).isFile() && QFileInfo(coverPath).isReadable()) {
         message.video.coverPath = coverPath;
         fetchVideo(message);
         return;
     }
-    QNetworkReply* coverReply = network_.get(QNetworkRequest(QUrl(coverUrl)));
-    connect(coverReply, &QNetworkReply::finished, this,
-            [coverReply, coverPath, message, fetchVideo]() mutable {
-        const QByteArray data = coverReply->readAll();
-        const bool ok = coverReply->error() == QNetworkReply::NoError && !data.isEmpty();
-        coverReply->deleteLater();
-        if (ok) {
-            QFile file(coverPath);
-            if (file.open(QIODevice::WriteOnly)) {
-                file.write(data);
-                file.close();
-                message.video.coverPath = coverPath;
-            }
-        }
+    fetchAttachment(coverUrl, coverPath, kMaximumVideoCoverBytes,
+                    [this, origin, coverPath, message, fetchVideo](DesktopCurlAttachmentResult result) mutable {
+        if (currentAccount() != origin || !connected_) return;
+        if (result.ok()) message.video.coverPath = coverPath;
         fetchVideo(message);
     });
 }
@@ -1816,29 +1829,20 @@ void TimSdkRemoteIMClient::handleIncomingVideoUrls(RemoteIMMessage message,
 void TimSdkRemoteIMClient::handleIncomingVoiceUrl(RemoteIMMessage message, const QString& url, bool live) {
     const QString targetPath = cacheVoicePathForUrl(url);
     message.voice.localPath = targetPath;
-    if (QFile::exists(targetPath)) {
-        emitReceivedMessages({message}, live);
+    const auto origin = currentAccount();
+    if (QFileInfo(targetPath).isFile() && QFileInfo(targetPath).isReadable()) {
+        emitReceivedMessages({message}, live, origin);
         return;
     }
-
-    QNetworkReply* reply = network_.get(QNetworkRequest(QUrl(url)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, message, live] {
-        const QByteArray data = reply->readAll();
-        const bool ok = reply->error() == QNetworkReply::NoError && !data.isEmpty();
-        const QString replyError = reply->errorString();
-        reply->deleteLater();
-        if (!ok) {
-            // 以前这里是静默 return：附件下载失败时界面上什么都不出现，日志里也没有痕迹。
-            qWarning().noquote()
-                << QStringLiteral("[im] attachment download failed: %1 (%2 bytes)")
-                       .arg(replyError).arg(data.size());
+    fetchAttachment(url, targetPath, kMaximumVoiceBytes,
+                    [this, message, live, origin](DesktopCurlAttachmentResult result) {
+        if (currentAccount() != origin || !connected_) return;
+        if (!result.ok()) {
+            qWarning() << "[im] voice download failed:" << int(result.status)
+                       << result.transferCode;
             return;
         }
-        QFile file(message.voice.localPath);
-        if (!file.open(QIODevice::WriteOnly)) return;
-        file.write(data);
-        file.close();
-        emitReceivedMessages({message}, live);
+        emitReceivedMessages({message}, live, origin);
     });
 }
 

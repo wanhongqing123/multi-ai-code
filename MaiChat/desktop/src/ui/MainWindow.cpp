@@ -11,9 +11,15 @@
 #include "model/MessageQuote.h"
 #include "model/MessageSearch.h"
 #include "ui/MessageImageLoader.h"
+#include "ui/VideoCircleDialog.h"
+#include "ui/CloudDriveDialog.h"
 #include "ui/RemoteDiagnosticsDialog.h"
+#if defined(MAICHAT_FFMPEG_IMAGE_DECODE)
+#include "MaiImageDecode.h"
+#endif
 #if defined(MAICHAT_HAS_FFPLAY)
 #include "MaiChatTools/DesktopMediaTools.h"
+#include "MaiChatTools/DesktopRemoteSessionTools.h"
 #include "ui/MaiFfplayVideoDialog.h"
 #endif
 
@@ -43,6 +49,7 @@
 #include <QFontMetrics>
 #include <QGraphicsOpacityEffect>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QIcon>
@@ -58,9 +65,8 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QMutexLocker>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
+#include <QNetworkProxyFactory>
+#include <QNetworkProxyQuery>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
@@ -70,6 +76,7 @@
 #include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QSaveFile>
 #include <QSet>
 #include <QShortcut>
 #include <QShowEvent>
@@ -99,9 +106,9 @@
 #include <mutex>
 #include <utility>
 
-#ifdef Q_OS_WIN
 #include <QtConcurrent/QtConcurrentRun>
 #include <curl/curl.h>
+#ifdef Q_OS_WIN
 #include <qt_windows.h>
 #endif
 
@@ -145,6 +152,7 @@
 #include <QStandardPaths>
 
 #include "MaiChatTools/MaiChatHostTools.h"
+#include "MaiChatTools/DesktopCloudDriveTools.h"
 #include "MaiSshTool.h"
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
@@ -496,6 +504,41 @@ QSet<QString> &failedAvatarUrls() {
   return urls;
 }
 
+QString avatarCachePath(const QString &url) {
+  const QString root = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+  if (root.isEmpty()) return {};
+  const QByteArray hash = QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha256).toHex();
+  return QDir(root).filePath(QStringLiteral("avatars/") + QString::fromLatin1(hash) +
+                             QStringLiteral(".png"));
+}
+
+bool restoreAvatarPixmap(const QString &url) {
+  const QString path = avatarCachePath(url);
+  if (path.isEmpty()) return false;
+  const QFileInfo file(path);
+  if (!file.isFile() || file.size() <= 0 || file.size() > 4 * 1024 * 1024) return false;
+  QPixmap source;
+  if (!source.load(path, "PNG") || source.isNull() ||
+      source.width() > 320 || source.height() > 320) return false;
+  avatarPixmapCache().insert(url, source);
+  return true;
+}
+
+void persistAvatarPixmap(const QString &url, const QPixmap &source) {
+  const QString path = avatarCachePath(url);
+  if (path.isEmpty() || source.isNull() ||
+      !QDir().mkpath(QFileInfo(path).absolutePath())) return;
+  QSaveFile output(path);
+  if (!output.open(QIODevice::WriteOnly)) return;
+  if (!source.save(&output, "PNG") || output.size() > 4 * 1024 * 1024) {
+    output.cancelWriting();
+    return;
+  }
+  output.commit();
+}
+
+void requestAvatarPixmap(const QString &avatarUrl, QWidget *repaintTarget);
+
 void finishAvatarPixmap(const QString &url, const QByteArray &data) {
   QPixmap source;
   if (data.size() <= 4 * 1024 * 1024) {
@@ -509,14 +552,21 @@ void finishAvatarPixmap(const QString &url, const QByteArray &data) {
     failedAvatarUrls().insert(url);
   } else {
     avatarPixmapCache().insert(url, source);
+    persistAvatarPixmap(url, source);
   }
   const QList<QPointer<QWidget>> targets = avatarRepaintWaiters().take(url);
   for (const QPointer<QWidget> &target : targets) {
     if (!target.isNull()) target->update();
   }
+  if (source.isNull()) {
+    QTimer::singleShot(30'000, qApp, [url, targets] {
+      failedAvatarUrls().remove(url);
+      for (const QPointer<QWidget> &target : targets)
+        if (!target.isNull()) requestAvatarPixmap(url, target.data());
+    });
+  }
 }
 
-#ifdef Q_OS_WIN
 size_t receiveSignedAvatar(char *bytes, size_t size, size_t count, void *context) {
   auto *result = static_cast<QByteArray *>(context);
   if (size != 0 && count > SIZE_MAX / size) return 0;
@@ -526,7 +576,10 @@ size_t receiveSignedAvatar(char *bytes, size_t size, size_t count, void *context
   return length;
 }
 
-QByteArray downloadSignedAvatar(const QUrl &url) {
+QByteArray downloadAvatar(const QUrl &url, const QString &proxyUrl) {
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || !url.userInfo().isEmpty() ||
+      (scheme != QStringLiteral("https") && scheme != QStringLiteral("http"))) return {};
   static std::once_flag initialization;
   static CURLcode initializationCode = CURLE_FAILED_INIT;
   std::call_once(initialization, [] { initializationCode = curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -535,34 +588,61 @@ QByteArray downloadSignedAvatar(const QUrl &url) {
   if (!curl) return {};
   QByteArray data;
   const QByteArray encoded = url.toString(QUrl::FullyEncoded).toUtf8();
+  const QByteArray encodedProxy = proxyUrl.toUtf8();
   curl_easy_setopt(curl, CURLOPT_URL, encoded.constData());
-  curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
-  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+  const char *protocols = scheme == QStringLiteral("https") ? "https" : "http,https";
+  curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, protocols);
+  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, protocols);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 20000L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-  curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
+  curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_IGNORED);
   curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, curl_off_t(4 * 1024 * 1024));
   curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receiveSignedAvatar);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+#ifdef Q_OS_WIN
+  curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
+#elif defined(Q_OS_MACOS)
+  QFile certificates(QStringLiteral(":/maichat/auth/cacert.pem"));
+  if (!certificates.open(QIODevice::ReadOnly)) {
+    curl_easy_cleanup(curl);
+    return {};
+  }
+  const QByteArray caBundle = certificates.readAll();
+  if (caBundle.isEmpty()) {
+    curl_easy_cleanup(curl);
+    return {};
+  }
+  curl_blob caBlob = {const_cast<char *>(caBundle.constData()),
+                      size_t(caBundle.size()), CURL_BLOB_COPY};
+  curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &caBlob);
+#endif
+  if (!encodedProxy.isEmpty()) curl_easy_setopt(curl, CURLOPT_PROXY, encodedProxy.constData());
+  if (url.host() == QStringLiteral("127.0.0.1") || url.host() == QStringLiteral("localhost"))
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "*");
   const CURLcode transferred = curl_easy_perform(curl);
   long status = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
   curl_easy_cleanup(curl);
+  if (transferred != CURLE_OK || status != 200)
+    qWarning().noquote() << QStringLiteral("[im] avatar fetch failed: host=%1 status=%2 curl=%3")
+                              .arg(url.host()).arg(status).arg(int(transferred));
   return transferred == CURLE_OK && status == 200 ? data : QByteArray{};
 }
-#endif
 
 // 作用：异步读取头像并在目标控件仍有效时请求重绘。
 void requestAvatarPixmap(const QString &avatarUrl, QWidget *repaintTarget) {
   const QString url = avatarUrl.trimmed();
-  if (url.isEmpty() || avatarPixmapCache().contains(url) ||
-      failedAvatarUrls().contains(url))
+  if (url.isEmpty() || avatarPixmapCache().contains(url)) return;
+  if (restoreAvatarPixmap(url)) {
+    if (repaintTarget) repaintTarget->update();
     return;
+  }
+  if (failedAvatarUrls().contains(url)) return;
   if (!repaintTarget ||
       !repaintTarget->property("avatarRequestsEnabled").toBool())
     return;
@@ -581,34 +661,24 @@ void requestAvatarPixmap(const QString &avatarUrl, QWidget *repaintTarget) {
     return;
   pendingAvatarUrls().insert(url);
 
-#ifdef Q_OS_WIN
   const QUrl avatarLocation(url);
-  if (avatarLocation.scheme() == QStringLiteral("https") &&
-      avatarLocation.host() == QStringLiteral("ichat.life") &&
-      avatarLocation.path().startsWith(QStringLiteral("/maichat/avatars/"))) {
-    QPointer<QApplication> application(qApp);
-    QtConcurrent::run([avatarLocation, application, url] {
-      const QByteArray data = downloadSignedAvatar(avatarLocation);
-      if (application) {
-        QMetaObject::invokeMethod(application.data(), [url, data] {
-          finishAvatarPixmap(url, data);
-        }, Qt::QueuedConnection);
-      }
-    });
-    return;
+  QString proxyUrl;
+  const auto proxies = QNetworkProxyFactory::systemProxyForQuery(
+      QNetworkProxyQuery(avatarLocation));
+  if (!proxies.isEmpty() && proxies.first().type() == QNetworkProxy::HttpProxy) {
+    QUrl proxy;
+    proxy.setScheme(QStringLiteral("http"));
+    proxy.setHost(proxies.first().hostName());
+    proxy.setPort(proxies.first().port());
+    proxyUrl = proxy.toString(QUrl::FullyEncoded);
   }
-#endif
-
-  static QNetworkAccessManager *network = new QNetworkAccessManager(qApp);
-  QNetworkRequest request{QUrl(url)};
-  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                       QNetworkRequest::NoLessSafeRedirectPolicy);
-  QNetworkReply *reply = network->get(request);
-  QObject::connect(reply, &QNetworkReply::finished, qApp, [reply, url] {
-    const QByteArray data = reply->error() == QNetworkReply::NoError ?
-                                reply->readAll() : QByteArray{};
-    reply->deleteLater();
-    finishAvatarPixmap(url, data);
+  QPointer<QApplication> application(qApp);
+  QtConcurrent::run([avatarLocation, application, url, proxyUrl] {
+    const QByteArray data = downloadAvatar(avatarLocation, proxyUrl);
+    if (!application) return;
+    QMetaObject::invokeMethod(application.data(), [url, data] {
+      finishAvatarPixmap(url, data);
+    }, Qt::QueuedConnection);
   });
 }
 
@@ -1602,13 +1672,12 @@ AgentController::ModelConfig loadAgentModelConfig(
   }
   if (removedLegacySetting)
     settings.sync();
-  config.modelName =
-      settings.value(QStringLiteral("agent/model"), QStringLiteral("glm-5.3"))
-          .toString();
-  if (config.modelName != QStringLiteral("glm-5.3") &&
-      config.modelName != QStringLiteral("glm-5.3-flash") &&
-      config.modelName != QStringLiteral("deepseek-flash"))
-    config.modelName = QStringLiteral("glm-5.3");
+  config.modelName = QStringLiteral("deepseek-flash");
+  config.reasoningEffort = settings.value(
+      QStringLiteral("agent/reasoningEffort"), QStringLiteral("high")).toString();
+  if (config.reasoningEffort != QStringLiteral("low") &&
+      config.reasoningEffort != QStringLiteral("max"))
+    config.reasoningEffort = QStringLiteral("high");
   const bool deepseek = config.modelName == QStringLiteral("deepseek-flash");
   config.wire = MaiWireApi::Responses;
   config.baseUrl = deepseek ? QStringLiteral("https://api.deepseek.com")
@@ -1785,6 +1854,7 @@ void MainWindow::updateWindowChromeBackground(bool active) {
 
 void MainWindow::closeEvent(QCloseEvent *event) {
   if (videoDialog_) videoDialog_->close();
+  if (cloudDriveDialog_) cloudDriveDialog_->close();
   if (accountDisconnectPending_) {
     event->ignore();
     return;
@@ -1813,6 +1883,14 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::prepareForAccountDisconnect(std::function<void()> completion) {
   accountDisconnectPending_ = true;
+  ++videoCircleProbeGeneration_;
+  videoCircleAvailable_ = false;
+  ++cloudDriveProbeGeneration_;
+  cloudDriveAvailable_ = false;
+  if (cloudSettingsRow_) cloudSettingsRow_->hide();
+  if (agentPanel_) agentPanel_->setCloudDriveAvailable(false);
+  if (videoCircleDialog_) videoCircleDialog_->close();
+  if (cloudDriveDialog_) cloudDriveDialog_->close();
   if (videoDialog_) videoDialog_->close();
   stopRemoteDesktopForShutdown(std::move(completion));
 }
@@ -2686,6 +2764,7 @@ void MainWindow::buildUi() {
   selfProfileLayout->setSpacing(UiZoom::s(16));
   settingsProfileAvatar_ = new AccountAvatarLabel(profileCard);
   settingsProfileAvatar_->setObjectName(QStringLiteral("selfProfileAvatar"));
+  settingsProfileAvatar_->setProperty("avatarRequestsEnabled", true);
   settingsProfileAvatar_->setFixedSize(UiZoom::s(60), UiZoom::s(60));
   selfProfileLayout->addWidget(settingsProfileAvatar_);
   auto *profileText = new QWidget(profileCard);
@@ -2786,6 +2865,20 @@ void MainWindow::buildUi() {
   settingsLayout->addWidget(settingsTitle);
   settingsLayout->addWidget(settingsSubtitle);
   settingsLayout->addWidget(profileCard);
+  cloudSettingsValue_ = new QLabel(QStringLiteral("私人空间"), settingsContent);
+  cloudSettingsRow_ = createSettingsRow(
+      QStringLiteral("视频云盘"), cloudSettingsValue_,
+      QStringLiteral("跨设备保存和播放视频；单个最多 2 GB，账号空间 10 GB。"));
+  cloudSettingsRow_->hide();
+  cloudSettingsButton_ = new QPushButton(QStringLiteral("打开"), cloudSettingsRow_);
+  cloudSettingsButton_->setObjectName(QStringLiteral("settingsCloudDriveOpen"));
+  cloudSettingsButton_->setProperty("settingsRowButton", true);
+  qobject_cast<QHBoxLayout*>(cloudSettingsRow_->layout())->addWidget(cloudSettingsButton_);
+  connect(cloudSettingsButton_, &QPushButton::clicked, this, [this] {
+    if (cloudDriveAvailable_) openCloudDrive();
+    else probeCloudDriveAvailability();
+  });
+  settingsLayout->addWidget(cloudSettingsRow_);
   settingsLayout->addWidget(settingsPanel);
   settingsLayout->addSpacing(UiZoom::s(24));
   settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsContent));
@@ -3233,6 +3326,7 @@ void MainWindow::bindSignals() {
       static_cast<AccountAvatarLabel *>(logo)->setProfile(app_.selfProfile());
       requestAvatarPixmap(app_.selfProfile().avatarUrl, logo);
     }
+    refreshSettings();
   });
   // 整体缩放（飞书式）：Ctrl+= / Ctrl++（小键盘）放大，Ctrl+- 缩小，Ctrl+0
   // 复位。
@@ -4011,6 +4105,110 @@ void MainWindow::setMediaServiceAccessProvider(
   rebuildAgentPage();
 }
 
+void MainWindow::setVideoCircleAccessProvider(
+    std::function<DesktopVideoCircleAccess()> provider) {
+  videoCircleAccessProvider_ = std::move(provider);
+  probeVideoCircleAvailability();
+  probeCloudDriveAvailability();
+  // The Agent registrar captures the access provider. Login wiring installs it
+  // after the initial Agent page, so refresh that registrar once here.
+  rebuildAgentPage();
+}
+
+void MainWindow::probeCloudDriveAvailability() {
+  const unsigned generation = ++cloudDriveProbeGeneration_;
+  cloudDriveAvailable_ = false;
+  if (cloudSettingsRow_) cloudSettingsRow_->hide();
+  if (agentPanel_) agentPanel_->setCloudDriveAvailable(false);
+  if (!videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
+  const DesktopVideoCircleAccess access = videoCircleAccessProvider_();
+  const QString account = maiChatAccountIdProvider_();
+  if (!access.isValid() || account.isEmpty() || access.accountId != account) return;
+  auto* watcher = new QFutureWatcher<int>(this);
+  connect(watcher, &QFutureWatcher<int>::finished, this,
+          [this, watcher, generation, account] {
+    const int available = watcher->result();
+    watcher->deleteLater();
+    if (generation != cloudDriveProbeGeneration_ || accountDisconnectPending_ ||
+        !maiChatAccountIdProvider_ || maiChatAccountIdProvider_() != account ||
+        !videoCircleAccessProvider_ || videoCircleAccessProvider_().accountId != account)
+      return;
+    cloudDriveAvailable_ = available == 1;
+    if (agentPanel_) agentPanel_->setCloudDriveAvailable(cloudDriveAvailable_);
+    if (cloudSettingsRow_) cloudSettingsRow_->setVisible(available != 0);
+    if (cloudSettingsValue_) cloudSettingsValue_->setText(
+        available == 1 ? QStringLiteral("私人空间") : QStringLiteral("连接失败"));
+    if (cloudSettingsButton_) cloudSettingsButton_->setText(
+        available == 1 ? QStringLiteral("打开") : QStringLiteral("重试"));
+  });
+  watcher->setFuture(QtConcurrent::run([access] {
+    return CloudDriveDialog::availability(access);
+  }));
+}
+
+void MainWindow::probeVideoCircleAvailability() {
+  const unsigned generation = ++videoCircleProbeGeneration_;
+  videoCircleAvailable_ = false;
+  if (agentPanel_) agentPanel_->setVideoCircleAvailable(false);
+  if (!videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
+  const DesktopVideoCircleAccess access = videoCircleAccessProvider_();
+  const QString account = maiChatAccountIdProvider_();
+  if (!access.isValid() || account.isEmpty() || access.accountId != account) return;
+  auto* watcher = new QFutureWatcher<bool>(this);
+  connect(watcher, &QFutureWatcher<bool>::finished, this,
+          [this, watcher, generation, account] {
+    const bool available = watcher->result();
+    watcher->deleteLater();
+    if (generation != videoCircleProbeGeneration_ || accountDisconnectPending_ ||
+        !maiChatAccountIdProvider_ || maiChatAccountIdProvider_() != account ||
+        !videoCircleAccessProvider_ || !videoCircleAccessProvider_().isValid() ||
+        videoCircleAccessProvider_().accountId != account) return;
+    videoCircleAvailable_ = available;
+    if (agentPanel_) agentPanel_->setVideoCircleAvailable(available);
+  });
+  watcher->setFuture(QtConcurrent::run([access] { return VideoCircleDialog::isAvailable(access); }));
+}
+
+void MainWindow::openVideoCircle(const QString& completedCardJson, const QString& sourcePath) {
+  if (!videoCircleAvailable_ || !videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
+  if (!videoCircleDialog_) {
+    videoCircleDialog_ = new VideoCircleDialog(videoCircleAccessProvider_, maiChatAccountIdProvider_,
+        [this](const QString& path) {
+          if (!openDockedVideo(path)) {
+            QFile::remove(path);
+            showToast(QStringLiteral("视频无法播放"), 13, 3000);
+            return;
+          }
+          // The shared downloader owns the temporary file until the hosted
+          // ffplay dialog is fully destroyed; deleting it earlier can break
+          // playback, especially on Windows.
+          if (videoDialog_)
+            connect(videoDialog_, &QObject::destroyed, this,
+                    [path] { QFile::remove(path); });
+        }, this);
+  }
+  if (completedCardJson.isEmpty()) videoCircleDialog_->openBrowse();
+  else videoCircleDialog_->openPublish(completedCardJson, sourcePath);
+}
+
+void MainWindow::openCloudDrive(const QString& suggestedVideo) {
+  if (!cloudDriveAvailable_ || !videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
+  if (!cloudDriveDialog_) {
+    cloudDriveDialog_ = new CloudDriveDialog(videoCircleAccessProvider_,
+        maiChatAccountIdProvider_, [this](const QString& path) {
+          if (!openDockedVideo(path)) {
+            QFile::remove(path);
+            showToast(QStringLiteral("视频无法播放"), 13, 3000);
+            return;
+          }
+          if (videoDialog_)
+            connect(videoDialog_, &QObject::destroyed, this,
+                    [path] { QFile::remove(path); });
+        }, this);
+  }
+  cloudDriveDialog_->openDrive(suggestedVideo);
+}
+
 void MainWindow::setFriendQrProvider(std::function<void(FriendQrCompletion)> provider) {
   friendQrProvider_ = std::move(provider);
 }
@@ -4034,6 +4232,10 @@ void MainWindow::setMaiChatNicknameUpdater(
 void MainWindow::setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator) {
   sessionSync_ = coordinator;
   if (!sessionSync_) return;
+  const QString accountRoot = accountAgentDirectory(app_.chatState().ownerUserId());
+  sessionSync_->setDefaultWorkspaceDirectory(
+      accountRoot.isEmpty() ? QString() :
+          QDir(accountRoot).filePath(QStringLiteral("Workspace")));
   QPointer<MainWindow> guard(this);
   sessionSync_->setCatalogHandler([guard](const QJsonArray& sessions) {
     if (!guard) return;
@@ -4053,6 +4255,11 @@ void MainWindow::setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordi
     }
     current.insert(QStringLiteral("online"), false);
     guard->agentRemotePanel_->updateSession(current);
+  });
+  sessionSync_->setDeviceHandler([guard](const QJsonArray& devices) {
+    if (!guard) return;
+    guard->remoteAgentDevices_ = devices;
+    if (guard->agentSessions_) guard->agentSessions_->setRemoteDevices(devices);
   });
   sessionSync_->setPayloadHandler([guard](const QJsonObject& session, const QString& kind,
                                           const QJsonObject& payload) {
@@ -4123,6 +4330,13 @@ void MainWindow::rebuildAgentPage() {
   };
   modelConfig.glmBaseUrl = QStringLiteral("https://open.bigmodel.cn/api/v1");
   modelConfig.deepseekBaseUrl = QStringLiteral("https://api.deepseek.com");
+  modelConfig.reasoningEffortProvider = [] {
+    QSettings settings;
+    const QString value = settings.value(
+        QStringLiteral("agent/reasoningEffort"), QStringLiteral("high")).toString();
+    return value == QStringLiteral("low") || value == QStringLiteral("max") ?
+        value : QStringLiteral("high");
+  };
   modelConfig.arkApiKeyProvider = arkApiKeyProvider_;
   modelConfig.wanCredentialsProvider = wanCredentialsProvider_;
   modelConfig.mediaServiceAccessProvider = mediaServiceAccessProvider_;
@@ -4138,6 +4352,43 @@ void MainWindow::rebuildAgentPage() {
       modelConfig, agentDatabasePath(app_.chatState().ownerUserId()),
       [this](MaiToolRegistry &registry) {
         registerMaiChatHostTools(registry, app_);
+        QPointer<MainWindow> cloudPresenter(this);
+        registerDesktopCloudDriveTools(
+            registry, videoCircleAccessProvider_, this,
+            [cloudPresenter](const QString& path, bool isImage) {
+              if (cloudPresenter.isNull()) return false;
+              if (isImage) {
+                if (cloudPresenter->imagePreviewDialog_) return false;
+                QImage decoded;
+#if defined(MAICHAT_FFMPEG_IMAGE_DECODE)
+                const QByteArray utf8 = path.toUtf8();
+                const MaiImageDecodeResult result = maiImageDecodeFile(utf8.constData(), 4096, 4096);
+                if (result.rgba) {
+                  decoded = QImage(result.rgba, result.width, result.height, result.stride,
+                                   QImage::Format_RGBA8888).copy();
+                  maiImageDecodeFree(result.rgba);
+                }
+#else
+                QImageReader reader(path);
+                reader.setAutoTransform(true);
+                decoded = reader.read();
+#endif
+                if (decoded.isNull()) return false;
+                const QPixmap image = QPixmap::fromImage(decoded);
+                cloudPresenter->openImagePreview(path, nullptr, &image);
+                if (!cloudPresenter->imagePreviewDialog_) return false;
+                QObject::connect(cloudPresenter->imagePreviewDialog_, &QObject::destroyed,
+                                 cloudPresenter.data(), [path] { QFile::remove(path); });
+                return true;
+              }
+              if (!cloudPresenter->openDockedVideo(path)) return false;
+              if (cloudPresenter->videoDialog_)
+                QObject::connect(cloudPresenter->videoDialog_, &QObject::destroyed,
+                                 cloudPresenter.data(), [path] { QFile::remove(path); });
+              return true;
+            });
+        registerDesktopRemoteSessionTools(
+            registry, this, [this] { return sessionSync_; });
         const auto sshPassword =
             [this](const std::string &host, int port,
                    const std::string &username) -> MaiResult<std::string> {
@@ -4215,11 +4466,13 @@ void MainWindow::rebuildAgentPage() {
   agentPanelStack_->addWidget(agentPanel_);
   agentPanelStack_->addWidget(agentRemotePanel_);
   agentSessions_->setRemoteSessions(remoteAgentSessions_);
+  agentSessions_->setRemoteDevices(remoteAgentDevices_);
   wireRemoteAgentPanel();
   const QString accountRoot = accountAgentDirectory(app_.chatState().ownerUserId());
-  agentPanel_->setDefaultWorkspaceDirectory(
-      accountRoot.isEmpty() ? QString() :
-          QDir(accountRoot).filePath(QStringLiteral("Workspace")));
+  const QString defaultWorkspace = accountRoot.isEmpty() ? QString() :
+      QDir(accountRoot).filePath(QStringLiteral("Workspace"));
+  agentPanel_->setDefaultWorkspaceDirectory(defaultWorkspace);
+  if (sessionSync_) sessionSync_->setDefaultWorkspaceDirectory(defaultWorkspace);
 #if defined(MAICHAT_HAS_FFPLAY)
   agentPanel_->setOpenVideoCallback([this](const QString &path, const QStringList &paths) {
     openDockedVideo(path, paths);
@@ -4243,6 +4496,14 @@ void MainWindow::rebuildAgentPage() {
         else
           app_.sendFile(path);
       });
+  connect(agentPanel_, &AgentChatPanel::videoCircleRequested, this,
+          [this] { openVideoCircle(); });
+  connect(agentPanel_, &AgentChatPanel::videoCirclePublishRequested, this,
+          [this](const QString& card, const QString& source) { openVideoCircle(card, source); });
+  connect(agentPanel_, &AgentChatPanel::cloudDriveSaveRequested, this,
+          [this](const QString& source) { openCloudDrive(source); });
+  agentPanel_->setCloudDriveAvailable(cloudDriveAvailable_);
+  probeVideoCircleAvailability();
   const bool modelReady = !modelConfig.baseUrl.isEmpty() &&
                           !modelConfig.apiKey.isEmpty();
   const QString modelLabel = modelReady ? modelConfig.modelName :
@@ -4252,6 +4513,7 @@ void MainWindow::rebuildAgentPage() {
       !modelApiKeys_.isEmpty() ? QStringLiteral("模型未开通") :
                                  QStringLiteral("正在连接模型");
   agentPanel_->setModelLabel(modelLabel, modelReady);
+  agentPanel_->setReasoningEffortLabel(modelConfig.reasoningEffort);
   agentSplitter->addWidget(agentSessions_);
   agentSplitter->addWidget(agentPanelStack_);
   agentSplitter->setStretchFactor(0, 0);
@@ -4279,8 +4541,92 @@ void MainWindow::rebuildAgentPage() {
           });
   connect(agentSessions_, &AgentSessionList::newSessionRequested, agentPanel_,
           [this] {
-            agentPanelStack_->setCurrentWidget(agentPanel_);
-            agentPanel_->openSession();
+            if (agentPanel_->chooseDirectoryAndCreateSession())
+              agentPanelStack_->setCurrentWidget(agentPanel_);
+          });
+  connect(agentSessions_, &AgentSessionList::deleteSessionRequested, this,
+          [this](const QString& sessionId) {
+            MaiSession session;
+            if (!agentController_->agent().getSession(sessionId.toStdString(), session)) {
+              agentSessions_->refresh();
+              return;
+            }
+            const QString title = session.isUntitled()
+                                      ? QStringLiteral("新对话")
+                                      : QString::fromUtf8(session.title.c_str());
+            if (!AppMessageDialog::confirm(
+                    this, QStringLiteral("删除对话"),
+                    QStringLiteral("删除“%1”及其中的聊天记录？\n删除后无法恢复。")
+                        .arg(title),
+                    QStringLiteral("删除"), /*destructive=*/true))
+              return;
+            const auto result = agentController_->agent().submit(
+                MaiDeleteSession{sessionId.toStdString()});
+            if (!result) {
+              showToast(result.error().code() == MaiErrorCode::Busy
+                            ? QStringLiteral("对话仍在执行，请先停止后再删除")
+                            : QString::fromUtf8(result.error().message().c_str()),
+                        13, 3500);
+            }
+          });
+  connect(agentSessions_, &AgentSessionList::remoteCreateRequested, this,
+          [this](const QJsonObject& device) {
+            if (!sessionSync_) {
+              showToast(QStringLiteral("设备同步服务尚未连接"), 13, 3000);
+              return;
+            }
+            QPointer<MainWindow> guard(this);
+            sessionSync_->sendRemoteLifecycle(
+                device, {{QStringLiteral("action"), QStringLiteral("session_create")}},
+                [guard](const QJsonObject& result, const QString& error) {
+                  if (!guard) return;
+                  guard->showToast(error.isEmpty() && result.value(QStringLiteral("ok")).toBool()
+                                       ? QStringLiteral("对话已在所属设备创建")
+                                       : error.isEmpty() ? QStringLiteral("新建对话失败") : error,
+                                   13, 3500);
+                });
+          });
+  connect(agentSessions_, &AgentSessionList::remoteDeleteRequested, this,
+          [this](const QJsonObject& session) {
+            if (!sessionSync_) {
+              showToast(QStringLiteral("设备同步服务尚未连接"), 13, 3000);
+              return;
+            }
+            QString title = session.value(QStringLiteral("title")).toString();
+            if (title.isEmpty() || title == QStringLiteral("New session"))
+              title = QStringLiteral("新对话");
+            if (!AppMessageDialog::confirm(
+                    this, QStringLiteral("删除其他设备的对话"),
+                    QStringLiteral("删除“%1”及其中的聊天记录？\n此操作会在所属设备上执行，删除后无法恢复。")
+                        .arg(title),
+                    QStringLiteral("删除"), /*destructive=*/true))
+              return;
+            const QJsonObject device{{QStringLiteral("device_slot"),
+                                       session.value(QStringLiteral("device_slot"))},
+                                      {QStringLiteral("device_id"),
+                                       session.value(QStringLiteral("device_id"))},
+                                      {QStringLiteral("login_session_id"),
+                                       session.value(QStringLiteral("login_session_id"))}};
+            QPointer<MainWindow> guard(this);
+            sessionSync_->sendRemoteLifecycle(
+                device,
+                {{QStringLiteral("action"), QStringLiteral("session_delete")},
+                 {QStringLiteral("target_session_id"), session.value(QStringLiteral("id"))}},
+                [guard, session](const QJsonObject& result, const QString& error) {
+                  if (!guard) return;
+                  if (!error.isEmpty() || !result.value(QStringLiteral("ok")).toBool()) {
+                    guard->showToast(error.isEmpty() ? QStringLiteral("删除对话失败") : error, 13, 3500);
+                    return;
+                  }
+                  guard->showToast(QStringLiteral("对话已删除"), 13, 2500);
+                  if (guard->agentRemotePanel_ && guard->agentPanelStack_ &&
+                      guard->agentPanelStack_->currentWidget() == guard->agentRemotePanel_ &&
+                      guard->agentRemotePanel_->session().value(QStringLiteral("id")) ==
+                          session.value(QStringLiteral("id"))) {
+                    guard->agentPanelStack_->setCurrentWidget(guard->agentPanel_);
+                    guard->agentSessions_->setCurrent(guard->agentPanel_->sessionId());
+                  }
+                });
           });
   connect(agentPanel_, &AgentChatPanel::sessionListChanged, agentSessions_,
           [this] {
@@ -4297,6 +4643,19 @@ void MainWindow::rebuildAgentPage() {
           });
   connect(agentPanel_, &AgentChatPanel::modelChangeRequested, this,
           &MainWindow::requestAgentModelChange);
+  connect(agentPanel_, &AgentChatPanel::reasoningEffortChangeRequested, this,
+          [this](const QString& effort) {
+            if (effort != QStringLiteral("low") && effort != QStringLiteral("high") &&
+                effort != QStringLiteral("max")) return;
+            QSettings settings;
+            settings.setValue(QStringLiteral("agent/reasoningEffort"), effort);
+            settings.sync();
+            if (settings.status() == QSettings::NoError) {
+              agentPanel_->setReasoningEffortLabel(effort);
+            } else {
+              showToast(QStringLiteral("思考强度保存失败"), 13, 2500);
+            }
+          });
   if (!sessionToRestore.isEmpty())
     agentPanel_->openSession(sessionToRestore);
   if (!remoteToRestore.isEmpty()) {
@@ -4429,6 +4788,7 @@ void MainWindow::showContactsPage() {
 
 void MainWindow::showSettingsPage() {
   refreshSettings();
+  probeCloudDriveAvailability();
   contentStack_->setCurrentWidget(settingsPage_);
   syncNavigationSelection();
 }
@@ -5561,7 +5921,8 @@ void MainWindow::forwardLocalVideo(const QString &path) {
   app_.sendVideo(path);
 }
 
-void MainWindow::openImagePreview(const QString &imagePath, QWidget *source) {
+void MainWindow::openImagePreview(const QString &imagePath, QWidget *source,
+                                  const QPixmap *decodedImage) {
   if (imagePreviewDialog_) {
     if (imagePreviewDialog_->isVisible()) {
       imagePreviewDialog_->raise();
@@ -5570,7 +5931,8 @@ void MainWindow::openImagePreview(const QString &imagePath, QWidget *source) {
     return;
   }
 
-  auto *dialog = new ImagePreviewDialog(imagePath, this);
+  auto *dialog = decodedImage ? new ImagePreviewDialog(*decodedImage, this)
+                              : new ImagePreviewDialog(imagePath, this);
   imagePreviewDialog_ = dialog;
   dialog->setObjectName(QStringLiteral("imagePreviewDialog"));
   dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -6738,7 +7100,8 @@ QWidget *MainWindow::createSettingsRow(const QString &title, QLabel *valueLabel,
 }
 
 void MainWindow::sendCurrentText() {
-  if (app_.chatState().selectedPeerId().isEmpty())
+  const QString peerId = app_.chatState().selectedPeerId();
+  if (peerId.isEmpty())
     return;
   QString text = messageEditor_->toPlainText();
   text.remove(QChar(0xFFFC)); // 去掉内联图片/文件的对象替换占位符
@@ -6747,37 +7110,39 @@ void MainWindow::sendCurrentText() {
   if (text.isEmpty() && attachments.isEmpty())
     return;
 
+  const bool captionAbove = !attachments.isEmpty() &&
+      composerTextPrecedesFirstAttachment(attachments.first().position);
+  const RemoteIMQuote quote = pendingQuote_;
+  const bool hasQuote = hasPendingQuote_;
+  // 发送会同步通知界面刷新，刷新过程可能切换联系人并保存当前草稿。
+  // 先消费这一条的输入，避免已发出的附件又作为未发送草稿恢复出来。
+  messageEditor_->clear();
+  cancelPendingReply();
+  updateComposerState();
+
   if (attachments.isEmpty()) {
-    app_.sendText(text, pendingQuote_, hasPendingQuote_);
-    // 发出去就清掉：引用是「这一条回复」的属性，不是会话的持续状态。
-    // 不清的话下一条普通消息会莫名其妙也带上引用。
-    cancelPendingReply();
+    app_.sendTextTo(peerId, text, quote, hasQuote);
   } else {
     // 文字并入「第一个」附件，合并成一条消息发送；其余附件各自单独发。
     //
     // 配文排在附件上面还是下面，取决于用户在输入框里怎么排的：第一个附件之前
     // 只要有非空白文字，就是「文字在上」。以前这里写死成图上文下，
     // 用户明明是文字在上打的字，发出去却被翻过来。
-    const bool captionAbove =
-        composerTextPrecedesFirstAttachment(attachments.first().position);
     for (int i = 0; i < attachments.size(); ++i) {
       const QString caption = (i == 0) ? text : QString();
       switch (attachments.at(i).kind) {
       case ComposerAttachment::Kind::File:
-        app_.sendFile(attachments.at(i).path, caption, captionAbove);
+        app_.sendFileTo(peerId, attachments.at(i).path, caption, captionAbove);
         break;
       case ComposerAttachment::Kind::Video:
-        app_.sendVideo(attachments.at(i).path, caption, captionAbove);
+        app_.sendVideoTo(peerId, attachments.at(i).path, caption, captionAbove);
         break;
       case ComposerAttachment::Kind::Image:
-        app_.sendImage(attachments.at(i).path, caption, captionAbove);
+        app_.sendImageTo(peerId, attachments.at(i).path, caption, captionAbove);
         break;
       }
     }
   }
-
-  messageEditor_->clear();
-  updateComposerState();
 }
 
 QString MainWindow::latestSelectedMessageId() const {

@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "auth/SecureRefreshTokenStore.h"
+#include "auth/DesktopVideoCircleAccess.h"
 
 struct DesktopLoginRequest {
     QString requestId;
@@ -111,6 +112,7 @@ public:
     std::function<QString()> arkApiKeyProvider() const;
     std::function<QPair<QString, QString>()> bailianCredentialProvider() const;
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider() const;
+    std::function<DesktopVideoCircleAccess()> videoCircleAccessProvider() const;
     DesktopImCredential imCredential() const { return imCredential_; }
     QString authenticatedUserId() const { return userId_; }
     QString maiChatAccountId() const { return accountId_; }
@@ -184,6 +186,7 @@ private:
     struct AccountAccessCache {
         QMutex mutex;
         QString token;
+        QString accountId;
         qint64 expiresAt = 0;
     };
     std::shared_ptr<AccountAccessCache> accountAccess_ =

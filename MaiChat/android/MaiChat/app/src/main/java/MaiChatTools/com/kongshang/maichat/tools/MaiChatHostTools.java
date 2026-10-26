@@ -6,6 +6,7 @@ package com.kongshang.maichat.tools;
 
 import com.kongshang.maichat.AIAssistantController;
 import com.kongshang.maichat.MainActivity;
+import com.kongshang.maichat.MaiCloudDriveAgentTools;
 import com.kongshang.maichat.RemoteIMSessionController;
 import org.json.JSONObject;
 
@@ -17,6 +18,7 @@ public final class MaiChatHostTools {
     private final MobileContactsTools contacts;
     private final MobileTelephonyTools telephony;
     private final MobileMediaTools media;
+    private final MobileScreenCaptureTools screenCapture;
     private final MaiChatIMTools im;
     private final MobileSshTools ssh;
 
@@ -27,11 +29,13 @@ public final class MaiChatHostTools {
         this.contacts = new MobileContactsTools(activity);
         this.telephony = new MobileTelephonyTools(activity);
         this.media = new MobileMediaTools(activity);
+        this.screenCapture = new MobileScreenCaptureTools(activity);
         this.im = new MaiChatIMTools(activity, session);
         this.ssh = new MobileSshTools(activity);
     }
 
     public void onDestroy() {
+        MaiCloudDriveAgentTools.cancelAll(activity);
         photos.onDestroy();
         permissions.onDestroy();
     }
@@ -49,6 +53,10 @@ public final class MaiChatHostTools {
                 AIAssistantController.shared(activity).workspacePdfOutputForHost(
                     arguments.optString("output_path")));
         if (tool.equals("mobile_request_permission")) return permissions.request(arguments);
+        if (tool.equals("mobile_start_screen_share") ||
+            tool.equals("mobile_stop_screen_share") ||
+            tool.equals("mobile_capture_screen"))
+            return screenCapture.execute(tool, arguments);
         if (tool.equals("mobile_get_location")) return permissions.getCurrentLocation();
         if (tool.equals("mobile_list_contacts")) return contacts.list(arguments);
         if (tool.equals("mobile_get_contact")) return contacts.get(arguments);
@@ -59,6 +67,8 @@ public final class MaiChatHostTools {
         if (tool.equals("maichat_play_video") || tool.equals("maichat_video_command") ||
             tool.equals("mobile_take_photo") || tool.equals("mobile_play_local_music"))
             return media.execute(tool, arguments);
+        if (tool.startsWith("maichat_cloud_drive_"))
+            return MaiCloudDriveAgentTools.execute(activity, tool, arguments);
         if (tool.startsWith("mobile_")) return photos.execute(tool, arguments);
         return im.execute(tool, arguments);
     }

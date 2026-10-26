@@ -2,6 +2,326 @@
 import XCTest
 
 final class SocialLoginUITests: XCTestCase {
+    @MainActor func testGroupCreationTextAndPrivateChatIsolation() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-group-ui-test"]
+        app.launch()
+
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 20))
+        actions.tap()
+        let createEntry = app.buttons["发起群聊"]
+        XCTAssertTrue(createEntry.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["添加朋友"].exists)
+        XCTAssertTrue(app.buttons["扫一扫"].exists)
+        let menuScreenshot = XCTAttachment(screenshot: app.screenshot())
+        menuScreenshot.name = "im-group-menu-three-actions"
+        menuScreenshot.lifetime = .keepAlways
+        add(menuScreenshot)
+        createEntry.tap()
+
+        let groupName = app.textFields["im-group-name"]
+        let createButton = app.buttons["im-group-create"]
+        XCTAssertTrue(groupName.waitForExistence(timeout: 5))
+        XCTAssertFalse(createButton.isEnabled)
+        let member = app.buttons["im-group-member-sim-friend-a"]
+        XCTAssertTrue(member.exists)
+        member.tap()
+        groupName.tap()
+        groupName.typeText("项目讨论")
+        XCTAssertTrue(createButton.isEnabled)
+        let pickerScreenshot = XCTAttachment(screenshot: app.screenshot())
+        pickerScreenshot.name = "im-group-creation-selected-friend"
+        pickerScreenshot.lifetime = .keepAlways
+        add(pickerScreenshot)
+        createButton.tap()
+
+        let groupDraft = app.descendants(matching: .any)["im-group-draft"]
+        XCTAssertTrue(groupDraft.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["项目讨论"].exists)
+        XCTAssertTrue(app.staticTexts["2 位成员"].exists)
+        XCTAssertFalse(app.buttons["添加附件"].exists)
+        groupDraft.tap()
+        groupDraft.typeText("群内测试消息")
+        app.buttons["im-group-send"].tap()
+        XCTAssertTrue(app.staticTexts["群内测试消息"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["已收到群消息"].waitForExistence(timeout: 8))
+        let conversationScreenshot = XCTAttachment(screenshot: app.screenshot())
+        conversationScreenshot.name = "im-group-text-and-member-reply"
+        conversationScreenshot.lifetime = .keepAlways
+        add(conversationScreenshot)
+
+        app.buttons["返回会话列表"].tap()
+        let groupRow = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "im-group-conversation-"
+        )).firstMatch
+        XCTAssertTrue(groupRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["已收到群消息"].exists)
+        let listScreenshot = XCTAttachment(screenshot: app.screenshot())
+        listScreenshot.name = "im-group-and-private-conversation-list"
+        listScreenshot.lifetime = .keepAlways
+        add(listScreenshot)
+        let privateChat = app.buttons["im-conversation-sim-friend-b"]
+        XCTAssertTrue(privateChat.exists)
+        privateChat.tap()
+        XCTAssertFalse(app.staticTexts["群内测试消息"].exists)
+        XCTAssertFalse(app.staticTexts["已收到群消息"].exists)
+        app.buttons["返回会话列表"].tap()
+        groupRow.tap()
+        XCTAssertTrue(app.staticTexts["群内测试消息"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor func testGroupPartialCreationOpensExistingGroup() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-group-activation-fail-ui-test"]
+        app.launch()
+
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 20))
+        actions.tap()
+        app.buttons["发起群聊"].tap()
+        let groupName = app.textFields["im-group-name"]
+        XCTAssertTrue(groupName.waitForExistence(timeout: 5))
+        app.buttons["im-group-member-sim-friend-a"].tap()
+        groupName.tap()
+        groupName.typeText("待恢复群聊")
+        let createButton = app.buttons["im-group-create"]
+        createButton.tap()
+
+        let recover = app.buttons["im-group-open-recovered"]
+        XCTAssertTrue(recover.waitForExistence(timeout: 8))
+        XCTAssertFalse(createButton.isEnabled)
+        XCTAssertFalse(app.descendants(matching: .any)["im-group-draft"].exists)
+        let recoveryScreenshot = XCTAttachment(screenshot: app.screenshot())
+        recoveryScreenshot.name = "im-group-created-activation-pending"
+        recoveryScreenshot.lifetime = .keepAlways
+        add(recoveryScreenshot)
+
+        recover.tap()
+        let groupDraft = app.descendants(matching: .any)["im-group-draft"]
+        XCTAssertTrue(groupDraft.waitForExistence(timeout: 8))
+        groupDraft.tap()
+        groupDraft.typeText("恢复后的首条群消息")
+        app.buttons["im-group-send"].tap()
+        XCTAssertTrue(app.staticTexts["已收到群消息"].waitForExistence(timeout: 8))
+        app.buttons["返回会话列表"].tap()
+        actions.tap()
+        app.buttons["发起群聊"].tap()
+        XCTAssertTrue(app.textFields["im-group-name"].waitForExistence(timeout: 5))
+        XCTAssertFalse(recover.exists)
+    }
+
+    @MainActor func testLeavingGroupClosesOpenGroupWithoutLeakingHistory() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-group-ui-test"]
+        app.launch()
+        openFixtureGroup(in: app, named: "退群前的群聊")
+        let draft = app.descendants(matching: .any)["im-group-draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 8))
+        draft.tap()
+        draft.typeText("仅原群可见的消息")
+        app.buttons["im-group-send"].tap()
+        XCTAssertTrue(app.staticTexts["仅原群可见的消息"].waitForExistence(timeout: 8))
+
+        app.buttons["fixture-drop-group"].tap()
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 8))
+        XCTAssertTrue(actions.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["im-group-header"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "im-group-conversation-"
+        )).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["仅原群可见的消息"].exists)
+        XCTAssertTrue(app.buttons["im-conversation-sim-friend-b"].exists)
+    }
+
+    @MainActor func testSwitchingAccountClosesOldGroupAndHistory() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-group-ui-test"]
+        app.launch()
+        openFixtureGroup(in: app, named: "旧账号群聊")
+        let draft = app.descendants(matching: .any)["im-group-draft"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 8))
+        draft.tap()
+        draft.typeText("仅旧账号可见的消息")
+        app.buttons["im-group-send"].tap()
+        XCTAssertTrue(app.staticTexts["仅旧账号可见的消息"].waitForExistence(timeout: 8))
+
+        app.buttons["fixture-switch-owner"].tap()
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 8))
+        XCTAssertTrue(actions.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["im-group-header"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "im-group-conversation-"
+        )).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["仅旧账号可见的消息"].exists)
+        XCTAssertTrue(app.staticTexts["暂无会话"].exists)
+    }
+
+    @MainActor private func openFixtureGroup(in app: XCUIApplication, named name: String) {
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 20))
+        actions.tap()
+        app.buttons["发起群聊"].tap()
+        let groupName = app.textFields["im-group-name"]
+        XCTAssertTrue(groupName.waitForExistence(timeout: 5))
+        app.buttons["im-group-member-sim-friend-a"].tap()
+        groupName.tap()
+        groupName.typeText(name)
+        app.buttons["im-group-create"].tap()
+        XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 8))
+    }
+
+    @MainActor func testNormalAppMessageHeaderAndAddFriendMenu() async throws {
+        let fixtureURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let response = try? await URLSession.shared.data(from: fixtureURL),
+              (response.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机测试账号服务")
+        }
+        let certificateURL = URL(string: "http://127.0.0.1:18190/test/cert")!
+        let (certificate, _) = try await URLSession.shared.data(from: certificateURL)
+        let app = XCUIApplication()
+        app.launchArguments = ["--friend-qr-ui-test"]
+        app.launchEnvironment["MAICHAT_FRIEND_QR_TEST_VALUE"] =
+            "maichat://friend/add?user_id=mac-multi-ai-code"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 30))
+        let notificationLater = app.buttons["稍后"]
+        if notificationLater.waitForExistence(timeout: 10) {
+            notificationLater.tap()
+        }
+        let imError = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "IM 操作失败"
+        )).firstMatch
+        if imError.waitForExistence(timeout: 2) {
+            imError.tap()
+        }
+        XCTAssertTrue(app.staticTexts["消息"].exists)
+        let header = XCTAttachment(screenshot: app.screenshot())
+        header.name = "normal-app-im-message-header"
+        header.lifetime = .keepAlways
+        add(header)
+
+        actions.tap()
+        let addFriend = app.buttons["添加朋友"]
+        XCTAssertTrue(addFriend.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["扫一扫"].exists)
+        let menu = XCTAttachment(screenshot: app.screenshot())
+        menu.name = "normal-app-im-add-friend-menu"
+        menu.lifetime = .keepAlways
+        add(menu)
+        addFriend.tap()
+        XCTAssertTrue(app.textFields["手机号或账号 ID"].waitForExistence(timeout: 5))
+        app.buttons["取消"].tap()
+        XCTAssertTrue(actions.isHittable)
+
+        actions.tap()
+        app.buttons["扫一扫"].tap()
+        XCTAssertTrue(app.buttons["模拟识别二维码"].waitForExistence(timeout: 5))
+        app.buttons["模拟识别二维码"].tap()
+        let scannedAccount = app.textFields["手机号或账号 ID"]
+        XCTAssertTrue(scannedAccount.waitForExistence(timeout: 5))
+        XCTAssertEqual(scannedAccount.value as? String, "mac-multi-ai-code")
+        app.buttons["取消"].tap()
+        XCTAssertTrue(actions.isHittable)
+    }
+
+    @MainActor func testMessageAddFriendMenuOpensSharedDialog() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-add-friend-menu-ui-test",
+                               "--friend-qr-ui-test"]
+        app.launchEnvironment["MAICHAT_FRIEND_QR_TEST_VALUE"] =
+            "maichat://friend/add?user_id=mac-multi-ai-code"
+        app.launch()
+
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["消息"].exists)
+        let headerScreenshot = XCTAttachment(screenshot: app.screenshot())
+        headerScreenshot.name = "im-message-header"
+        headerScreenshot.lifetime = .keepAlways
+        add(headerScreenshot)
+        actions.tap()
+        let addFriend = app.buttons["添加朋友"]
+        XCTAssertTrue(addFriend.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["扫一扫"].exists)
+        let menuScreenshot = XCTAttachment(screenshot: app.screenshot())
+        menuScreenshot.name = "im-message-add-friend-menu"
+        menuScreenshot.lifetime = .keepAlways
+        add(menuScreenshot)
+
+        addFriend.tap()
+        let accountField = app.textFields["手机号或账号 ID"]
+        XCTAssertTrue(accountField.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["扫一扫"].exists)
+        XCTAssertTrue(app.buttons["我的二维码"].exists)
+        let dialogScreenshot = XCTAttachment(screenshot: app.screenshot())
+        dialogScreenshot.name = "im-message-add-friend-dialog"
+        dialogScreenshot.lifetime = .keepAlways
+        add(dialogScreenshot)
+        app.buttons["取消"].tap()
+        XCTAssertFalse(accountField.exists)
+        XCTAssertTrue(actions.isHittable)
+
+        actions.tap()
+        XCTAssertTrue(app.buttons["扫一扫"].waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.45)).tap()
+        XCTAssertFalse(app.buttons["扫一扫"].exists)
+
+        actions.tap()
+        app.buttons["扫一扫"].tap()
+        let simulatedScan = app.buttons["模拟识别二维码"]
+        XCTAssertTrue(simulatedScan.waitForExistence(timeout: 5))
+        let scannerScreenshot = XCTAttachment(screenshot: app.screenshot())
+        scannerScreenshot.name = "im-message-friend-qr-scanner"
+        scannerScreenshot.lifetime = .keepAlways
+        add(scannerScreenshot)
+        app.buttons["关闭"].tap()
+        XCTAssertTrue(actions.waitForExistence(timeout: 5))
+        XCTAssertFalse(accountField.exists)
+
+        actions.tap()
+        app.buttons["扫一扫"].tap()
+        XCTAssertTrue(simulatedScan.waitForExistence(timeout: 5))
+        simulatedScan.tap()
+        XCTAssertTrue(accountField.waitForExistence(timeout: 5))
+        XCTAssertEqual(accountField.value as? String, "mac-multi-ai-code")
+        let routedFriend = XCTAttachment(screenshot: app.screenshot())
+        routedFriend.name = "im-friend-code-routed"
+        routedFriend.lifetime = .keepAlways
+        add(routedFriend)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(actions.isHittable)
+    }
+
+    @MainActor func testMessageScanRejectsUnrelatedQRCode() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-add-friend-menu-ui-test",
+                               "--friend-qr-ui-test"]
+        app.launchEnvironment["MAICHAT_FRIEND_QR_TEST_VALUE"] = "https://example.com/other"
+        app.launch()
+
+        let actions = app.buttons["im-message-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 15))
+        actions.tap()
+        app.buttons["扫一扫"].tap()
+        app.buttons["模拟识别二维码"].tap()
+        XCTAssertTrue(app.staticTexts["这不是 MaiChat 好友或电脑登录二维码"]
+            .waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["手机号或账号 ID"].exists)
+        app.buttons["重新扫描"].tap()
+        XCTAssertFalse(app.staticTexts["这不是 MaiChat 好友或电脑登录二维码"].exists)
+        app.buttons["关闭"].tap()
+        XCTAssertTrue(actions.isHittable)
+    }
+
     @MainActor func testLiveMaiChatAccountPasswordLoginShowsMaiChatId() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let accountId = environment["MAICHAT_TEST_A_ID"],

@@ -11,6 +11,7 @@ class AgentController;
 class DesktopSessionSyncHost final {
 public:
     explicit DesktopSessionSyncHost(AgentController& controller);
+    void setDefaultWorkspaceDirectory(const QString& directory);
 
     QJsonArray rootSessions() const;
     QJsonObject historyPage(const QString& sessionId, const QString& beforeId, int limit) const;
@@ -18,4 +19,5 @@ public:
 
 private:
     AgentController& controller_;
+    QString defaultWorkspaceDirectory_;
 };

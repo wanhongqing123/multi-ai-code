@@ -37,6 +37,7 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/dict.h"
 #include "libavutil/fifo.h"
+#include "libavutil/hwcontext.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/time.h"
@@ -2039,6 +2040,30 @@ static int configure_video_filters(AVFilterGraph *graph, VideoState *is, const c
             if (displaymatrix && displaymatrix[4] < 0)
                 INSERT_FILT("vflip", NULL);
         }
+    }
+
+    /* VideoToolbox frames cannot pass through the software rotation filters.
+     * Download only when the display matrix actually inserted a filter, and
+     * keep the decoder's software pixel format (P010 for Main 10) so that the
+     * host renderer still receives the original bit depth and color tags. */
+    if (frame->format == AV_PIX_FMT_VIDEOTOOLBOX && last_filter != filt_out) {
+        const AVHWFramesContext *hw_frames;
+        const char *sw_format_name;
+        char format_args[64];
+
+        if (!frame->hw_frames_ctx) {
+            ret = AVERROR(EINVAL);
+            goto fail;
+        }
+        hw_frames = (const AVHWFramesContext *)frame->hw_frames_ctx->data;
+        sw_format_name = av_get_pix_fmt_name(hw_frames->sw_format);
+        if (!sw_format_name) {
+            ret = AVERROR(EINVAL);
+            goto fail;
+        }
+        snprintf(format_args, sizeof(format_args), "pix_fmts=%s", sw_format_name);
+        INSERT_FILT("format", format_args);
+        INSERT_FILT("hwdownload", NULL);
     }
 
     if ((ret = configure_filtergraph(graph, vfilters, filt_src, last_filter)) < 0)

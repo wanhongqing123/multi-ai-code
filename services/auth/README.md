@@ -11,6 +11,8 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 默认关闭；未设为 `1` 时 `/v1/video-circle/` 全部返回 404。开启前必须让账号服务
 与素材签名服务配置**同一个**至少 32 字符的受限
 `MAICHAT_VIDEO_CIRCLE_INTERNAL_KEY`，并配置实际使用的 `MAICHAT_MEDIA_PORT`。
+已登录用户可用 `GET /v1/video-circle/blocks` 取回自己屏蔽的作者，随后通过
+`POST /v1/video-circle/blocks/remove` 解除屏蔽；列表不包含其他用户的关系。
 账号服务只通过 loopback 请求素材签名服务核对 OSS 对象、签发 60 秒读取 URL
 和删除对象；视频字节不经账号服务。上传者提交的是来源任务声明，仍须管理员实际
 观看、核对 AI 标识后批准。批准最早发生在提交 15 分钟后，此时原上传签名已过期；
@@ -25,6 +27,74 @@ Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话�
 
 这只是受开关保护的服务端基础能力。发布入口、三端浏览、真实 OSS、运营值班、
 AI 标识与协议更新尚未完整验收前，**不要在生产环境开启**该开关或公开列表。
+
+## 私人图片与视频云盘控制面（默认关闭）
+
+`MAICHAT_CLOUD_DRIVE_ENABLED` 默认关闭；未设为 `1` 时所有
+`/v1/cloud-drive/` 接口返回 404。开启需要账号服务和素材签名服务配置同一个
+至少 32 字符的 `MAICHAT_CLOUD_DRIVE_INTERNAL_KEY`。账号服务通过 loopback
+调用素材服务；图片和视频字节由三端客户端直接传私有 OSS，查看也直连 OSS。
+灰度开启时，在账号服务设置 `MAICHAT_CLOUD_DRIVE_ALLOWED_ACCOUNTS` 为逗号分隔的
+MaiChat 账号 ID，例如 `cloud_owner,cloud_viewer`。名单外的已登录账号访问全部
+`/v1/cloud-drive/` 接口均返回 404，客户端会隐藏入口；账号注销和后台 OSS 清理仍
+处理这些账号原有的云盘文件。未设置该变量或设置为 `*` 时，开启后的所有账号均可访问。
+空值、无效或重复账号 ID 会使账号服务拒绝启动，避免误开放。
+支持 MP4 (`video/mp4`) 与 iPhone 常见 MOV (`video/quicktime`)，以及 JPG/JPEG
+(`image/jpeg`)、PNG (`image/png`)、WebP (`image/webp`) 和 HEIC (`image/heic`)。
+单图片最多 20,000,000 字节，以满足 OSS 在线缩图的源文件 20 MB 限制。单视频最多
+2,000,000,000 字节，每账号默认 10,000,000,000 字节；`MAICHAT_CLOUD_DRIVE_QUOTA_BYTES`
+可调整账号容量，`MAICHAT_CLOUD_DRIVE_MAX_VIDEO_BYTES` 只能向下调整单文件上限。
+数据库事务原子计算已完成文件、未完成上传和清理失败对象的配额。
+
+上传使用 OSS Multipart Upload，每片 8 MiB；上传会话保留 7 天，每片签名仅保留
+5 分钟。签名包含该片固定 `Content-Length` 与 `Content-MD5`，客户端只上传已签名
+片号；完成时账号服务从 OSS 重新列出所有分片，核对片号、大小与 ETag，再要求素材服务
+完成组装并 HEAD 核对最终对象。客户端不传可作为事实来源的 ETag 清单。取消、删除、
+账号注销会隐藏云盘文件并尝试 abort/delete，失败留在 `cleanup_pending`，每小时重试。
+若 OSS 正在组装分片，删除后会保留 24 小时清理租约和配额占用，期间重复
+HEAD 核验，防止迟到的 Complete 再生成未登记对象。
+清理还通过仅限内部调用的签名服务按账号与**精确对象键**分页列举未完成
+Multipart，逐个中止并重新列举确认已空；若初始化响应丢失，也能找回该键的
+upload ID。只有对象 HEAD 不存在、未完成 Multipart 列表为空、24 小时保护期
+（如适用）已结束，且清理版本号未被并发更新时，才删除该文件的数据库元数据
+并释放预留容量。OSS 核验失败则保留待清理记录和容量，每小时重试。
+对旧版已经标为 `deleted, cleanup_pending=0` 的行，后台也分批重新核对同一组
+OSS 事实；核对成功可直接删除元数据，不重新占用用户容量。若核对失败或删除距今
+不足 24 小时，会先恢复待清理状态和容量预留。账号注销只有在该账号的云盘
+元数据行全部清除后才能完成，避免漏过旧版墓碑。
+7 天到期的未完成上传自动进入清理队列。完整接口（均需账号 Bearer）：
+
+| 方法与路径 | 请求与结果 |
+|---|---|
+| `POST /v1/cloud-drive/videos/uploads` | `{name,size_bytes,content_type}` → `{video_id,upload_id,media_type,part_size,parts_total,upload_expires_at,quota}`；图片和视频共用此上传协议 |
+| `POST /v1/cloud-drive/videos/uploads/{id}/parts/{number}/sign` | `{content_md5_base64}` → `{part_number,part_size_bytes,upload_url,upload_headers,expires_in}`；只向 OSS PUT 文件分片 |
+| `GET /v1/cloud-drive/videos/uploads/{id}/parts` | OSS 分片事实列表；已完成返回 `status:"ready"`；过期返回 410 |
+| `POST /v1/cloud-drive/videos/uploads/{id}/complete` | 空 JSON；服务端核对并组装，返回 `status:"ready"`，可重复调用 |
+| `DELETE /v1/cloud-drive/videos/uploads/{id}` | 取消上传，执行 OSS abort 与删除；失败返回 202 并重试 |
+| `GET /v1/cloud-drive/videos?before=` | 只列出本人已完成文件，50 条游标分页；每项有 `media_type: image|video`，并包含 `quota` |
+| `GET /v1/cloud-drive/videos/{id}/play-link` | 只向所有者签发 60 秒私有原文件读取 URL，并返回 `size_bytes` / `content_type` 供客户端下载前检查空间 |
+| `GET /v1/cloud-drive/videos/{id}/thumbnail-link` | 只向所有者签发 60 秒私有 OSS 缩图或第 0 毫秒视频截帧 URL；返回 `thumbnail_url`、`thumbnail_expires_in`、`content_type: image/jpeg` |
+| `DELETE /v1/cloud-drive/videos/{id}` | 删除本人文件；失败返回 202 并重试 |
+
+缩略图由 OSS 按需处理，处理参数纳入 V4 签名，不在账号服务保存或转发媒体字节。
+图片缩图源文件上限为 20 MB；视频截帧仅支持 H.264/H.265，其他编码应显示占位图。
+视频截帧按调用计费，客户端应只为可见文件请求并复用未到期链接。
+
+上线前需独立验收真实 OSS 私有 Bucket、禁用版本控制、分片签名中固定 Content-Length
+是否被 OSS 实际执行、重复上传与 HEAD 类型、以及 RAM 最小权限。OSS 官方明确
+[PostPolicy 不支持断点续传](https://www.alibabacloud.com/help/en/oss/how-do-i-limit-object-formats-and-sizes-when-i-upload-objects-to-oss)，
+因此不能复用视频圈的单次 PUT 或表单上传。还须为 `cloud-drive/` 配置
+[自动终止过期未完成 Multipart Upload 的生命周期规则](https://www.alibabacloud.com/help/en/oss/user-guide/multipart-upload)，
+覆盖服务在 OSS init 成功但数据库写入前崩溃所产生的孤儿 upload ID。
+运营清理脚本须显式加 `--include-cloud-drive`，先预览后执行；会扫描本人已完成对象
+和未完成分片。2026-10-25 已在专用私有 Bucket 完成单个 8 MiB 视频的真实
+OSS 分片签名、上传、Complete、HEAD、限时 GET 摘要核对及删除；共用 C++ 客户端
+完成恰好 2 GB 的暂停、新进程续传、签名 GET SHA-256 对照和删除。限权云盘 RAM
+身份无法访问旧素材桶；同键覆盖被拒绝、签名链接过期后被拒绝，临时账号注销清理
+已在真实 OSS 验证，以上测试残留均为零。三端真实账号界面与有效视频播放尚未完成，
+生产云盘开关保持关闭。
+真实验收记录与剩余步骤见
+[`docs/testing/maichat-cloud-drive-oss-acceptance.md`](../../docs/testing/maichat-cloud-drive-oss-acceptance.md)。
 
 ## 多端 Session 同步服务（开发中）
 
@@ -46,17 +116,49 @@ Android 模拟器完成 JNI/WSS 握手及远端会话界面测试；Mac 和 Wind
 | `op` 或推送 | 用途 |
 |---|---|
 | `presence` | 当前设备报告安装实例、设备名与本地根 Session 快照；约每 15 秒更新 |
-| `catalog` 推送 | 同账号 Session 目录变化时立即推送，45 秒无上报标记离线 |
+| `catalog` 推送 | 同账号设备和 Session 目录变化时立即推送；`devices` 包含尚无 Session 的设备，45 秒无上报标记离线 |
 | `inbox` 推送 | 向当前登录设备投递消息；客户端处理后明确确认 |
-| `send` | 给同账号指定设备的指定 Session 送唯一 ID 的操作或可见事件 |
+| `send` | 给同账号指定设备的指定 Session 送唯一 ID 的操作与执行结果 |
+| `history` | 从服务端持久群消息表按游标读取同一份 Session 历史 |
+| `publish` | 所属设备提交正式消息和待处理状态，服务保存并通知其他槽位 |
+| `room-delete` | 所属设备删除该 Session 的持久群消息及状态 |
 | `ack` | 确认收件，服务随后清理临时正文；收据保留 30 天防重复提交 |
 | `reauth` | 连接期间提交新的账号访问令牌；仅同一账号、设备名额和登录代次可原位更新鉴权 |
 
-已发布的旧客户端仍可使用原 HTTP `/api/v1/session-sync/` 路由，升级期间保留；
-新客户端不轮询它。每条设备消息的 JSON 载荷最多 64 KiB，请求帧最多 96 KiB；长历史由所属设备分页发送，
-大文件另按需分块。`send` 的 200 只表示临时信箱已接收，客户端仍须等待所属设备的
-执行确认。带副作用的 `command` 首次取件后不自动重投；可见事件在确认前可重投。
+新客户端统一使用服务端持久群消息；旧的设备间 `history_request`/`history_page`
+协议已移除，服务与各端需要统一升级。每条设备消息的 JSON 载荷最多 64 KiB，
+单条持久群消息最多 48 KiB，请求帧最多 96 KiB；长历史由所属设备限速回填，
+用户从服务端分页读取。大文件另按需分块。`send` 的 200 只表示临时信箱已接收，
+客户端仍须等待所属设备的执行确认。带副作用的 `command` 首次取件后不自动重投；
+可见事件在确认前可重投。
 服务重启后所有设备先显示离线，直到重新上报心跳。
+
+远端创建、删除和切换 Session Workspace 复用 `send` 的设备信箱。客户端在 `catalog.devices`
+选择在线的所属设备，使用其 `device_slot` 与 `login_session_id` 作为 `to_slot`
+和 `to_login_session_id`。三种命令都使用保留的
+`session_id:"session_lifecycle"`；创建不要求目标设备已经有 Session：
+
+```json
+{"to_slot":"mac","to_login_session_id":"mac-login","client_message_id":"create-1","session_id":"session_lifecycle","kind":"command","payload":{"action":"session_create"}}
+{"to_slot":"mac","to_login_session_id":"mac-login","client_message_id":"delete-1","session_id":"session_lifecycle","kind":"command","payload":{"action":"session_delete","target_session_id":"ses_123"}}
+{"to_slot":"mac","to_login_session_id":"mac-login","client_message_id":"workspace-1","session_id":"session_lifecycle","kind":"command","payload":{"action":"session_set_workspace","target_session_id":"ses_123","workspace_path":"/Users/example/project"}}
+```
+
+创建时可选传 `workspace_path`，必须是绝对路径；省略则由所属设备使用默认
+Workspace。切换 Workspace 时必须指定已存在 Session 的 ID 和绝对路径。
+服务端只检查路径格式及目标 Session 目录；所属设备检查目录真实存在且可用、
+当前 Session 是否忙碌，然后在本地执行。所属设备完成创建、删除或切换后上报 `presence`
+刷新目录，并以同一保留 Session ID 返回执行结果；结果和目录刷新无固定先后：
+
+```json
+{"to_slot":"ios_phone","to_login_session_id":"phone-login","client_message_id":"create-result-1","session_id":"session_lifecycle","kind":"event","payload":{"type":"command_result","command_id":"create-1","result":{"ok":true,"session_id":"ses_123"}}}
+```
+
+失败结果使用 `result:{"ok":false,"error":"原因"}`。服务端只接受同账号、
+在线、当前登录代次的目标；删除与切换命令要求目标 Session 已在所属设备目录中；
+结果必须对应原命令 ID 与发送双方。`send` 返回 200 仅表示已投递到信箱，
+不能当作本地创建、删除或切换成功。若目标已离线或命令已投递却没有结果，客户端
+应显示未确认状态并刷新目录，不得自动重发带副作用的命令。
 
 见 [完整产品流程与验收边界](../../docs/design/maichat-multidevice-session-sync-20261019.md)。
 部署时在同一 ECS 上为 `maichatsync` 创建独立的可写目录
@@ -120,7 +222,8 @@ Android 模拟器完成 JNI/WSS 握手及远端会话界面测试；Mac 和 Wind
    根据申请编号核对当前账号。先备份账号库与设备同步库。
 2. 分别对同一申请编号运行 `node purge-tencent-account.js <申请编号>` 和
    `node purge-session-sync-account.js <申请编号>` 预检；核对后用各自的
-   `--execute <申请编号>` 执行。后者还需要设备同步库路径环境变量。
+   `--execute <申请编号>` 执行。后者还需要设备同步库路径环境变量，并清理
+   该账号的 Session 群消息和权限状态持久记录。
 3. 在素材服务环境中对该 MaiChat ID 运行 `node purge-account-assets.js <账号>`
    预检，再用 `--execute <账号> <同一账号>` 清理本服务能归属的 OSS 对象。旧版未带
    账号前缀的对象无法靠此脚本识别，必须结合申请人的素材记录人工核查；Ark

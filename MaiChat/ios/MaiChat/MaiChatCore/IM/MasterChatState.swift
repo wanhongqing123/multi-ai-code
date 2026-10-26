@@ -177,6 +177,19 @@ public enum RemoteIMMessageOrigin: String, Codable, Equatable, Sendable {
     case machine
 }
 
+public enum RemoteIMConversationID: Hashable, Sendable {
+    case direct(String)
+    case group(String)
+}
+
+public enum RemoteIMGroupActivationCodec {
+    private static let payload = Data(#"{"type":"maichat_group_activation","v":1}"#.utf8)
+
+    public static func encode() -> Data { payload }
+
+    public static func isActivation(_ data: Data) -> Bool { data == payload }
+}
+
 public enum RemoteIMActivityKind: String, Codable, Equatable, Sendable {
     case humanTyping = "human-typing"
     case machineWorking = "machine-working"
@@ -1220,6 +1233,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
     public var remoteID: String?
     public let fromUserID: String
     public let toUserID: String
+    public let groupID: String?
     public var text: String
     public var mediaCaption: String?
     public var captionAbove: Bool
@@ -1239,6 +1253,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         remoteID: String? = nil,
         fromUserID: String,
         toUserID: String,
+        groupID: String? = nil,
         text: String,
         mediaCaption: String? = nil,
         captionAbove: Bool = false,
@@ -1257,6 +1272,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         self.remoteID = remoteID
         self.fromUserID = fromUserID
         self.toUserID = toUserID
+        self.groupID = groupID
         self.text = text
         self.mediaCaption = mediaCaption
         self.captionAbove = captionAbove
@@ -1277,6 +1293,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         case remoteID
         case fromUserID
         case toUserID
+        case groupID
         case text
         case mediaCaption
         case captionAbove
@@ -1300,6 +1317,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         remoteID = try container.decodeIfPresent(String.self, forKey: .remoteID)
         fromUserID = try container.decode(String.self, forKey: .fromUserID)
         toUserID = try container.decode(String.self, forKey: .toUserID)
+        groupID = try container.decodeIfPresent(String.self, forKey: .groupID)
         text = try container.decode(String.self, forKey: .text)
         mediaCaption = try container.decodeIfPresent(String.self, forKey: .mediaCaption)
         captionAbove = try container.decodeIfPresent(Bool.self, forKey: .captionAbove) ?? false
@@ -1321,6 +1339,7 @@ public struct RemoteIMMessage: Identifiable, Codable, Equatable, Sendable {
         try container.encodeIfPresent(remoteID, forKey: .remoteID)
         try container.encode(fromUserID, forKey: .fromUserID)
         try container.encode(toUserID, forKey: .toUserID)
+        try container.encodeIfPresent(groupID, forKey: .groupID)
         try container.encode(text, forKey: .text)
         try container.encodeIfPresent(mediaCaption, forKey: .mediaCaption)
         if captionAbove {
@@ -1493,7 +1512,12 @@ public struct MasterChatState: Equatable {
     public private(set) var contactGroups: [RemoteIMContactGroup]
     public private(set) var messages: [RemoteIMMessage]
     public private(set) var selectedPeerID: String?
-    private var conversationMessagesByPeerID: [String: [RemoteIMMessage]]
+    public private(set) var selectedGroupID: String?
+    public var selectedConversation: RemoteIMConversationID? {
+        if let selectedGroupID { return .group(selectedGroupID) }
+        return selectedPeerID.map(RemoteIMConversationID.direct)
+    }
+    private var conversationMessagesByID: [RemoteIMConversationID: [RemoteIMMessage]]
     private var messageIndexByID: [UUID: Int]
     private var messageIDByRemoteID: [String: UUID]
 
@@ -1502,7 +1526,8 @@ public struct MasterChatState: Equatable {
             left.contacts == right.contacts &&
             left.contactGroups == right.contactGroups &&
             left.messages == right.messages &&
-            left.selectedPeerID == right.selectedPeerID
+            left.selectedPeerID == right.selectedPeerID &&
+            left.selectedGroupID == right.selectedGroupID
     }
 
     public init(ownerUserID: String) {
@@ -1511,7 +1536,8 @@ public struct MasterChatState: Equatable {
         self.contactGroups = []
         self.messages = []
         self.selectedPeerID = nil
-        self.conversationMessagesByPeerID = [:]
+        self.selectedGroupID = nil
+        self.conversationMessagesByID = [:]
         self.messageIndexByID = [:]
         self.messageIDByRemoteID = [:]
     }
@@ -1521,7 +1547,8 @@ public struct MasterChatState: Equatable {
         contacts: [RemoteIMContact],
         contactGroups: [RemoteIMContactGroup] = [],
         messages: [RemoteIMMessage],
-        selectedPeerID: String? = nil
+        selectedPeerID: String? = nil,
+        selectedGroupID: String? = nil
     ) {
         self.ownerUserID = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.contactGroups = Self.normalizedContactGroups(contactGroups)
@@ -1531,7 +1558,7 @@ public struct MasterChatState: Equatable {
             groupNames: Set(self.contactGroups.map(\.name))
         )
         self.messages = Self.normalizedMessages(messages, ownerUserID: self.ownerUserID)
-        self.conversationMessagesByPeerID = [:]
+        self.conversationMessagesByID = [:]
         self.messageIndexByID = [:]
         self.messageIDByRemoteID = [:]
         Self.addMissingContacts(from: self.messages, ownerUserID: self.ownerUserID, contacts: &self.contacts)
@@ -1545,6 +1572,8 @@ public struct MasterChatState: Equatable {
         } else {
             self.selectedPeerID = self.contacts.first?.userID
         }
+        let cleanSelectedGroupID = selectedGroupID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.selectedGroupID = cleanSelectedGroupID?.isEmpty == false ? cleanSelectedGroupID : nil
         rebuildMessageIndexes()
     }
 
@@ -1599,6 +1628,10 @@ public struct MasterChatState: Equatable {
         guard !ownerUserID.isEmpty else { return messages }
         return messages
             .filter { message in
+                if let groupID = message.groupID {
+                    return !groupID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                        message.toUserID == groupID && !message.fromUserID.isEmpty
+                }
                 guard message.fromUserID == ownerUserID || message.toUserID == ownerUserID else {
                     return false
                 }
@@ -1620,6 +1653,7 @@ public struct MasterChatState: Equatable {
     ) {
         guard !ownerUserID.isEmpty else { return }
         for message in messages {
+            if message.groupID != nil { continue }
             let peerID = message.fromUserID == ownerUserID ? message.toUserID : message.fromUserID
             let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard RemoteIMPeerPolicy.isValidPeer(
@@ -1747,7 +1781,7 @@ public struct MasterChatState: Equatable {
         guard !cleanUserID.isEmpty else { return }
         contacts.removeAll { $0.userID == cleanUserID }
         messages.removeAll { message in
-            message.fromUserID == cleanUserID || message.toUserID == cleanUserID
+            message.groupID == nil && (message.fromUserID == cleanUserID || message.toUserID == cleanUserID)
         }
         rebuildMessageIndexes()
         if selectedPeerID == cleanUserID ||
@@ -1761,7 +1795,7 @@ public struct MasterChatState: Equatable {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanUserID.isEmpty else { return }
         messages.removeAll { message in
-            message.fromUserID == cleanUserID || message.toUserID == cleanUserID
+            message.groupID == nil && (message.fromUserID == cleanUserID || message.toUserID == cleanUserID)
         }
         rebuildMessageIndexes()
     }
@@ -1773,24 +1807,43 @@ public struct MasterChatState: Equatable {
             ownerUserID: ownerUserID
         ), contacts.contains(where: { $0.userID == cleanUserID }) else { return }
         selectedPeerID = cleanUserID
+        selectedGroupID = nil
+    }
+
+    public mutating func selectGroup(groupID: String) {
+        let cleanGroupID = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanGroupID.isEmpty else { return }
+        selectedGroupID = cleanGroupID
+    }
+
+    public mutating func clearSelectedGroup() {
+        selectedGroupID = nil
     }
 
     public func messages(with peerID: String) -> [RemoteIMMessage] {
         let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPeerID.isEmpty else { return [] }
-        return conversationMessagesByPeerID[cleanPeerID] ?? []
+        return conversationMessagesByID[.direct(cleanPeerID)] ?? []
     }
 
     public func latestMessage(with peerID: String) -> RemoteIMMessage? {
         let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPeerID.isEmpty else { return nil }
-        return conversationMessagesByPeerID[cleanPeerID]?.last
+        return conversationMessagesByID[.direct(cleanPeerID)]?.last
     }
 
     public func messageCount(with peerID: String) -> Int {
         let cleanPeerID = peerID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanPeerID.isEmpty else { return 0 }
-        return conversationMessagesByPeerID[cleanPeerID]?.count ?? 0
+        return conversationMessagesByID[.direct(cleanPeerID)]?.count ?? 0
+    }
+
+    public func messages(inGroup groupID: String) -> [RemoteIMMessage] {
+        conversationMessagesByID[.group(groupID)] ?? []
+    }
+
+    public func latestMessage(inGroup groupID: String) -> RemoteIMMessage? {
+        conversationMessagesByID[.group(groupID)]?.last
     }
 
     public func message(id: UUID) -> RemoteIMMessage? {
@@ -1906,6 +1959,56 @@ public struct MasterChatState: Equatable {
             quote: quote,
             direction: .outgoing,
             status: .pending,
+            createdAt: now
+        )
+        appendMessage(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func queueOutgoingGroupText(
+        to groupID: String,
+        text: String,
+        now: Date = Date()
+    ) throws -> RemoteIMMessage {
+        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanText.isEmpty else { throw MasterChatStateError.blankMessage }
+        let cleanGroupID = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanGroupID.isEmpty else { throw MasterChatStateError.noSelectedPeer }
+        let message = RemoteIMMessage(
+            fromUserID: ownerUserID,
+            toUserID: cleanGroupID,
+            groupID: cleanGroupID,
+            text: cleanText,
+            direction: .outgoing,
+            status: .pending,
+            createdAt: now
+        )
+        appendMessage(message)
+        return message
+    }
+
+    @discardableResult
+    public mutating func receiveGroupText(
+        _ text: String,
+        groupID: String,
+        fromUserID: String,
+        remoteID: String? = nil,
+        now: Date = Date()
+    ) -> RemoteIMMessage? {
+        if let existing = existingMessage(remoteID: remoteID) { return existing }
+        let cleanGroupID = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanFromUserID = fromUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanGroupID.isEmpty, !cleanFromUserID.isEmpty else { return nil }
+        let isOutgoing = cleanFromUserID == ownerUserID
+        let message = RemoteIMMessage(
+            remoteID: remoteID,
+            fromUserID: cleanFromUserID,
+            toUserID: cleanGroupID,
+            groupID: cleanGroupID,
+            text: Self.incomingDisplayText(text),
+            direction: isOutgoing ? .outgoing : .incoming,
+            status: isOutgoing ? .sent : .received,
             createdAt: now
         )
         appendMessage(message)
@@ -2406,6 +2509,23 @@ public struct MasterChatState: Equatable {
         replaceCachedMessage(previous: previousMessage, updated: messages[index])
     }
 
+    /// SDK 可能先回显本人群消息，再返回发送回执；以回执中的远端 ID 合并两条记录。
+    public mutating func reconcileOutgoingGroupDelivery(
+        id: UUID,
+        remoteID: String?,
+        createdAt: Date?
+    ) throws {
+        guard let index = messageIndexByID[id], messages[index].groupID != nil else {
+            throw MasterChatStateError.messageNotFound
+        }
+        if let remoteID, let existingID = messageIDByRemoteID[remoteID], existingID != id {
+            messages.remove(at: index)
+            rebuildMessageIndexes()
+            return
+        }
+        try updateMessageDelivery(id: id, remoteID: remoteID, createdAt: createdAt)
+    }
+
     private func existingMessage(remoteID: String?) -> RemoteIMMessage? {
         guard let remoteID, !remoteID.isEmpty else { return nil }
         guard let messageID = messageIDByRemoteID[remoteID],
@@ -2417,7 +2537,7 @@ public struct MasterChatState: Equatable {
     }
 
     private mutating func rebuildMessageIndexes() {
-        conversationMessagesByPeerID.removeAll(keepingCapacity: true)
+        conversationMessagesByID.removeAll(keepingCapacity: true)
         messageIndexByID.removeAll(keepingCapacity: true)
         messageIDByRemoteID.removeAll(keepingCapacity: true)
 
@@ -2428,18 +2548,18 @@ public struct MasterChatState: Equatable {
             {
                 messageIDByRemoteID[remoteID] = message.id
             }
-            if let peerID = conversationPeerID(for: message) {
-                conversationMessagesByPeerID[peerID, default: []].append(message)
+            if let conversationID = conversationID(for: message) {
+                conversationMessagesByID[conversationID, default: []].append(message)
             }
         }
 
-        for peerID in Array(conversationMessagesByPeerID.keys) {
-            conversationMessagesByPeerID[peerID]?.sort(by: Self.messageIsEarlier)
+        for conversationID in Array(conversationMessagesByID.keys) {
+            conversationMessagesByID[conversationID]?.sort(by: Self.messageIsEarlier)
         }
     }
 
     private mutating func appendMessage(_ message: RemoteIMMessage) {
-        guard let peerID = conversationPeerID(for: message) else { return }
+        guard let conversationID = conversationID(for: message) else { return }
         messageIndexByID[message.id] = messages.count
         messages.append(message)
         if let remoteID = message.remoteID, !remoteID.isEmpty,
@@ -2447,7 +2567,7 @@ public struct MasterChatState: Equatable {
         {
             messageIDByRemoteID[remoteID] = message.id
         }
-        insertMessageInConversation(message, peerID: peerID)
+        insertMessageInConversation(message, conversationID: conversationID)
     }
 
     private mutating func registerIncomingPeer(_ userID: String) {
@@ -2486,33 +2606,33 @@ public struct MasterChatState: Equatable {
             messageIDByRemoteID[updatedRemoteID] = updated.id
         }
 
-        if let previousPeerID = conversationPeerID(for: previous) {
-            conversationMessagesByPeerID[previousPeerID]?.removeAll { $0.id == previous.id }
-            if conversationMessagesByPeerID[previousPeerID]?.isEmpty == true {
-                conversationMessagesByPeerID[previousPeerID] = nil
+        if let previousConversationID = conversationID(for: previous) {
+            conversationMessagesByID[previousConversationID]?.removeAll { $0.id == previous.id }
+            if conversationMessagesByID[previousConversationID]?.isEmpty == true {
+                conversationMessagesByID[previousConversationID] = nil
             }
         }
-        if let updatedPeerID = conversationPeerID(for: updated) {
-            insertMessageInConversation(updated, peerID: updatedPeerID)
+        if let updatedConversationID = conversationID(for: updated) {
+            insertMessageInConversation(updated, conversationID: updatedConversationID)
         }
     }
 
     private mutating func insertMessageInConversation(
         _ message: RemoteIMMessage,
-        peerID: String
+        conversationID: RemoteIMConversationID
     ) {
-        if let lastMessage = conversationMessagesByPeerID[peerID]?.last,
+        if let lastMessage = conversationMessagesByID[conversationID]?.last,
            Self.messageIsEarlier(lastMessage, message)
         {
-            conversationMessagesByPeerID[peerID]?.append(message)
+            conversationMessagesByID[conversationID]?.append(message)
             return
         }
-        if conversationMessagesByPeerID[peerID] == nil {
-            conversationMessagesByPeerID[peerID] = [message]
+        if conversationMessagesByID[conversationID] == nil {
+            conversationMessagesByID[conversationID] = [message]
             return
         }
 
-        var conversation = conversationMessagesByPeerID[peerID] ?? []
+        var conversation = conversationMessagesByID[conversationID] ?? []
         var lowerBound = 0
         var upperBound = conversation.count
         while lowerBound < upperBound {
@@ -2524,10 +2644,13 @@ public struct MasterChatState: Equatable {
             }
         }
         conversation.insert(message, at: lowerBound)
-        conversationMessagesByPeerID[peerID] = conversation
+        conversationMessagesByID[conversationID] = conversation
     }
 
-    private func conversationPeerID(for message: RemoteIMMessage) -> String? {
+    private func conversationID(for message: RemoteIMMessage) -> RemoteIMConversationID? {
+        if let groupID = message.groupID, !groupID.isEmpty {
+            return .group(groupID)
+        }
         let peerUserID: String
         if message.fromUserID == ownerUserID {
             peerUserID = message.toUserID
@@ -2540,7 +2663,7 @@ public struct MasterChatState: Equatable {
             userID: peerUserID,
             ownerUserID: ownerUserID
         ) else { return nil }
-        return peerUserID
+        return .direct(peerUserID)
     }
 
     private static func messageIsEarlier(

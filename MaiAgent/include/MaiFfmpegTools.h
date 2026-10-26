@@ -2,10 +2,12 @@
 // 对外类型：MaiFfmpegEngine；线程、失败和生命周期以类型附近注释为准。
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "MaiTool.h"
 #include "MaiViewImageTool.h"
@@ -22,6 +24,24 @@ struct MaiFfmpegEngine {
     void (*setLogSink)(void (*sink)(void* opaque, const char* line), void* opaque) = nullptr;
     int (*describeError)(int code, char* buffer, std::size_t size) = nullptr;
 };
+
+// Runs a host-owned embedded FFmpeg command under the same process-wide lock
+// used by the Agent ffmpeg and ffprobe tools. The embedded command has global
+// mutable state, so callers outside the Agent tool path must also use this
+// entry point. Arguments include argv[0]. The caller owns the cancellation
+// flag until this synchronous call returns; null disables cancellation.
+// Diagnostic text is bounded and may contain local paths: never display or
+// upload it without reviewing it. A nonzero exit status means no output is
+// guaranteed, even when the destination file exists.
+struct MaiFfmpegExecutionResult {
+    int exitStatus = -1;
+    bool canceled = false;
+    std::string diagnostic;
+};
+
+MaiFfmpegExecutionResult maiRunFfmpegSerialized(const MaiFfmpegEngine& engine,
+                                                std::vector<std::string> arguments,
+                                                const std::atomic<bool>* cancel);
 
 // 本地视频探测结果使用 FFprobe 的容器/视频流实测值，不接受模型或用户估算。
 // durationSeconds 是总时长；framesPerSecond 优先取平均帧率，缺失时取声明帧率。

@@ -7,6 +7,7 @@ import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @ObservedObject private var cloudDrive = MaiCloudDriveModel.shared
 
     var body: some View {
         NavigationStack {
@@ -31,6 +32,16 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("personal-profile-entry")
                 }
+                if cloudDrive.availability == .available {
+                    Section {
+                        NavigationLink {
+                            MaiCloudDriveView()
+                        } label: {
+                            Label("我的云盘", systemImage: "icloud")
+                        }
+                        .accessibilityIdentifier("my-cloud-drive-entry")
+                    }
+                }
                 Section {
                     NavigationLink {
                         AccountSettingsView().navigationTitle("设置")
@@ -42,6 +53,13 @@ struct SettingsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("我")
             .navigationBarTitleDisplayMode(.inline)
+            .task(id: appState.maiChatAccountID) {
+                cloudDrive.activate(accountID: appState.maiChatAccountID)
+                await cloudDrive.probe()
+            }
+            .onAppear {
+                Task { await cloudDrive.probe() }
+            }
         }
     }
 }
@@ -259,21 +277,6 @@ private struct AccountSettingsView: View {
                         Text("注销账号").foregroundStyle(.red)
                     }
                     .accessibilityIdentifier("account-deletion-entry")
-                }
-            }
-
-            if appState.hasUnifiedAccount {
-                Section {
-                    NavigationLink {
-                        DesktopLoginScanView()
-                    } label: {
-                        Label("扫码登录电脑", systemImage: "qrcode.viewfinder")
-                    }
-                    .accessibilityIdentifier("desktop-login-entry")
-                } header: {
-                    Text("设备登录")
-                } footer: {
-                    Text("扫描电脑上的 MaiChat 登录二维码，并比对六位核对码。")
                 }
             }
 

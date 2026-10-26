@@ -7,7 +7,6 @@ import android.util.Log;
 
 import com.tencent.imsdk.v2.V2TIMAdvancedMsgListener;
 import com.tencent.imsdk.v2.V2TIMCallback;
-import com.tencent.imsdk.v2.V2TIMDownloadCallback;
 import com.tencent.imsdk.v2.V2TIMElem;
 import com.tencent.imsdk.v2.V2TIMFileElem;
 import com.tencent.imsdk.v2.V2TIMFriendAddApplication;
@@ -86,14 +85,13 @@ public final class TencentIMClient {
     // 日志一律英文：logcat 在不同机器上的编码不一致，中文容易变成乱码，
     // 也不便直接贴进 issue 检索。桌面端 AppLog 用的是同一条约定。
     private static final String TAG = "MaiChat.im";
-    private static final java.util.concurrent.ExecutorService MEDIA_COMPLETION =
-            java.util.concurrent.Executors.newSingleThreadExecutor();
-
     private final android.os.HandlerThread sdkThread = new android.os.HandlerThread("MaiChat-IM");
     private final android.os.Handler sdkHandler;
     private volatile boolean closed;
     private final Context context;
     private final RemoteIMMediaPaths mediaPaths;
+    private final MaiChatAttachmentDownload.Transport mediaDownloader;
+    private volatile MaiChatAttachmentDownload.Scope mediaScope = new MaiChatAttachmentDownload.Scope();
     private final Listener listener;
     private final V2TIMAdvancedMsgListener messageListener = new V2TIMAdvancedMsgListener() {
         @Override
@@ -144,9 +142,15 @@ public final class TencentIMClient {
     private boolean presenceUnsupported;
 
     public TencentIMClient(Context context, Listener listener) {
+        this(context, listener, new MaiChatAttachmentDownload.NativeTransport());
+    }
+
+    TencentIMClient(Context context, Listener listener,
+                    MaiChatAttachmentDownload.Transport mediaDownloader) {
         sdkThread.start(); sdkHandler = new android.os.Handler(sdkThread.getLooper());
         this.context = context.getApplicationContext();
         this.listener = listener;
+        this.mediaDownloader = mediaDownloader;
         // 收到的媒体必须落在持久目录：放缓存目录的话，系统清缓存或用户手动清除之后，
         // 聊天记录里的图片视频就永远打不开了。
         this.mediaPaths = RemoteIMMediaPaths.forApp(context);
@@ -158,6 +162,8 @@ public final class TencentIMClient {
             sdkHandler.post(() -> connect(sdkAppId, userId, userSig)); return;
         }
         String cleanUserId = clean(userId);
+        mediaScope.cancel();
+        mediaScope = new MaiChatAttachmentDownload.Scope();
         listener.onConnectionStateChanged(ConnectionState.CONNECTING, "连接中");
         if (initializedSdkAppId == null || initializedSdkAppId != sdkAppId) {
             if (initializedSdkAppId != null) {
@@ -209,6 +215,7 @@ public final class TencentIMClient {
 
     public void disconnect(OperationCompletion completion) {
         if (closed) return;
+        mediaScope.cancel();
         if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
             sdkHandler.post(() -> disconnect(completion)); return;
         }
@@ -218,6 +225,7 @@ public final class TencentIMClient {
 
     public void destroy() {
         closed = true; currentUserId = "";
+        mediaScope.cancel();
         sdkHandler.post(() -> {
             if (initializedSdkAppId != null) {
                 V2TIMManager.getMessageManager().removeAdvancedMsgListener(messageListener);
@@ -834,47 +842,27 @@ public final class TencentIMClient {
         if (mediaId.isEmpty()) mediaId = clean(message.getMsgID());
         String messageId = clean(message.getMsgID());
         if (messageId.isEmpty()) messageId = mediaId;
-        File target = mediaFile(RemoteIMMediaPaths.IMAGES, mediaId, extension(selected.getUrl(), "jpg"));
+        String imageUrl = selected.getUrl();
+        File target = mediaFile(RemoteIMMediaPaths.IMAGES, mediaId, extension(imageUrl, "jpg"));
         V2TIMImageElem.V2TIMImage image = selected;
         String finalMessageId = messageId;
-        selected.downloadImage(target.getAbsolutePath(), new V2TIMDownloadCallback() {
-            @Override
-            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
-            }
-
-            @Override
-            public void onSuccess() {
-                RemoteIMImageAttachment attachment = new RemoteIMImageAttachment(
-                    target.getAbsolutePath(),
-                    image.getWidth(),
-                    image.getHeight(),
-                    image.getSize()
-                );
-                RemoteIMMessage incoming = new RemoteIMMessage(
-                    null,
-                    finalMessageId,
-                    fromUserId,
-                    recipientUserId,
-                    caption.isEmpty() ? "[图片消息] " + target.getName() : caption,
-                    RemoteIMMessage.Direction.INCOMING,
-                    RemoteIMMessage.Status.RECEIVED,
-                    createdAt,
-                    attachment,
-                    null,
-                    null,
-                    null,
-                    origin
-                );
-                incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
-                incoming.setQuote(quote);
-                listener.onIncomingMessage(incoming);
-            }
-
-            @Override
-            public void onError(int code, String description) {
-                Log.w(TAG, "download image failed: code=" + code + " " + description
-                    + " target=" + target.getAbsolutePath());
-            }
+        MaiChatAttachmentDownload.Scope scope = mediaScope;
+        downloadMedia(imageUrl, target, MaiChatAttachmentDownload.MAX_IMAGE_BYTES,
+            recipientUserId, scope, result -> {
+                if (result.ok()) {
+                    RemoteIMImageAttachment attachment = new RemoteIMImageAttachment(
+                        target.getAbsolutePath(), image.getWidth(), image.getHeight(), image.getSize());
+                    RemoteIMMessage incoming = new RemoteIMMessage(
+                        null, finalMessageId, fromUserId, recipientUserId,
+                        caption.isEmpty() ? "[图片消息] " + target.getName() : caption,
+                        RemoteIMMessage.Direction.INCOMING, RemoteIMMessage.Status.RECEIVED,
+                        createdAt, attachment, null, null, null, origin);
+                    incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
+                    incoming.setQuote(quote);
+                    listener.onIncomingMessage(incoming);
+                } else {
+                    logMediaFailure("image", result);
+                }
         });
     }
 
@@ -894,36 +882,30 @@ public final class TencentIMClient {
         File target = mediaFile(RemoteIMMediaPaths.VOICES, mediaId, "m4a");
         int duration = Math.max(1, elem.getDuration());
         String finalMessageId = messageId;
-        elem.downloadSound(target.getAbsolutePath(), new V2TIMDownloadCallback() {
-            @Override
-            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
+        MaiChatAttachmentDownload.Scope scope = mediaScope;
+        elem.getUrl(new V2TIMValueCallback<String>() {
+            @Override public void onSuccess(String url) {
+                if (!isCurrentDownload(recipientUserId, scope)) return;
+                downloadMedia(url, target, MaiChatAttachmentDownload.MAX_VOICE_BYTES,
+                    recipientUserId, scope, result -> {
+                        if (!result.ok()) {
+                            logMediaFailure("voice", result);
+                            return;
+                        }
+                        RemoteIMMessage incoming = new RemoteIMMessage(
+                            null, finalMessageId, fromUserId, recipientUserId,
+                            "[语音消息 " + duration + "s]",
+                            RemoteIMMessage.Direction.INCOMING, RemoteIMMessage.Status.RECEIVED,
+                            createdAt, null,
+                            new RemoteIMVoiceAttachment(target.getAbsolutePath(), duration),
+                            null, null, origin);
+                        incoming.setQuote(quote);
+                        listener.onIncomingMessage(incoming);
+                });
             }
-
-            @Override
-            public void onSuccess() {
-                RemoteIMMessage incoming = new RemoteIMMessage(
-                    null,
-                    finalMessageId,
-                    fromUserId,
-                    recipientUserId,
-                    "[语音消息 " + duration + "s]",
-                    RemoteIMMessage.Direction.INCOMING,
-                    RemoteIMMessage.Status.RECEIVED,
-                    createdAt,
-                    null,
-                    new RemoteIMVoiceAttachment(target.getAbsolutePath(), duration),
-                    null,
-                    null,
-                    origin
-                );
-                incoming.setQuote(quote);
-                listener.onIncomingMessage(incoming);
-            }
-
-            @Override
-            public void onError(int code, String description) {
-                Log.w(TAG, "download voice failed: code=" + code + " " + description
-                    + " target=" + target.getAbsolutePath());
+            @Override public void onError(int code, String description) {
+                if (isCurrentDownload(recipientUserId, scope))
+                    Log.w(TAG, "voice URL failed: code=" + code + " " + description);
             }
         });
     }
@@ -946,9 +928,6 @@ public final class TencentIMClient {
         final String finalMessageId = messageId;
 
         final File videoTarget = mediaFile(RemoteIMMediaPaths.VIDEOS, mediaId, extension(elem.getVideoPath(), "mp4"));
-        // 先下到 .part 再改名：这样"目标文件存在"就等价于"已经下完"，界面只需判存在性，
-        // 不会拿到一个下了一半的文件去播放。
-        final File videoPart = new File(videoTarget.getAbsolutePath() + ".part-" + UUID.randomUUID());
         final File coverTarget = mediaFile(RemoteIMMediaPaths.VIDEO_COVERS, mediaId + "-cover", "jpg");
 
         final int duration = Math.max(0, (int) elem.getDuration());
@@ -960,54 +939,50 @@ public final class TencentIMClient {
         // 封面一到就先把消息投出去；视频路径指向最终目标，下完即可播放。
         // 封面失败时退回等视频下完再投，保证消息不会因为没有封面而丢失。
         final AtomicBoolean delivered = new AtomicBoolean(false);
+        final AtomicBoolean coverDownloaded = new AtomicBoolean(false);
+        MaiChatAttachmentDownload.Scope scope = mediaScope;
 
-        elem.downloadSnapshot(coverTarget.getAbsolutePath(), new V2TIMDownloadCallback() {
-            @Override
-            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
-            }
-
-            @Override
-            public void onSuccess() {
-                sdkHandler.post(() -> {
-                    if (closed || !recipientUserId.equals(currentUserId)) return;
-                    emitVideoMessage(finalMessageId, fromUserId, recipientUserId, createdAt, origin,
-                        videoTarget.getAbsolutePath(), coverTarget.getAbsolutePath(),
-                        duration, width, height, sizeBytes, caption, captionAbove, quote,
-                        delivered.compareAndSet(false, true));
-                });
-            }
-
-            @Override
-            public void onError(int code, String description) {
-                Log.w(TAG, "download video cover failed: code=" + code + " " + description
-                    + " target=" + coverTarget.getAbsolutePath());
-            }
-        });
-
-        elem.downloadVideo(videoPart.getAbsolutePath(), new V2TIMDownloadCallback() {
-            @Override public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) { }
-            @Override public void onSuccess() {
-                // 下载已经受理后，即使界面或客户端对象释放，也要完成这次尝试。
-                // 每次尝试独占自己的临时文件，验证后原子交付。
-                MEDIA_COMPLETION.execute(() -> {
-                    try {
-                        java.nio.file.Files.move(videoPart.toPath(), videoTarget.toPath(),
-                                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-                    } catch (java.io.IOException error) { Log.w(TAG, "Cannot finalize video download", error); return; }
-                    if (closed) return;
-                    sdkHandler.post(() -> {
-                        if (closed || !recipientUserId.equals(currentUserId)) return;
+        elem.getSnapshotUrl(new V2TIMValueCallback<String>() {
+            @Override public void onSuccess(String url) {
+                if (!isCurrentDownload(recipientUserId, scope)) return;
+                downloadMedia(url, coverTarget, MaiChatAttachmentDownload.MAX_VIDEO_COVER_BYTES,
+                    recipientUserId, scope, result -> {
+                        if (!result.ok()) {
+                            logMediaFailure("video cover", result);
+                            return;
+                        }
+                        coverDownloaded.set(true);
                         emitVideoMessage(finalMessageId, fromUserId, recipientUserId, createdAt, origin,
                             videoTarget.getAbsolutePath(), coverTarget.getAbsolutePath(),
                             duration, width, height, sizeBytes, caption, captionAbove, quote,
                             delivered.compareAndSet(false, true));
-                    });
                 });
             }
             @Override public void onError(int code, String description) {
-                Log.w(TAG, "download video failed: code=" + code);
-                MEDIA_COMPLETION.execute(videoPart::delete);
+                if (isCurrentDownload(recipientUserId, scope))
+                    Log.w(TAG, "video cover URL failed: code=" + code + " " + description);
+            }
+        });
+
+        elem.getVideoUrl(new V2TIMValueCallback<String>() {
+            @Override public void onSuccess(String url) {
+                if (!isCurrentDownload(recipientUserId, scope)) return;
+                downloadMedia(url, videoTarget, MaiChatAttachmentDownload.MAX_VIDEO_BYTES,
+                    recipientUserId, scope, result -> {
+                        if (result.ok()) {
+                            emitVideoMessage(finalMessageId, fromUserId, recipientUserId, createdAt, origin,
+                                videoTarget.getAbsolutePath(),
+                                coverDownloaded.get() ? coverTarget.getAbsolutePath() : "",
+                                duration, width, height, sizeBytes, caption, captionAbove, quote,
+                                delivered.compareAndSet(false, true));
+                        } else {
+                            logMediaFailure("video", result);
+                        }
+                });
+            }
+            @Override public void onError(int code, String description) {
+                if (isCurrentDownload(recipientUserId, scope))
+                    Log.w(TAG, "video URL failed: code=" + code + " " + description);
             }
         });
     }
@@ -1071,45 +1046,54 @@ public final class TencentIMClient {
         String fileName = safeFileName(elem.getFileName(), "remote-im-file.bin");
         File target = mediaFile(RemoteIMMediaPaths.FILES, mediaId, extension(fileName, "bin"));
         String finalMessageId = messageId;
-        elem.downloadFile(target.getAbsolutePath(), new V2TIMDownloadCallback() {
-            @Override
-            public void onProgress(V2TIMElem.V2ProgressInfo progressInfo) {
+        MaiChatAttachmentDownload.Scope scope = mediaScope;
+        elem.getUrl(new V2TIMValueCallback<String>() {
+            @Override public void onSuccess(String url) {
+                if (!isCurrentDownload(recipientUserId, scope)) return;
+                downloadMedia(url, target, MaiChatAttachmentDownload.MAX_FILE_BYTES,
+                    recipientUserId, scope, result -> {
+                        if (!result.ok()) {
+                            logMediaFailure("file", result);
+                            return;
+                        }
+                        RemoteIMFileAttachment attachment = new RemoteIMFileAttachment(
+                            target.getAbsolutePath(), fileName, mimeType(fileName), elem.getFileSize());
+                        RemoteIMMessage incoming = new RemoteIMMessage(
+                            null, finalMessageId, fromUserId, recipientUserId,
+                            caption.isEmpty() ? "[文件消息] " + fileName : caption,
+                            RemoteIMMessage.Direction.INCOMING, RemoteIMMessage.Status.RECEIVED,
+                            createdAt, null, null, attachment, null, origin);
+                        incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
+                        incoming.setQuote(quote);
+                        listener.onIncomingMessage(incoming);
+                });
             }
-
-            @Override
-            public void onSuccess() {
-                RemoteIMFileAttachment attachment = new RemoteIMFileAttachment(
-                    target.getAbsolutePath(),
-                    fileName,
-                    mimeType(fileName),
-                    elem.getFileSize()
-                );
-                RemoteIMMessage incoming = new RemoteIMMessage(
-                    null,
-                    finalMessageId,
-                    fromUserId,
-                    recipientUserId,
-                    caption.isEmpty() ? "[文件消息] " + fileName : caption,
-                    RemoteIMMessage.Direction.INCOMING,
-                    RemoteIMMessage.Status.RECEIVED,
-                    createdAt,
-                    null,
-                    null,
-                    attachment,
-                    null,
-                    origin
-                );
-                incoming.setCaptionAbove(!caption.isEmpty() && captionAbove);
-                incoming.setQuote(quote);
-                listener.onIncomingMessage(incoming);
-            }
-
-            @Override
-            public void onError(int code, String description) {
-                Log.w(TAG, "download file failed: code=" + code + " " + description
-                    + " target=" + target.getAbsolutePath());
+            @Override public void onError(int code, String description) {
+                if (isCurrentDownload(recipientUserId, scope))
+                    Log.w(TAG, "file URL failed: code=" + code + " " + description);
             }
         });
+    }
+
+    private boolean isCurrentDownload(String account, MaiChatAttachmentDownload.Scope scope) {
+        return !closed && mediaScope == scope && !scope.isCanceled()
+            && account.equals(currentUserId);
+    }
+
+    private void downloadMedia(String url, File target, long maximumBytes, String account,
+                               MaiChatAttachmentDownload.Scope scope,
+                               MaiChatAttachmentDownload.Completion completion) {
+        if (!isCurrentDownload(account, scope)) return;
+        mediaDownloader.download(url, target, maximumBytes, scope, result ->
+            sdkHandler.post(() -> {
+                if (isCurrentDownload(account, scope)) completion.finished(result);
+            }));
+    }
+
+    private static void logMediaFailure(String kind, MaiChatAttachmentDownload.Result result) {
+        if (result.status == MaiChatAttachmentDownload.CANCELED) return;
+        Log.w(TAG, kind + " attachment download failed: status=" + result.status
+            + " http=" + result.httpStatus + " curl=" + result.curlCode);
     }
 
     private File mediaFile(String kind, String remoteId, String extension) {

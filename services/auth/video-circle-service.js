@@ -34,8 +34,8 @@ function validObjectKey(accountId, key) {
       '[0-9a-f-]{36}\\.mp4$').test(key);
 }
 
-function encodeCursor(row) {
-  return Buffer.from(JSON.stringify([row.published_at, row.id])).toString('base64url');
+function encodeCursor(row, timeField = 'published_at') {
+  return Buffer.from(JSON.stringify([row[timeField], row.id])).toString('base64url');
 }
 
 function decodeCursor(value) {
@@ -97,12 +97,19 @@ function createVideoCircleService({ db, now = Date.now, verifyUpload,
     })();
   }
 
-  function mine(principal) {
+  function mine(principal, before) {
+    const cursor = decodeCursor(before);
+    if (cursor === false) return result(400, { error: 'Invalid mine cursor' });
     const rows = db.prepare(`SELECT id,title,source_tool,duration_ms,status,created_at,
       reviewed_at,published_at,withdrawn_at,review_reason FROM video_circle_posts
-      WHERE author_user_id=? ORDER BY created_at DESC,id DESC LIMIT 100`)
-      .all(principal.user_id);
-    return result(200, { posts: rows });
+      WHERE author_user_id=? AND (? IS NULL OR created_at < ? OR
+        (created_at=? AND id<?))
+      ORDER BY created_at DESC,id DESC LIMIT 101`)
+      .all(principal.user_id, cursor?.[0] ?? null, cursor?.[0] ?? null,
+        cursor?.[0] ?? null, cursor?.[1] ?? null);
+    const page = rows.slice(0, 100);
+    return result(200, { posts: page, next_cursor: rows.length > 100
+      ? encodeCursor(page.at(-1), 'created_at') : null });
   }
 
   function feed(principal, before) {
@@ -204,6 +211,15 @@ function createVideoCircleService({ db, now = Date.now, verifyUpload,
     return result(200, { blocked: true, author_id: accountId });
   }
 
+  function blockedAuthors(principal) {
+    const rows = db.prepare(`SELECT users.account_id AS author_id,
+      COALESCE(NULLIF(users.nickname,''),users.account_id) AS author_name
+      FROM video_circle_blocks blocks JOIN users ON users.id=blocks.author_user_id
+      WHERE blocks.viewer_user_id=? ORDER BY blocks.created_at DESC,users.account_id
+      LIMIT 1000`).all(principal.user_id);
+    return result(200, { authors: rows });
+  }
+
   function unblockAuthor(body, principal) {
     const author = db.prepare('SELECT id FROM users WHERE account_id=?').get(body.author_id);
     if (!author) return result(404, { error: 'Author not found' });
@@ -216,11 +232,14 @@ function createVideoCircleService({ db, now = Date.now, verifyUpload,
     if (!principal) return result(401, { error: 'Authentication required' });
     if (method === 'POST' && path === '/v1/video-circle/posts')
       return submit(body, principal);
-    if (method === 'GET' && path === '/v1/video-circle/mine') return mine(principal);
+    if (method === 'GET' && path === '/v1/video-circle/mine')
+      return mine(principal, query?.get('before'));
     if (method === 'GET' && path === '/v1/video-circle/feed')
       return feed(principal, query?.get('before'));
     if (method === 'POST' && path === '/v1/video-circle/blocks')
       return blockAuthor(body, principal);
+    if (method === 'GET' && path === '/v1/video-circle/blocks')
+      return blockedAuthors(principal);
     if (method === 'POST' && path === '/v1/video-circle/blocks/remove')
       return unblockAuthor(body, principal);
     const match = path.match(/^\/v1\/video-circle\/posts\/([0-9a-f-]{36})\/(play|play-link|withdraw|report)$/);
@@ -253,7 +272,7 @@ function createVideoCircleService({ db, now = Date.now, verifyUpload,
 
   function pendingReports() {
     return db.prepare(`SELECT reports.id,reports.post_id,reports.reason,
-      reports.details,reports.created_at,posts.title,
+      reports.details,reports.created_at,posts.title,posts.status AS post_status,
       users.account_id AS reporter_id FROM video_circle_reports reports
       JOIN video_circle_posts posts ON posts.id=reports.post_id
       JOIN users ON users.id=reports.reporter_user_id

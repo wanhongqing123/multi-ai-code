@@ -19,10 +19,6 @@ QString newId() {
     return QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-'));
 }
 
-QString subscriberKey(const QString& slot, const QString& login, const QString& session) {
-    return slot + QLatin1Char(':') + login + QLatin1Char(':') + session;
-}
-
 }  // namespace
 
 DesktopSessionSyncCoordinator::DesktopSessionSyncCoordinator(Requester requester, AgentProvider agent, QObject* parent,
@@ -49,6 +45,9 @@ DesktopSessionSyncCoordinator::DesktopSessionSyncCoordinator(Requester requester
         pendingSnapshotSessions_.clear();
         for (const QString& session : sessions) publishSnapshot(session);
     });
+    backfillTimer_.setSingleShot(true);
+    backfillTimer_.setInterval(5000);
+    connect(&backfillTimer_, &QTimer::timeout, this, [this] { processBackfillPage(); });
 }
 
 DesktopSessionSyncCoordinator::~DesktopSessionSyncCoordinator() = default;
@@ -64,20 +63,51 @@ void DesktopSessionSyncCoordinator::connectionReady() {
 }
 
 void DesktopSessionSyncCoordinator::connectionLost() {
+    initiallyPublishedSessions_.clear();
+    publishedMessageDigests_.clear();
+    publishedStateDigests_.clear();
+    backfillTimer_.stop();
+    backfillSessions_.clear();
+    backfillBefore_.clear();
+    const auto pending = pendingLifecycle_;
+    pendingLifecycle_.clear();
+    for (const PendingLifecycle& command : pending)
+        command.completion({}, QStringLiteral("设备连接中断，操作状态未知，请先查看会话列表"));
     QJsonArray offline;
     for (const QJsonValue& value : remoteSessions_) {
         QJsonObject entry = value.toObject();
         entry.insert(QStringLiteral("online"), false);
         offline.append(entry);
     }
-    if (offline == remoteSessions_) return;
-    remoteSessions_ = offline;
-    if (catalogHandler_) catalogHandler_(offline);
+    if (offline != remoteSessions_) {
+        remoteSessions_ = offline;
+        if (catalogHandler_) catalogHandler_(offline);
+    }
+    QJsonArray offlineDevices;
+    for (const QJsonValue& value : remoteDevices_) {
+        QJsonObject entry = value.toObject();
+        entry.insert(QStringLiteral("online"), false);
+        offlineDevices.append(entry);
+    }
+    if (offlineDevices != remoteDevices_) {
+        remoteDevices_ = offlineDevices;
+        if (deviceHandler_) deviceHandler_(remoteDevices_);
+    }
 }
 
 void DesktopSessionSyncCoordinator::setCatalogHandler(CatalogHandler handler) {
     catalogHandler_ = std::move(handler);
     if (catalogHandler_) catalogHandler_(remoteSessions_);
+}
+
+void DesktopSessionSyncCoordinator::setDeviceHandler(DeviceHandler handler) {
+    deviceHandler_ = std::move(handler);
+    if (deviceHandler_) deviceHandler_(remoteDevices_);
+}
+
+void DesktopSessionSyncCoordinator::setDefaultWorkspaceDirectory(const QString& directory) {
+    defaultWorkspaceDirectory_ = directory;
+    if (host_) host_->setDefaultWorkspaceDirectory(directory);
 }
 
 void DesktopSessionSyncCoordinator::setPayloadHandler(PayloadHandler handler) {
@@ -102,6 +132,24 @@ void DesktopSessionSyncCoordinator::acceptCatalog(const QJsonArray& sessions) {
     if (catalogHandler_) catalogHandler_(remote);
 }
 
+void DesktopSessionSyncCoordinator::acceptDevices(const QJsonArray& devices) {
+    QJsonArray remote;
+    for (const QJsonValue& value : devices) {
+        const QJsonObject entry = value.toObject();
+#if defined(Q_OS_MAC)
+        constexpr auto ownSlot = "mac";
+#else
+        constexpr auto ownSlot = "windows";
+#endif
+        if (entry.value(QStringLiteral("device_slot")).toString() == QLatin1String(ownSlot) &&
+            entry.value(QStringLiteral("device_id")).toString() == deviceId_) continue;
+        remote.append(entry);
+    }
+    if (remote == remoteDevices_) return;
+    remoteDevices_ = remote;
+    if (deviceHandler_) deviceHandler_(remote);
+}
+
 void DesktopSessionSyncCoordinator::acceptInbox(const QJsonArray& messages) {
     for (const QJsonValue& message : messages) handleEnvelope(message.toObject());
 }
@@ -118,10 +166,24 @@ QJsonObject DesktopSessionSyncCoordinator::matchingRemote(const QString& slot, c
     return {};
 }
 
+QJsonObject DesktopSessionSyncCoordinator::matchingDevice(const QJsonObject& device) const {
+    const QString slot = device.value(QStringLiteral("device_slot")).toString();
+    const QString login = device.value(QStringLiteral("login_session_id")).toString();
+    const QString id = device.value(QStringLiteral("device_id")).toString();
+    for (const QJsonValue& value : remoteDevices_) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("device_slot")).toString() == slot &&
+            entry.value(QStringLiteral("login_session_id")).toString() == login &&
+            entry.value(QStringLiteral("device_id")).toString() == id)
+            return entry;
+    }
+    return {};
+}
+
 void DesktopSessionSyncCoordinator::requestRemoteHistory(const QJsonObject& session, const QString& before, int limit,
                                                          Completion completion) {
-    if (limit < 1 || limit > 20 || !session.value(QStringLiteral("online")).toBool()) {
-        completion({}, QStringLiteral("所属设备离线或页大小无效"));
+    if (limit < 1 || limit > 20) {
+        completion({}, QStringLiteral("会话页大小无效"));
         return;
     }
     const QString slot = session.value(QStringLiteral("device_slot")).toString();
@@ -131,15 +193,18 @@ void DesktopSessionSyncCoordinator::requestRemoteHistory(const QJsonObject& sess
         completion({}, QStringLiteral("所属设备登录已变化，请刷新列表"));
         return;
     }
-    requester_(QStringLiteral("session-sync/send"), "POST",
-               {{QStringLiteral("to_slot"), slot},
-                {QStringLiteral("to_login_session_id"), login},
-                {QStringLiteral("client_message_id"), newId()},
+    QPointer<DesktopSessionSyncCoordinator> guard(this);
+    requester_(QStringLiteral("session-sync/history"), "GET",
+               {{QStringLiteral("owner_slot"), slot},
                 {QStringLiteral("session_id"), id},
-                {QStringLiteral("kind"), QStringLiteral("history_request")},
-                {QStringLiteral("payload"), QJsonObject{{QStringLiteral("before"), before},
-                                                       {QStringLiteral("limit"), limit}}}},
-               std::move(completion));
+                {QStringLiteral("before"), before},
+                {QStringLiteral("limit"), limit}},
+               [guard, session, completion = std::move(completion)](
+                   const QJsonObject& page, const QString& error) {
+                   if (guard && error.isEmpty() && guard->payloadHandler_)
+                       guard->payloadHandler_(session, QStringLiteral("history_page"), page);
+                   completion(page, error);
+               });
 }
 
 void DesktopSessionSyncCoordinator::sendRemoteCommand(const QJsonObject& session, const QJsonObject& payload,
@@ -175,15 +240,61 @@ void DesktopSessionSyncCoordinator::sendRemoteCommand(const QJsonObject& session
                std::move(completion));
 }
 
+void DesktopSessionSyncCoordinator::sendRemoteLifecycle(const QJsonObject& device, const QJsonObject& payload,
+                                                       Completion completion) {
+    const QJsonObject current = matchingDevice(device);
+    if (current.isEmpty() || !current.value(QStringLiteral("online")).toBool()) {
+        completion({}, QStringLiteral("所属设备离线或登录已变化"));
+        return;
+    }
+    const QString action = payload.value(QStringLiteral("action")).toString();
+    if (action != QStringLiteral("session_create") &&
+        action != QStringLiteral("session_delete") &&
+        action != QStringLiteral("session_set_workspace")) {
+        completion({}, QStringLiteral("不支持的会话操作"));
+        return;
+    }
+    const QString id = newId();
+    const QString slot = current.value(QStringLiteral("device_slot")).toString();
+    const QString login = current.value(QStringLiteral("login_session_id")).toString();
+    pendingLifecycle_.insert(id, {slot, login, std::move(completion)});
+    QPointer<DesktopSessionSyncCoordinator> guard(this);
+    requester_(QStringLiteral("session-sync/send"), "POST",
+               {{QStringLiteral("to_slot"), slot},
+                {QStringLiteral("to_login_session_id"), login},
+                {QStringLiteral("client_message_id"), id},
+                {QStringLiteral("session_id"), QStringLiteral("session_lifecycle")},
+                {QStringLiteral("kind"), QStringLiteral("command")},
+                {QStringLiteral("payload"), payload}},
+               [guard, id](const QJsonObject&, const QString& error) {
+                   if (!guard || error.isEmpty() || !guard->pendingLifecycle_.contains(id)) return;
+                   const PendingLifecycle command = guard->pendingLifecycle_.take(id);
+                   command.completion({}, error);
+               });
+    QTimer::singleShot(30000, this, [guard, id] {
+        if (!guard || !guard->pendingLifecycle_.contains(id)) return;
+        const PendingLifecycle command = guard->pendingLifecycle_.take(id);
+        command.completion({}, QStringLiteral("操作状态未知，请先刷新所属设备会话列表"));
+    });
+}
+
 DesktopSessionSyncHost* DesktopSessionSyncCoordinator::host() {
     AgentController* current = agentProvider_();
     if (current == agent_) return host_.get();
     if (agent_) disconnect(agent_, nullptr, this, nullptr);
+    snapshotTimer_.stop();
+    backfillTimer_.stop();
+    pendingSnapshotSessions_.clear();
+    initiallyPublishedSessions_.clear();
+    backfillSessions_.clear();
+    backfillBefore_.clear();
+    publishedMessageDigests_.clear();
+    publishedStateDigests_.clear();
     host_.reset();
     agent_ = current;
-    subscribers_.clear();
     if (!current) return nullptr;
     host_ = std::make_unique<DesktopSessionSyncHost>(*current);
+    host_->setDefaultWorkspaceDirectory(defaultWorkspaceDirectory_);
     connect(
         current, &AgentController::textDelta, this,
         [this](const QString& session, const QString&, const QString&, const QString&) { scheduleSnapshot(session); });
@@ -200,17 +311,53 @@ DesktopSessionSyncHost* DesktopSessionSyncCoordinator::host() {
             [this](const QString&, const QString& session) { scheduleSnapshot(session); });
     connect(current, &AgentController::questionAsked, this,
             [this](const QString&, const QString& session, const QString&) { scheduleSnapshot(session); });
+    connect(current, &AgentController::sessionStructureChanged, this,
+            [this] { publishPresence(); });
+    connect(current, &AgentController::sessionTitleChanged, this,
+            [this](const QString&, const QString&) { publishPresence(); });
     return host_.get();
 }
 
 void DesktopSessionSyncCoordinator::publishPresence() {
     DesktopSessionSyncHost* current = host();
     if (!current) return;
+    const QJsonArray sessions = current->rootSessions();
     requester_(QStringLiteral("session-sync/presence"), "POST",
                {{QStringLiteral("device_id"), deviceId_},
                 {QStringLiteral("name"), deviceName_},
-                {QStringLiteral("sessions"), current->rootSessions()}},
-               [](const QJsonObject&, const QString&) {});
+                {QStringLiteral("sessions"), sessions}},
+               [this, sessions](const QJsonObject&, const QString& error) {
+                   if (!error.isEmpty()) return;
+                   QSet<QString> currentIds;
+                   for (const QJsonValue& value : sessions) {
+                       const QString id = value.toObject().value(QStringLiteral("id")).toString();
+                       currentIds.insert(id);
+                       if (initiallyPublishedSessions_.contains(id)) continue;
+                       initiallyPublishedSessions_.insert(id);
+                       scheduleSnapshot(id);
+                       backfillSessions_.enqueue(id);
+                   }
+                   for (const QString& oldId : initiallyPublishedSessions_ - currentIds) {
+                       QPointer<DesktopSessionSyncCoordinator> guard(this);
+                       requester_(QStringLiteral("session-sync/room-delete"), "POST",
+                                  {{QStringLiteral("session_id"), oldId}},
+                                  [guard, oldId](const QJsonObject&, const QString& error) {
+                                      if (!guard || !error.isEmpty()) return;
+                                      guard->initiallyPublishedSessions_.remove(oldId);
+                                      guard->backfillSessions_.removeAll(oldId);
+                                      guard->backfillBefore_.remove(oldId);
+                                      guard->publishedStateDigests_.remove(oldId);
+                                      for (auto it = guard->publishedMessageDigests_.begin();
+                                           it != guard->publishedMessageDigests_.end();) {
+                                          if (it.key().startsWith(oldId + QLatin1Char(':')))
+                                              it = guard->publishedMessageDigests_.erase(it);
+                                          else ++it;
+                                      }
+                                  });
+                   }
+                   if (!backfillTimer_.isActive() && !backfillSessions_.isEmpty())
+                       backfillTimer_.start(2000);
+               });
 }
 
 void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) {
@@ -221,26 +368,53 @@ void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) 
     const QString fromLogin = envelope.value(QStringLiteral("from_login_session_id")).toString();
     if (id <= 0 || session.isEmpty() || fromSlot.isEmpty() || fromLogin.isEmpty()) return;
     DesktopSessionSyncHost* current = host();
-    if (!current && (kind == QStringLiteral("history_request") || kind == QStringLiteral("command"))) return;
-    if (kind == QStringLiteral("history_request")) {
-        const QJsonObject request = envelope.value(QStringLiteral("payload")).toObject();
-        const int limit = qBound(1, request.value(QStringLiteral("limit")).toInt(10), 20);
-        const QJsonObject history =
-            current->historyPage(session, request.value(QStringLiteral("before")).toString(), limit);
-        if (history.value(QStringLiteral("ok")).toBool()) {
-            subscribers_.insert(subscriberKey(fromSlot, fromLogin, session),
-                                {fromSlot, fromLogin, QDateTime::currentMSecsSinceEpoch() + 120'000});
-            queuePayload(fromSlot, fromLogin, session, QStringLiteral("history_page"), history);
+    if (!current && kind == QStringLiteral("command")) return;
+    if (kind == QStringLiteral("command")) {
+        QJsonObject result = current->applyCommand(session, envelope.value(QStringLiteral("payload")).toObject());
+        if (!result.value(QStringLiteral("ok")).toBool()) {
+            QString error = result.value(QStringLiteral("error")).toString().left(120);
+            error.replace(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f-\\x9f]")),
+                          QStringLiteral(" "));
+            result.insert(QStringLiteral("error"),
+                          error.trimmed().isEmpty() ? QStringLiteral("会话操作失败") : error);
         }
-    } else if (kind == QStringLiteral("command")) {
-        const QJsonObject result = current->applyCommand(session, envelope.value(QStringLiteral("payload")).toObject());
-        queuePayload(fromSlot, fromLogin, session, QStringLiteral("event"),
-                     {{QStringLiteral("type"), QStringLiteral("command_result")},
-                      {QStringLiteral("command_id"), envelope.value(QStringLiteral("client_message_id"))},
-                      {QStringLiteral("result"), result}});
-        scheduleSnapshot(session);
-    } else if (kind == QStringLiteral("history_page") || kind == QStringLiteral("event")) {
-        handleRemoteChunk(envelope);
+        const QJsonObject response{{QStringLiteral("type"), QStringLiteral("command_result")},
+                                   {QStringLiteral("command_id"),
+                                    envelope.value(QStringLiteral("client_message_id"))},
+                                   {QStringLiteral("result"), result}};
+        if (session == QStringLiteral("session_lifecycle")) {
+            requester_(QStringLiteral("session-sync/send"), "POST",
+                       {{QStringLiteral("to_slot"), fromSlot},
+                        {QStringLiteral("to_login_session_id"), fromLogin},
+                        {QStringLiteral("client_message_id"), newId()},
+                        {QStringLiteral("session_id"), session},
+                        {QStringLiteral("kind"), QStringLiteral("event")},
+                        {QStringLiteral("payload"), response}},
+                       [](const QJsonObject&, const QString&) {});
+            publishPresence();
+        } else {
+            queuePayload(fromSlot, fromLogin, session, QStringLiteral("event"), response);
+            scheduleSnapshot(session);
+        }
+    } else if (kind == QStringLiteral("event")) {
+        if (session == QStringLiteral("session_lifecycle")) {
+            const QJsonObject payload = envelope.value(QStringLiteral("payload")).toObject();
+            if (payload.value(QStringLiteral("type")).toString() == QStringLiteral("command_result")) {
+                const QString commandId = payload.value(QStringLiteral("command_id")).toString();
+                auto it = pendingLifecycle_.find(commandId);
+                if (it != pendingLifecycle_.end() && it->slot == fromSlot && it->login == fromLogin) {
+                    const PendingLifecycle command = it.value();
+                    pendingLifecycle_.erase(it);
+                    const QJsonObject result = payload.value(QStringLiteral("result")).toObject();
+                    command.completion(result,
+                                       result.value(QStringLiteral("ok")).toBool() ? QString() :
+                                           result.value(QStringLiteral("error")).toString(
+                                               QStringLiteral("会话操作失败")));
+                }
+            }
+        } else {
+            handleRemoteChunk(envelope);
+        }
     }
     acknowledge(id);
 }
@@ -349,13 +523,21 @@ void DesktopSessionSyncCoordinator::flushOutbound() {
                 {QStringLiteral("session_id"), next.sessionId},
                 {QStringLiteral("kind"), next.kind},
                 {QStringLiteral("payload"), next.payload}},
-               [guard](const QJsonObject&, const QString& error) {
+               [guard, next](const QJsonObject&, const QString& error) {
                    if (!guard) return;
                    guard->sending_ = false;
                    if (!guard->outbound_.isEmpty()) guard->outbound_.dequeue();
                    if (!error.isEmpty()) {
-                       guard->outbound_.clear();
-                       return;
+                       QQueue<Outgoing> remaining;
+                       while (!guard->outbound_.isEmpty()) {
+                           const Outgoing queued = guard->outbound_.dequeue();
+                           if (queued.recipientSlot == next.recipientSlot &&
+                               queued.recipientLogin == next.recipientLogin &&
+                               queued.sessionId == next.sessionId)
+                               continue;
+                           remaining.enqueue(queued);
+                       }
+                       guard->outbound_ = std::move(remaining);
                    }
                    QTimer::singleShot(0, guard, [guard] {
                        if (guard) guard->flushOutbound();
@@ -364,7 +546,7 @@ void DesktopSessionSyncCoordinator::flushOutbound() {
 }
 
 void DesktopSessionSyncCoordinator::scheduleSnapshot(const QString& sessionId) {
-    if (sessionId.isEmpty() || subscribers_.isEmpty()) return;
+    if (sessionId.isEmpty()) return;
     pendingSnapshotSessions_.insert(sessionId);
     if (!snapshotTimer_.isActive()) snapshotTimer_.start();
 }
@@ -372,17 +554,81 @@ void DesktopSessionSyncCoordinator::scheduleSnapshot(const QString& sessionId) {
 void DesktopSessionSyncCoordinator::publishSnapshot(const QString& sessionId) {
     DesktopSessionSyncHost* current = host();
     if (!current || sessionId.isEmpty()) return;
-    const QJsonObject page = current->historyPage(sessionId, {}, 10);
+    const QJsonObject page = current->historyPage(sessionId, {}, 20);
     if (!page.value(QStringLiteral("ok")).toBool()) return;
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    for (auto it = subscribers_.begin(); it != subscribers_.end();) {
-        if (it.value().expiresAt <= now) {
-            it = subscribers_.erase(it);
+    publishPage(sessionId, page);
+}
+
+void DesktopSessionSyncCoordinator::processBackfillPage() {
+    if (backfillSessions_.isEmpty()) return;
+    const QString sessionId = backfillSessions_.head();
+    DesktopSessionSyncHost* current = host();
+    if (!backfillBefore_.contains(sessionId)) {
+        const QJsonObject latest = current ? current->historyPage(sessionId, {}, 20) : QJsonObject{};
+        const QJsonArray recent = latest.value(QStringLiteral("messages")).toArray();
+        if (!latest.value(QStringLiteral("ok")).toBool() || recent.size() < 20) {
+            backfillSessions_.dequeue();
         } else {
-            if (it.key().endsWith(QLatin1Char(':') + sessionId))
-                queuePayload(it.value().slot, it.value().login, sessionId, QStringLiteral("event"), page);
-            ++it;
+            backfillBefore_.insert(sessionId,
+                recent.last().toObject().value(QStringLiteral("id")).toString());
+        }
+        if (!backfillSessions_.isEmpty()) backfillTimer_.start(5000);
+        return;
+    }
+    const QJsonObject page = current ? current->historyPage(sessionId,
+        backfillBefore_.value(sessionId), 20) : QJsonObject{};
+    const QJsonArray messages = page.value(QStringLiteral("messages")).toArray();
+    if (!page.value(QStringLiteral("ok")).toBool() || messages.isEmpty()) {
+        backfillSessions_.dequeue();
+        backfillBefore_.remove(sessionId);
+    } else {
+        publishPage(sessionId, page);
+        backfillBefore_.insert(sessionId,
+            messages.last().toObject().value(QStringLiteral("id")).toString());
+        if (messages.size() < 20) {
+            backfillSessions_.dequeue();
+            backfillBefore_.remove(sessionId);
         }
     }
-    publishPresence();
+    if (!backfillSessions_.isEmpty()) backfillTimer_.start(5000);
+}
+
+void DesktopSessionSyncCoordinator::publishPage(const QString& sessionId, const QJsonObject& page) {
+    const QJsonArray messages = page.value(QStringLiteral("messages")).toArray();
+    const QJsonObject state{{QStringLiteral("permissions"), page.value(QStringLiteral("permissions"))},
+                            {QStringLiteral("questions"), page.value(QStringLiteral("questions"))}};
+    const QByteArray stateDigest = QCryptographicHash::hash(
+        QJsonDocument(state).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+    auto publish = [this, sessionId, page, stateDigest](const QJsonArray& batch,
+                                                        const QString& key, const QByteArray& digest) {
+        if (!key.isEmpty()) publishedMessageDigests_.insert(key, digest);
+        publishedStateDigests_.insert(sessionId, stateDigest);
+        QPointer<DesktopSessionSyncCoordinator> guard(this);
+        requester_(QStringLiteral("session-sync/publish"), "POST",
+                   {{QStringLiteral("session_id"), sessionId},
+                    {QStringLiteral("messages"), batch},
+                    {QStringLiteral("permissions"), page.value(QStringLiteral("permissions"))},
+                    {QStringLiteral("questions"), page.value(QStringLiteral("questions"))}},
+                   [guard, key, digest, sessionId, stateDigest](const QJsonObject&, const QString& error) {
+                       if (!guard || error.isEmpty()) return;
+                       if (!key.isEmpty() && guard->publishedMessageDigests_.value(key) == digest)
+                           guard->publishedMessageDigests_.remove(key);
+                       if (guard->publishedStateDigests_.value(sessionId) == stateDigest)
+                           guard->publishedStateDigests_.remove(sessionId);
+                       guard->initiallyPublishedSessions_.remove(sessionId);
+                   });
+    };
+    bool sentMessage = false;
+    for (const QJsonValue& message : messages) {
+        const QString id = message.toObject().value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) continue;
+        const QString key = sessionId + QLatin1Char(':') + id;
+        const QByteArray digest = QCryptographicHash::hash(
+            QJsonDocument(message.toObject()).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+        if (publishedMessageDigests_.value(key) == digest) continue;
+        publish(QJsonArray{message}, key, digest);
+        sentMessage = true;
+    }
+    if (!sentMessage && publishedStateDigests_.value(sessionId) != stateDigest)
+        publish(QJsonArray{}, {}, {});
 }

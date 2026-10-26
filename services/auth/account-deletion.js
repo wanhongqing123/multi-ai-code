@@ -29,6 +29,14 @@ function completeAccountDeletion(db, requestId, evidence, secret, completedAt = 
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(request.user_id);
     if (!user?.disabled_at) throw new Error('Account is not disabled');
     const userId = user.id;
+    const cloudPending = db.prepare(`SELECT COUNT(*) AS count FROM cloud_drive_videos
+      WHERE owner_user_id=?`)
+      .get(userId).count;
+    const circlePending = db.prepare(`SELECT COUNT(*) AS count FROM video_circle_posts
+      WHERE author_user_id=? AND (status<>'withdrawn' OR cleanup_pending<>0)`)
+      .get(userId).count;
+    if (cloudPending || circlePending)
+      throw new Error('Account media cleanup is not complete');
     const identities = db.prepare('SELECT subject_hash FROM social_identities WHERE user_id=?')
       .all(userId);
     for (const identity of identities)
@@ -62,6 +70,13 @@ function completeAccountDeletion(db, requestId, evidence, secret, completedAt = 
       .run(userId, userId);
     db.prepare('DELETE FROM safety_reports WHERE reporter_user_id=? OR target_user_id=?')
       .run(userId, userId);
+    db.prepare(`DELETE FROM video_circle_reports WHERE reporter_user_id=? OR
+      post_id IN (SELECT id FROM video_circle_posts WHERE author_user_id=?)`)
+      .run(userId, userId);
+    db.prepare('DELETE FROM video_circle_blocks WHERE viewer_user_id=? OR author_user_id=?')
+      .run(userId, userId);
+    db.prepare('DELETE FROM video_circle_posts WHERE author_user_id=?').run(userId);
+    db.prepare('DELETE FROM cloud_drive_videos WHERE owner_user_id=?').run(userId);
     db.prepare('DELETE FROM profile_im_sync WHERE user_id=?').run(userId);
     db.prepare('DELETE FROM social_identities WHERE user_id=?').run(userId);
     db.prepare('DELETE FROM sessions WHERE user_id=?').run(userId);

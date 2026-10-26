@@ -184,7 +184,7 @@ struct MaiAgent::Runtime {
     std::unique_ptr<MaiQuestionGate> questions;
     // 指回门面。子 Agent 那组工具要通过它起会话、派活、等结果，
     // 而那些动作只有门面做得了（要走 submit，才有 Busy 判断和事件）。
-    MaiSubAgentHost* owner = nullptr;
+    MaiAgent* owner = nullptr;
 
     mutable std::mutex mutex;
     std::condition_variable turnFinished;
@@ -255,7 +255,10 @@ struct MaiAgent::Runtime {
         dependencies.permissions = permissions.get();
         dependencies.questions = questions.get();
         dependencies.subAgents = owner;
+        dependencies.sessionAgent = owner;
         dependencies.defaultModel = options.defaultModel;
+        dependencies.reasoningEffort = options.reasoningEffort;
+        dependencies.reasoningEffortProvider = options.reasoningEffortProvider;
         dependencies.baseInstructions = options.baseInstructions;
         dependencies.maxIterations = options.maxToolIterations;
         dependencies.approvalPolicy = options.approvalPolicy;
@@ -815,6 +818,12 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 return operation.sessionId;
 
             } else if constexpr (std::is_same_v<T, MaiDeleteSession>) {
+                {
+                    std::lock_guard<std::mutex> lock(mRuntime->mutex);
+                    if (mRuntime->active.count(operation.sessionId))
+                        return {MaiErrorCode::Busy,
+                                "a turn is still running; interrupt it before deleting"};
+                }
                 if (!mRuntime->store->removeSession(operation.sessionId))
                     return {MaiErrorCode::NotFound, "session not found"};
                 // 会话没了，它还在等的授权就没意义了；"本会话都允许"也要一起清掉，

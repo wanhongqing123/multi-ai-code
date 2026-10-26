@@ -263,7 +263,7 @@ public class AIAssistantInstrumentedTest {
                             .put("title", "Mac 编译任务").put("device_slot", "mac")
                             .put("device_name", "工作 Mac").put("device_id", "fixture-mac")
                             .put("login_session_id", "fixture-login").put("online", true)
-                            .put("busy", false)), "android_phone");
+                            .put("busy", false)), new org.json.JSONArray(), "android_phone");
                 } catch (Exception failure) { throw new AssertionError(failure); }
             });
             await(scenario, panel -> panel.controller.state.data.toString().contains("ses_remote_fixture"));
@@ -300,19 +300,171 @@ public class AIAssistantInstrumentedTest {
                             .put("title", "Mac 推送任务").put("device_slot", "mac")
                             .put("device_name", "工作 Mac").put("device_id", "fixture-mac")
                             .put("login_session_id", "fixture-login").put("online", true)
-                            .put("busy", false)), "android_phone");
+                            .put("busy", false)), new org.json.JSONArray(), "android_phone");
                 } catch (Exception failure) { throw new AssertionError(failure); }
             });
             await(scenario, panel -> panel.controller.state.data.toString().contains("ses_push_fixture"));
             assertNotNull("展开中的侧栏须显示新推送的 Session",
                 awaitSystemText("工作 Mac", 3000));
             scenario.onActivity(activity ->
-                activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray(), "android_phone"));
+                activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray(),
+                    new org.json.JSONArray(), "android_phone"));
             await(scenario, panel -> !panel.controller.state.data.toString().contains("ses_push_fixture"));
             assertNull("展开中的侧栏须移除已清空的 Session",
                 awaitSystemText("工作 Mac", 1000));
             scenario.onActivity(activity ->
                 assertEquals("保留草稿", activity.panel.composer.getText().toString()));
+        }
+    }
+
+    @Test public void emptyRemoteDeviceCanBeSelectedForNewConversation() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray(),
+                        new org.json.JSONArray().put(new JSONObject()
+                            .put("device_slot", "mac").put("device_name", "工作 Mac")
+                            .put("device_id", "fixture-mac")
+                            .put("login_session_id", "fixture-login").put("online", true)),
+                        "android_phone");
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            await(scenario, panel -> panel.controller.state.data.toString()
+                .contains("fixture-mac"));
+            scenario.onActivity(activity -> {
+                try {
+                    JSONObject listed = activity.panel.controller.remoteSessionTool(
+                        "maichat_remote_session_list", new JSONObject());
+                    assertEquals(1, listed.getJSONArray("devices").length());
+                    assertEquals("mac", listed.getJSONArray("devices")
+                        .getJSONObject(0).getString("device_slot"));
+                    assertEquals(0, listed.getJSONArray("sessions").length());
+                    assertEquals(0, listed.getInt("total_sessions"));
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            scenario.onActivity(activity ->
+                assertTrue(findDescription(activity.panel, "对话列表").performClick()));
+            AccessibilityNodeInfo add = awaitSystemText("新对话", 3000);
+            assertNotNull(add);
+            assertTrue(clickNodeOrParent(add));
+            assertNotNull("空会话设备也应显示在新建目标中", awaitSystemText("工作 Mac", 3000));
+            assertNotNull("应保留本机创建入口", awaitSystemText("这台设备", 3000));
+            assertFalse("默认创建不能发送工作区路径",
+                AIAssistantController.remoteCreateAction("").has("workspace_path"));
+            assertEquals("/existing/owner/workspace",
+                AIAssistantController.remoteCreateAction("/existing/owner/workspace")
+                    .optString("workspace_path"));
+            AccessibilityNodeInfo mac = awaitExactSystemText("工作 Mac", 3000);
+            assertNotNull(mac);
+            assertTrue(clickNodeOrParent(mac));
+            await(scenario, panel -> panel.controller.state.error.contains("同步服务"));
+            assertNull("手动创建不应再弹出 Desktop 路径输入框",
+                awaitSystemText("工作区路径", 500));
+        }
+    }
+
+    @Test public void remoteLifecycleUsesOwnerWorkspaceAndDeletesCreatedSession() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            java.util.concurrent.CompletableFuture<JSONObject> invalidPath =
+                new java.util.concurrent.CompletableFuture<>();
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.lifecycleForSync(new JSONObject()
+                        .put("action", "session_create")
+                        .put("workspace_path", "/tmp/other-device-workspace"),
+                        invalidPath::complete);
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            JSONObject rejected = invalidPath.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertFalse("Android 所属设备不得改用外部绝对路径", rejected.optBoolean("ok"));
+            assertFalse(rejected.optString("error").isEmpty());
+            java.util.concurrent.CompletableFuture<JSONObject> created =
+                new java.util.concurrent.CompletableFuture<>();
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.lifecycleForSync(
+                        new JSONObject().put("action", "session_create"), created::complete);
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            JSONObject result = created.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(result.toString(), result.optBoolean("ok"));
+            String id = result.optString("session_id");
+            assertFalse(id.isEmpty());
+            await(scenario, panel -> panel.controller.state.data.toString().contains(id));
+            JSONObject workspaceCommand = AIAssistantController.remoteWorkspaceAction(
+                id, "/tmp/other-device-workspace");
+            assertEquals("session_set_workspace", workspaceCommand.getString("action"));
+            assertEquals(id, workspaceCommand.getString("target_session_id"));
+            assertEquals("/tmp/other-device-workspace",
+                workspaceCommand.getString("workspace_path"));
+            java.util.concurrent.CompletableFuture<JSONObject> workspaceChange =
+                new java.util.concurrent.CompletableFuture<>();
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.lifecycleForSync(new JSONObject()
+                        .put("action", "session_set_workspace")
+                        .put("target_session_id", id)
+                        .put("workspace_path", "/tmp/other-device-workspace"),
+                        workspaceChange::complete);
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            JSONObject rejectedWorkspace = workspaceChange.get(10,
+                java.util.concurrent.TimeUnit.SECONDS);
+            assertFalse("Android 应保留应用沙盒工作区", rejectedWorkspace.optBoolean("ok"));
+            java.util.concurrent.CompletableFuture<JSONObject> deleted =
+                new java.util.concurrent.CompletableFuture<>();
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.lifecycleForSync(new JSONObject()
+                        .put("action", "session_delete").put("target_session_id", id),
+                        deleted::complete);
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            JSONObject removed = deleted.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(removed.toString(), removed.optBoolean("ok"));
+            assertEquals(id, removed.optString("session_id"));
+            await(scenario, panel -> !panel.controller.state.data.toString().contains(id));
+        }
+    }
+
+    @Test public void remoteSessionDeleteRequiresConfirmation() throws Exception {
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app, AIAssistantTestActivity.class)
+            .putExtra("model_url", "http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                try {
+                    activity.panel.controller.acceptRemoteCatalog(new org.json.JSONArray().put(
+                        new JSONObject().put("id", "ses_delete_fixture")
+                            .put("title", "Mac 编译任务").put("device_slot", "mac")
+                            .put("device_name", "工作 Mac").put("device_id", "fixture-mac")
+                            .put("login_session_id", "fixture-login").put("online", true)),
+                        new org.json.JSONArray(), "android_phone");
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            await(scenario, panel -> panel.controller.state.data.toString()
+                .contains("ses_delete_fixture"));
+            scenario.onActivity(activity ->
+                assertTrue(findDescription(activity.panel, "对话列表").performClick()));
+            AccessibilityNodeInfo delete = awaitSystemText("删除“Mac 编译任务”", 3000);
+            assertNotNull(delete);
+            assertTrue(clickNodeOrParent(delete));
+            assertNotNull(awaitSystemText("删除对话", 3000));
+            assertNotNull(awaitSystemText("所属设备：工作 Mac", 3000));
+            AccessibilityNodeInfo cancel = awaitExactSystemText("取消", 3000);
+            assertNotNull(cancel);
+            assertTrue(clickNodeOrParent(cancel));
+            scenario.onActivity(activity -> assertTrue(activity.panel.controller.state.data
+                .toString().contains("ses_delete_fixture")));
         }
     }
 
@@ -649,10 +801,50 @@ public class AIAssistantInstrumentedTest {
                 assertNotNull(findDescription(panel, "选择图片或视频"));
                 assertNotNull(findDescription(panel, "拍照"));
                 assertNotNull(findDescription(panel, "导入文本文件"));
+                assertNotNull(findDescription(panel, "开始或停止系统屏幕共享"));
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            Thread.sleep(350);
+            Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().takeScreenshot();
+            assertNotNull(screenshot);
+            File output = new File(InstrumentationRegistry.getInstrumentation()
+                .getTargetContext().getFilesDir(), "agent-screen-share-entry.png");
+            try (FileOutputStream stream = new FileOutputStream(output)) {
+                assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream));
+            } finally { screenshot.recycle(); }
+            scenario.onActivity(activity -> {
+                AIAssistantPanel panel = activity.panel;
                 assertTrue(findDescription(panel, "切换到按住转文字").performClick());
                 assertNotNull(findDescription(panel, "按住转文字"));
                 assertNotNull(findDescription(panel, "切换到键盘输入"));
             });
+        }
+    }
+
+    @Test public void deepSeekEffortMenuHidesModelPicker() throws Exception {
+        try (ActivityScenario<AIAssistantTestActivity> scenario =
+                 ActivityScenario.launch(AIAssistantTestActivity.class)) {
+            await(scenario, panel -> panel.controller.state.ready);
+            scenario.onActivity(activity ->
+                assertTrue(findDescription(activity.panel, "更多").performClick()));
+            AccessibilityNodeInfo effort = awaitExactSystemText("思考强度", 3_000);
+            assertNotNull(effort);
+            assertTrue(clickNodeOrParent(effort));
+            assertNotNull(awaitExactSystemText("简单", 3_000));
+            assertNotNull(awaitExactSystemText("标准", 3_000));
+            assertNotNull(awaitExactSystemText("深度", 3_000));
+            assertNull(awaitExactSystemText("glm-5.3", 500));
+            Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().takeScreenshot();
+            assertNotNull(screenshot);
+            File output = new File(InstrumentationRegistry.getInstrumentation()
+                .getTargetContext().getFilesDir(), "android-deepseek-effort-menu.png");
+            try (FileOutputStream stream = new FileOutputStream(output)) {
+                assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, stream));
+            } finally { screenshot.recycle(); }
+            assertTrue(clickNodeOrParent(awaitExactSystemText("深度", 3_000)));
+            await(scenario, panel -> panel.controller.reasoningEffort().equals("max"));
         }
     }
     @Test

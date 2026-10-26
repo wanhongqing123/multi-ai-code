@@ -45,17 +45,96 @@ final class AIMobileHostToolProvider {
 
         switch name {
         case "mobile_export_diagnostics": return await exportDiagnostics()
-        case "mobile_take_photo":
-            do {
-                let model = AIAssistantModel.shared
-                let path = try await AIMobileLocalMediaRequests.shared.requestCamera(
-                    in: model.selected, workspacePath: model.workspacePath)
-                return Self.jsonSuccess(["path": path, "mime_type": "image/jpeg"])
-            } catch let error as AIMobileLocalMediaRequestError {
-                return .failure(code: Self.localMediaErrorCode(error),
-                                message: error.localizedDescription)
-            } catch {
-                return .failure(code: "internal", message: error.localizedDescription)
+        case "maichat_remote_session_list":
+            let model = AIAssistantModel.shared
+            let devices: [[String: Any]] = model.remoteDevices.map { device in
+                ["device_slot": device.deviceSlot,
+                 "device_name": device.deviceName,
+                 "online": device.online]
+            }
+            let sessions: [[String: Any]] = model.remoteSessions.prefix(100).map { session in
+                ["device_slot": session.deviceSlot,
+                 "session_id": session.sessionID,
+                 "title": session.displayTitle,
+                 "busy": session.busy,
+                 "online": session.online]
+            }
+            return Self.jsonSuccess(["devices": devices,
+                                     "sessions": sessions,
+                                     "total_sessions": model.remoteSessions.count])
+        case "maichat_remote_session_create":
+            let slot = Self.string(arguments, key: "device_slot")
+            guard let device = AIAssistantModel.shared.remoteDevices.first(where: {
+                $0.deviceSlot == slot && $0.online
+            }) else {
+                return .failure(code: "not_found", message: "online target device is unavailable")
+            }
+            let workspacePath = Self.string(arguments, key: "workspace_path")
+            if arguments["workspace_path"] != nil && workspacePath.isEmpty {
+                return .failure(code: "invalid_input", message: "workspace_path must be nonempty")
+            }
+            guard let created = await AIAssistantModel.shared.createRemoteSession(
+                on: device, workspacePath: workspacePath.isEmpty ? nil : workspacePath,
+                selectOnSuccess: false) else {
+                return .failure(code: "network", message: "remote Session create is unconfirmed; check device catalog")
+            }
+            return Self.jsonSuccess(["ok": true, "device_slot": slot,
+                                     "session_id": created])
+        case "maichat_remote_session_delete":
+            let slot = Self.string(arguments, key: "device_slot")
+            let sessionID = Self.string(arguments, key: "session_id")
+            guard let session = AIAssistantModel.shared.remoteSessions.first(where: {
+                $0.deviceSlot == slot && $0.sessionID == sessionID
+            }) else {
+                return .failure(code: "not_found", message: "remote Session is unavailable")
+            }
+            guard await AIAssistantModel.shared.deleteRemoteSession(session) else {
+                return .failure(code: "network", message: "remote Session delete is unconfirmed; check device catalog")
+            }
+            return Self.jsonSuccess(["ok": true, "device_slot": slot,
+                                     "session_id": sessionID])
+        case "maichat_remote_session_set_workspace":
+            let slot = Self.string(arguments, key: "device_slot")
+            let sessionID = Self.string(arguments, key: "session_id")
+            let workspacePath = Self.string(arguments, key: "workspace_path")
+            guard !workspacePath.isEmpty else {
+                return .failure(code: "invalid_input", message: "workspace_path is required")
+            }
+            guard let session = AIAssistantModel.shared.remoteSessions.first(where: {
+                $0.deviceSlot == slot && $0.sessionID == sessionID
+            }) else {
+                return .failure(code: "not_found", message: "remote Session is unavailable")
+            }
+            guard await AIAssistantModel.shared.setRemoteSessionWorkspace(
+                session, workspacePath: workspacePath) else {
+                return .failure(code: "network", message: "workspace switch is unconfirmed; check owner device")
+            }
+            return Self.jsonSuccess(["ok": true, "device_slot": slot,
+                                     "session_id": sessionID,
+                                     "workspace_path": workspacePath])
+        case "maichat_camera_command":
+            let action = Self.string(arguments, key: "action")
+            let model = AIAssistantModel.shared
+            let camera = AIMobileLocalMediaRequests.shared
+            switch action {
+            case "open":
+                do {
+                    let state = try camera.openCamera(in: model.selected,
+                                                      workspacePath: model.workspacePath)
+                    return Self.jsonSuccess(["state": state])
+                } catch let error as AIMobileLocalMediaRequestError {
+                    return .failure(code: Self.localMediaErrorCode(error),
+                                    message: error.localizedDescription)
+                } catch {
+                    return .failure(code: "internal", message: error.localizedDescription)
+                }
+            case "status":
+                return Self.jsonSuccess(camera.cameraStatus(in: model.selected))
+            case "close":
+                let wasOpen = camera.closeCamera(in: model.selected)
+                return Self.jsonSuccess(["state": "closed", "was_open": wasOpen])
+            default:
+                return .failure(code: "invalid_input", message: "action must be open, status, or close")
             }
         case "mobile_play_local_music":
             let path = Self.string(arguments, key: "path")
@@ -138,6 +217,182 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "maichat_cloud_drive_list_media":
+            do {
+                let cursor = Self.string(arguments, key: "before")
+                let page = try await MaiCloudDriveClient.shared.list(
+                    before: cursor.isEmpty ? nil : cursor)
+                return Self.jsonSuccess([
+                    "media": page.videos.map { video in
+                        ["media_id": video.id, "name": video.name,
+                         "size_bytes": video.sizeBytes,
+                         "content_type": video.contentType,
+                         "media_type": video.mediaType ??
+                             (video.isImage ? "image" : "video"),
+                         "created_at": video.createdAt] as [String: Any]
+                    },
+                    "next_cursor": page.nextCursor as Any? ?? NSNull(),
+                    "quota": ["used_bytes": page.quota.usedBytes,
+                              "reserved_bytes": page.quota.reservedBytes,
+                              "limit_bytes": page.quota.limitBytes]
+                ])
+            } catch {
+                return Self.cloudDriveFailure(error)
+            }
+        case "maichat_cloud_drive_list_pending_uploads":
+            guard !appState.maiChatAccountID.isEmpty else {
+                return .failure(code: "not_configured", message: "MaiChat account login required")
+            }
+            let drive = MaiCloudDriveModel.shared
+            drive.activate(accountID: appState.maiChatAccountID)
+            return Self.jsonSuccess(["uploads": drive.localTasks.map { task in
+                ["task_id": task.id, "name": task.name,
+                 "size_bytes": task.sizeBytes,
+                 "state": drive.isUploading(task.id) ? "uploading" : "paused"] as [String: Any]
+            }])
+        case "maichat_cloud_drive_upload_media":
+            guard !appState.maiChatAccountID.isEmpty else {
+                return .failure(code: "not_configured", message: "MaiChat account login required")
+            }
+            let input = Self.string(arguments, key: "file_path")
+            let workspacePath = AIAssistantModel.shared.workspacePath
+            let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            let fileName = URL(fileURLWithPath: input).lastPathComponent
+            var mediaInfo = MaiCloudDriveMediaInfo()
+            let supported = fileName.withCString {
+                mai_cloud_drive_media_info($0, &mediaInfo) != 0
+            }
+            guard let source = AIAssistantPathPolicy.resolve(
+                input, workspacePath: workspacePath),
+                source.resolvingSymlinksInPath().path.hasPrefix(workspace.path + "/"),
+                supported, source.lastPathComponent == fileName,
+                let attributes = try? source.resourceValues(
+                    forKeys: [.isRegularFileKey, .fileSizeKey]),
+                attributes.isRegularFile == true,
+                let size = attributes.fileSize, size > 0,
+                UInt64(size) <= mediaInfo.max_size_bytes else {
+                return .failure(code: "invalid_input",
+                    message: "file_path must be an MP4, MOV, JPEG, PNG, WebP or HEIC inside the current workspace")
+            }
+            let drive = MaiCloudDriveModel.shared
+            drive.activate(accountID: appState.maiChatAccountID)
+            await drive.probe()
+            guard drive.availability == .available else {
+                return .failure(code: drive.availability == .disabled
+                    ? "not_configured" : "network",
+                    message: "Cloud drive is not available")
+            }
+            guard let taskID = await drive.addAgentVideo(
+                source, expectedAccountID: appState.maiChatAccountID) else {
+                return .failure(code: "network", message: drive.notice)
+            }
+            return Self.jsonSuccess(["accepted": true, "task_id": taskID,
+                                     "state": "uploading"])
+        case "maichat_cloud_drive_resume_upload":
+            guard !appState.maiChatAccountID.isEmpty else {
+                return .failure(code: "not_configured", message: "MaiChat account login required")
+            }
+            let drive = MaiCloudDriveModel.shared
+            drive.activate(accountID: appState.maiChatAccountID)
+            let taskID = Self.string(arguments, key: "task_id")
+            guard let task = drive.localTasks.first(where: { $0.id == taskID }),
+                  !drive.isUploading(taskID) else {
+                return .failure(code: "not_found", message: "paused upload task not found")
+            }
+            await drive.probe()
+            guard drive.availability == .available else {
+                return .failure(code: drive.availability == .disabled
+                    ? "not_configured" : "network",
+                    message: "Cloud drive is not available")
+            }
+            guard drive.upload(task) else {
+                return .failure(code: "network", message: "Cloud upload cannot resume")
+            }
+            return Self.jsonSuccess(["accepted": true, "task_id": taskID,
+                                     "state": "uploading"])
+        case "maichat_cloud_drive_pause_upload":
+            guard !appState.maiChatAccountID.isEmpty else {
+                return .failure(code: "not_configured", message: "MaiChat account login required")
+            }
+            let taskID = Self.string(arguments, key: "task_id").lowercased()
+            guard UUID(uuidString: taskID) != nil else {
+                return .failure(code: "invalid_input", message: "task_id must be a UUID")
+            }
+            let drive = MaiCloudDriveModel.shared
+            drive.activate(accountID: appState.maiChatAccountID)
+            guard drive.localTasks.contains(where: { $0.id == taskID }) else {
+                return .failure(code: "not_found", message: "upload task not found")
+            }
+            if drive.isUploading(taskID) {
+                drive.pause(taskID: taskID)
+                return Self.jsonSuccess(["accepted": true, "task_id": taskID,
+                                         "state": "pausing"])
+            }
+            return Self.jsonSuccess(["paused": true, "task_id": taskID,
+                                     "state": "paused"])
+        case "maichat_cloud_drive_abort_upload":
+            guard !appState.maiChatAccountID.isEmpty else {
+                return .failure(code: "not_configured", message: "MaiChat account login required")
+            }
+            let taskID = Self.string(arguments, key: "task_id").lowercased()
+            guard UUID(uuidString: taskID) != nil else {
+                return .failure(code: "invalid_input", message: "task_id must be a UUID")
+            }
+            let drive = MaiCloudDriveModel.shared
+            drive.activate(accountID: appState.maiChatAccountID)
+            do {
+                switch try await drive.abortPausedTask(taskID: taskID) {
+                case .notFound:
+                    return .failure(code: "not_found", message: "upload task not found")
+                case .active:
+                    return .failure(code: "busy", message: "pause this upload before aborting it")
+                case .aborted:
+                    return Self.jsonSuccess(["aborted": true, "task_id": taskID])
+                }
+            } catch {
+                return Self.cloudDriveFailure(error)
+            }
+        case "maichat_cloud_drive_open_media":
+            let mediaID = Self.string(arguments, key: "media_id")
+            let accountID = appState.maiChatAccountID
+            guard !mediaID.isEmpty, !accountID.isEmpty else {
+                return .failure(code: "invalid_input", message: "media_id is required")
+            }
+            do {
+                let preview = try await MaiCloudDriveClient.shared.downloadForAgentPreview(
+                    mediaID: mediaID)
+                let file = preview.url
+                guard appState.maiChatAccountID == accountID,
+                      MaiCloudDriveAgentPlaybackCache.shared.adopt(
+                        file, accountID: accountID) else {
+                    try? FileManager.default.removeItem(at: file)
+                    return .failure(code: "not_configured",
+                                    message: "MaiChat account changed while opening media")
+                }
+                if preview.isImage {
+                    AIAssistantModel.shared.previewImage = AIImagePreview(filePath: file.path)
+                } else {
+                    appState.agentVideoPresentation = MaiFfplayPresentation(path: file.path)
+                }
+                return Self.jsonSuccess(["opened": true, "media_id": mediaID,
+                                         "media_type": preview.isImage ? "image" : "video"])
+            } catch {
+                return Self.cloudDriveFailure(error)
+            }
+        case "maichat_cloud_drive_delete_media":
+            let mediaID = Self.string(arguments, key: "media_id")
+            guard !appState.maiChatAccountID.isEmpty, !mediaID.isEmpty else {
+                return .failure(code: "invalid_input", message: "media_id is required")
+            }
+            do {
+                let drive = MaiCloudDriveModel.shared
+                drive.activate(accountID: appState.maiChatAccountID)
+                try await drive.deleteForAgent(videoID: mediaID)
+                return Self.jsonSuccess(["deleted": true, "media_id": mediaID])
+            } catch {
+                return Self.cloudDriveFailure(error)
+            }
         case "maichat_play_video":
             let path = Self.string(arguments, key: "path")
             let startSeconds = arguments["start_seconds"] as? Double ?? 0
@@ -204,6 +459,21 @@ final class AIMobileHostToolProvider {
               let object = try? JSONSerialization.jsonObject(with: data),
               let arguments = object as? [String: Any] else { return nil }
         return arguments
+    }
+
+    private static func cloudDriveFailure(_ error: Error) -> AIMaiChatHostToolExecution {
+        if let cloud = error as? MaiCloudDriveError {
+            if cloud.httpStatus == 404 {
+                let missingItem = cloud.detail == "Video not found" ||
+                    cloud.detail == "not_found"
+                return .failure(code: missingItem ? "not_found" : "not_configured",
+                                message: cloud.localizedDescription)
+            }
+            if cloud.httpStatus == 503 || cloud.httpStatus == 401 {
+                return .failure(code: "not_configured", message: cloud.localizedDescription)
+            }
+        }
+        return .failure(code: "network", message: error.localizedDescription)
     }
 
     static func boundedLimit(_ arguments: [String: Any], fallback: Int = 50) -> Int {

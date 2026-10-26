@@ -1025,6 +1025,7 @@ void test_responses_serializes_history_images_and_flat_tools() {
                                     std::string("\x89PNG", 4)));
     MaiModelRequest request;
     request.model = "deepseek-flash";
+    request.reasoningEffort = "max";
     request.baseInstructions = "Follow the user request.";
     request.workingDirectory = root.toUtf8();
     MaiModelMessage user;
@@ -1052,6 +1053,7 @@ void test_responses_serializes_history_images_and_flat_tools() {
     }
     const json body = json::parse(wire);
     CHECK(body["model"] == "deepseek-flash");
+    CHECK(body["reasoning"]["effort"] == "max");
     CHECK(body["instructions"] == "Follow the user request.");
     CHECK(body["input"].size() == 4);
     CHECK(body["input"][0]["role"] == "user");
@@ -1067,6 +1069,45 @@ void test_responses_serializes_history_images_and_flat_tools() {
     CHECK(body["tools"][0]["name"] == "lookup");
     CHECK(!body["tools"][0].contains("function"));
     MaiFileSystem::removeRecursively(root);
+}
+
+void test_deepseek_effort_levels_reach_responses_wire() {
+    FakeServer fake;
+    fake.script = sse(json{{"type", "response.completed"},
+                           {"response", {{"status", "completed"}, {"output", json::array()}}}});
+    fake.start();
+    for (const char* effort : {"low", "high", "max"}) {
+        MaiModelRequest request;
+        request.model = "deepseek-flash";
+        request.reasoningEffort = effort;
+        MaiModelMessage user;
+        user.role = MaiModelRole::User;
+        user.content = "Check effort";
+        request.messages.push_back(std::move(user));
+        CHECK(runAgainst(fake, request, MaiWireApi::Responses).done);
+        std::string wire;
+        {
+            std::lock_guard<std::mutex> lock(fake.mutex);
+            wire = fake.lastBody;
+        }
+        const json body = json::parse(wire);
+        CHECK(body["model"] == "deepseek-flash");
+        CHECK(body["reasoning"]["effort"] == effort);
+    }
+    MaiModelRequest glm;
+    glm.model = "glm-5.3";
+    glm.reasoningEffort = "max";
+    MaiModelMessage user;
+    user.role = MaiModelRole::User;
+    user.content = "Check isolation";
+    glm.messages.push_back(std::move(user));
+    CHECK(runAgainst(fake, glm, MaiWireApi::Responses).done);
+    std::string wire;
+    {
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        wire = fake.lastBody;
+    }
+    CHECK(!json::parse(wire).contains("reasoning"));
 }
 
 void test_responses_needs_terminal_event_and_reports_incomplete() {
@@ -1161,6 +1202,7 @@ int main() {
     test_invalid_utf8_history_is_replaced_before_serialization();
     test_responses_streams_reasoning_text_and_function_calls();
     test_responses_serializes_history_images_and_flat_tools();
+    test_deepseek_effort_levels_reach_responses_wire();
     test_responses_needs_terminal_event_and_reports_incomplete();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;

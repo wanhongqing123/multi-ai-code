@@ -6,6 +6,7 @@
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
 #include "MaiMobileAgent.h"
+#include "MaiMobileHostTools.h"
 #include "MaiImageFilter.h"
 #include "MaiSqliteStore.h"
 #include <atomic>
@@ -66,6 +67,11 @@ static void freeHostToolResponse(void*, const char* response) {
 static void releaseHostToolContext(void* context) {
     static_cast<HostToolProbe*>(context)->released = true;
 }
+static std::atomic<int> localSessionChanges{0};
+static void localSessionChanged(const char* sessionId) {
+    if (sessionId != nullptr && std::strncmp(sessionId, "ses_", 4) == 0)
+        ++localSessionChanges;
+}
 static std::string frame(const Json& delta, const char* finish = nullptr) {
     Json choice = {
         {"delta", delta}, {"index", 0}, {"finish_reason", finish ? Json(finish) : Json(nullptr)}};
@@ -74,6 +80,20 @@ static std::string frame(const Json& delta, const char* finish = nullptr) {
 // 作用：按测试场景构造移动 Agent、调用公开接口并核对结果。
 // 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。
 int main() {
+    MaiToolRegistry hostRegistry;
+    registerMaiChatHostTools(hostRegistry, makeMaiMobileHostDispatcher());
+    MaiTool* remoteList = hostRegistry.find("maichat_remote_session_list");
+    MaiTool* remoteCreate = hostRegistry.find("maichat_remote_session_create");
+    MaiTool* remoteDelete = hostRegistry.find("maichat_remote_session_delete");
+    MaiTool* remoteWorkspace = hostRegistry.find("maichat_remote_session_set_workspace");
+    CHECK(remoteList != nullptr && remoteCreate != nullptr && remoteDelete != nullptr &&
+          remoteWorkspace != nullptr);
+    CHECK(!remoteList->requiresApproval("{}"));
+    CHECK(!remoteCreate->requiresApproval("{}"));
+    CHECK(remoteDelete->requiresApproval("{}"));
+    CHECK(remoteDelete->requiresPerCallApproval("{}"));
+    CHECK(remoteWorkspace->requiresApproval("{}"));
+    CHECK(remoteWorkspace->requiresPerCallApproval("{}"));
 #if !defined(_WIN32)
     const unsigned char pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
     auto flipped = maiImageFilterRgba(pixels, 2, 1, 8,
@@ -143,21 +163,40 @@ int main() {
                   "GitHub-Flavored Markdown") != std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
         bool hasCreateFile = false, hasCreateDirectory = false, hasDeleteFile = false, hasViewImage = false,
-             hasMaiChatContacts = false, hasMaiChatRequestFriend = false,
-             hasMaiChatNickname = false, hasMaiChatSend = false,
-             hasMaiChatBroadcast = false, hasGeneratePdf = false,
-             hasMobilePhotos = false, hasMobileAlbums = false, hasMobilePhotoRead = false,
-             hasMobilePhotoOriginal = false, hasMobileMediaOriginal = false, hasMobilePhotoSave = false,
-             hasMobileTransform = false, hasMobileBeautify = false, hasFfprobe = false, hasMobilePreview = false,
-             hasFaceDetection = false, hasPersonSegmentation = false, hasMobilePhotoAlbumWrite = false,
-             hasPermissionRequest = false, hasSceneDetect = false, hasMotionDetect = false, hasDownloadFile = false,
-             hasLocation = false, hasMaiChatMedia = false, hasVideoMatting = false, hasAgentMedia = false,
-             hasSeedance = false, hasSeedream = false, hasCamera = false, hasLocalMusic = false;
+             hasMaiChatContacts = false, hasMaiChatRequestFriend = false, hasMaiChatNickname = false,
+             hasMaiChatSend = false, hasMaiChatBroadcast = false, hasGeneratePdf = false, hasMobilePhotos = false,
+             hasMobileAlbums = false, hasMobilePhotoRead = false, hasMobilePhotoOriginal = false,
+             hasMobileMediaOriginal = false, hasMobilePhotoSave = false, hasMobileTransform = false,
+             hasMobileBeautify = false, hasFfprobe = false, hasMobilePreview = false, hasFaceDetection = false,
+             hasPersonSegmentation = false, hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
+             hasSceneDetect = false, hasMotionDetect = false, hasDownloadFile = false, hasLocation = false,
+             hasMaiChatMedia = false, hasVideoMatting = false, hasAgentMedia = false, hasSeedance = false,
+             hasSeedream = false, hasCamera = false, hasLocalMusic = false, hasSessionList = false,
+             hasSessionCreate = false, hasSessionDelete = false, hasLocalSessionWorkspace = false,
+             hasRemoteSessionList = false, hasRemoteSessionCreate = false, hasRemoteSessionDelete = false,
+             hasRemoteSessionWorkspace = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "file_create") hasCreateFile = true;
             if (tool["function"]["name"] == "file_create_directory") hasCreateDirectory = true;
             if (tool["function"]["name"] == "file_delete") hasDeleteFile = true;
+            if (tool["function"]["name"] == "session_list") hasSessionList = true;
+            if (tool["function"]["name"] == "session_create") hasSessionCreate = true;
+            if (tool["function"]["name"] == "session_delete") hasSessionDelete = true;
+            if (tool["function"]["name"] == "session_set_workspace") hasLocalSessionWorkspace = true;
+            if (tool["function"]["name"] == "maichat_remote_session_list") hasRemoteSessionList = true;
+            if (tool["function"]["name"] == "maichat_remote_session_create") hasRemoteSessionCreate = true;
+            if (tool["function"]["name"] == "maichat_remote_session_delete") {
+                hasRemoteSessionDelete = true;
+                const auto& schema = tool["function"]["parameters"];
+                CHECK(schema["required"] == Json::array({"device_slot", "session_id"}));
+            }
+            if (tool["function"]["name"] == "maichat_remote_session_set_workspace") {
+                hasRemoteSessionWorkspace = true;
+                const auto& schema = tool["function"]["parameters"];
+                CHECK(schema["required"] ==
+                      Json::array({"device_slot", "session_id", "workspace_path"}));
+            }
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
@@ -201,6 +240,10 @@ int main() {
         CHECK(hasCreateFile);
         CHECK(hasCreateDirectory);
         CHECK(hasDeleteFile);
+        CHECK(hasSessionList && hasSessionCreate && hasSessionDelete);
+        CHECK(!hasLocalSessionWorkspace);
+        CHECK(hasRemoteSessionList && hasRemoteSessionCreate && hasRemoteSessionDelete);
+        CHECK(hasRemoteSessionWorkspace);
         CHECK(hasViewImage);
         CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
@@ -385,6 +428,7 @@ int main() {
     HostToolProbe hostProbe;
     int status = 0;
     try {
+        CHECK(maiMobileAgentSetChangeHandler(agent, localSessionChanged) == 1);
         CHECK(maiMobileAgentSetHostToolHandler(agent, &hostProbe, nullptr, nullptr, nullptr) == 0);
         CHECK(maiMobileAgentSetHostToolHandler(agent, &hostProbe, hostToolHandler,
                                                freeHostToolResponse,
@@ -407,6 +451,11 @@ int main() {
         CHECK(suggestions["professional"] == "已收到，我会尽快处理。");
         const int initialHostCalls = hostProbe.calls.load();
         std::string session = call(agent, {{"op", "create"}}).at("id");
+        CHECK(localSessionChanges.load() > 0);
+        const auto remotePage = call(agent, {{"op", "remote_snapshot"}, {"session", session},
+                                             {"limit", 2}});
+        CHECK(remotePage["ok"] == true && remotePage["messages"].empty());
+        CHECK(call(agent, {{"op", "snapshot"}, {"session", session}})["changed"] == true);
         auto snapshot = [&] {
             return call(agent, {{"op", "snapshot"}, {"session", session}, {"force", true}});
         };
@@ -598,6 +647,7 @@ int main() {
             saved.value()->putMessage(session, orphan);
         }
         agent = maiMobileAgentCreate();
+        CHECK(maiMobileAgentSetChangeHandler(agent, localSessionChanged) == 1);
         CHECK(call(agent, config)["ok"] == true);
         CHECK(snapshot()["messages"].size() == messageCount + 1);
         CHECK(snapshot()["messages"].back()["completed"] == 0);

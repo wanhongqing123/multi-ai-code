@@ -750,6 +750,50 @@ void test_per_call_approval_ignores_policy_and_session_grants() {
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 2);
 }
 
+void test_session_delete_needs_approval_before_removing_history() {
+    Workspace workspace;
+    auto store = makeMaiMemoryStore();
+    MaiSession target;
+    target.id = "ses_old_conversation";
+    target.title = "Old conversation";
+    target.directory = workspace.utf8Root();
+    store->putSession(target);
+    const std::string arguments = R"({"session_id":"ses_old_conversation"})";
+    auto model = std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{
+        callTurn("session_delete", arguments, "delete_1"), sayTurn("Not deleted."),
+        callTurn("session_delete", arguments, "delete_2"), sayTurn("Deleted.")});
+    auto tools = std::make_unique<MaiToolRegistry>();
+    registerMaiBuiltinTools(*tools);
+    MaiAgent agent(std::move(store), std::move(model), std::move(tools));
+    const std::string current =
+        agent.submit(MaiCreateSession{workspace.utf8Root(), "Current", "test-model"}).value();
+
+    CHECK(agent.submit(MaiSendPrompt{current, "Delete the old conversation"}));
+    CHECK(waitFor([&] { return agent.listPendingPermissions().size() == 1; }));
+    MaiSession saved;
+    CHECK(agent.getSession(target.id, saved));
+    auto pending = agent.listPendingPermissions();
+    if (pending.size() == 1) {
+        CHECK(pending.front().toolName == "session_delete");
+        CHECK(!pending.front().allowForSession);
+        CHECK(agent.submit(MaiReplyPermission{pending.front().id, MaiPermissionDecision::Denied}));
+    }
+    agent.waitIdle();
+    CHECK(agent.getSession(target.id, saved));
+
+    CHECK(agent.submit(MaiSendPrompt{current, "Delete the old conversation now"}));
+    CHECK(waitFor([&] { return agent.listPendingPermissions().size() == 1; }));
+    CHECK(agent.getSession(target.id, saved));
+    pending = agent.listPendingPermissions();
+    if (pending.size() == 1) {
+        CHECK(!pending.front().allowForSession);
+        CHECK(
+            agent.submit(MaiReplyPermission{pending.front().id, MaiPermissionDecision::Approved}));
+    }
+    agent.waitIdle();
+    CHECK(!agent.getSession(target.id, saved));
+}
+
 void test_interrupt_while_waiting_for_approval() {
     Workspace workspace;
     auto underTest =
@@ -843,6 +887,7 @@ int main() {
     test_never_policy_runs_without_prompting();
     std::printf("-> test_per_call_approval_ignores_policy_and_session_grants\n");
     test_per_call_approval_ignores_policy_and_session_grants();
+    test_session_delete_needs_approval_before_removing_history();
     std::printf("-> test_interrupt_while_waiting_for_approval\n");
     test_interrupt_while_waiting_for_approval();
     std::printf("-> test_reply_to_stale_permission_is_not_found\n");

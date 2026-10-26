@@ -4,6 +4,8 @@
 // 主要入口：onScrollStateChanged、onTextChanged、onAttachedToWindow、onDetachedFromWindow。
 package com.kongshang.maichat;
 
+import com.kongshang.maichat.tools.MobileScreenCaptureService;
+
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -57,6 +59,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     static final int REQUEST_MUSIC_PERMISSION = 7112;
     private final Activity activity;
     final AIAssistantController controller;
+    private final MaiVideoCircle videoCircle;
+    private final TextView videoCircleEntry;
+    private boolean videoCircleAvailable;
+    private String videoCircleAccount = "";
     private final LocalMusicPlayer localMusicPlayer;
     private final LinearLayout musicMiniBar;
     private final TextView musicMiniTitle;
@@ -132,6 +138,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         super(activity);
         this.activity = activity;
         this.controller = controller;
+        this.videoCircle = new MaiVideoCircle(activity);
         this.localMusicPlayer = new LocalMusicPlayer(activity, this::refreshMusicMiniBar);
         this.voiceRecorder = voiceRecorder;
         this.speechRecognizer = speechRecognizer;
@@ -150,6 +157,17 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         title.setGravity(Gravity.CENTER);
         header.addView(title, new FrameLayout.LayoutParams(
             LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        videoCircleEntry = text("视频圈", 13, MaiChatTheme.BLUE);
+        videoCircleEntry.setTypeface(MaiChatTypography.semibold());
+        videoCircleEntry.setGravity(Gravity.CENTER);
+        videoCircleEntry.setContentDescription("打开 AI 视频圈");
+        videoCircleEntry.setOnClickListener(v ->
+            new MaiVideoCircleDialog(activity, videoCircle).show());
+        videoCircleEntry.setVisibility(GONE);
+        FrameLayout.LayoutParams circleParams = new FrameLayout.LayoutParams(dp(58), dp(38),
+            Gravity.END | Gravity.CENTER_VERTICAL);
+        circleParams.setMarginEnd(dp(56));
+        header.addView(videoCircleEntry, circleParams);
         ImageButton moreButton = headerIcon(R.drawable.ic_ai_more, "更多", null);
         moreButton.setOnClickListener(v -> menu(v));
         FrameLayout.LayoutParams moreParams = new FrameLayout.LayoutParams(dp(34), dp(34),
@@ -391,6 +409,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         attachmentPanel.addView(attachmentAction(
             R.drawable.ic_ai_music, "音乐", "播放本地音乐", v -> showMusicSourceChooser()),
             new LayoutParams(0, dp(64), 1));
+        attachmentPanel.addView(attachmentAction(
+            R.drawable.ic_ai_screen, "共享屏幕", "开始或停止系统屏幕共享", v -> {
+                hideAttachmentPanel();
+                if (MobileScreenCaptureService.isCapturing()) {
+                    MobileScreenCaptureService.stop(activity);
+                    Toast.makeText(activity, "已停止屏幕共享", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (!(activity instanceof MainActivity)) return;
+                ((MainActivity) activity).startScreenShareForAgent(approved ->
+                    Toast.makeText(activity, approved
+                        ? "已开始共享。切到目标 App，返回后让 Agent 截图。"
+                        : "已取消屏幕共享", Toast.LENGTH_LONG).show());
+            }), new LayoutParams(0, dp(64), 1));
         attachmentPanel.setVisibility(GONE);
         composerArea.addView(attachmentPanel, matchWrap());
         addView(composerArea, matchWrap());
@@ -399,10 +431,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         setForeground(true);
+        probeVideoCircle();
     }
     @Override
     protected void onDetachedFromWindow() {
         setForeground(false);
+        videoCircle.cancel();
         super.onDetachedFromWindow();
     }
     void setForeground(boolean value) {
@@ -445,6 +479,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             pendingLatestSession = selected;
         }
         state = next;
+        String account = MaiChatAuthClient.shared(activity).accountId();
+        if (!account.equals(videoCircleAccount)) probeVideoCircle();
         if (next.restoreGeneration != lastRemoteRestoreGeneration &&
             next.remoteSession != null && !next.restoreDraft.isEmpty() &&
             composer.getText().toString().isEmpty()) composer.setText(next.restoreDraft);
@@ -459,6 +495,19 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         updateMessages();
         updatePending();
         refreshSessionDrawer();
+    }
+    private void probeVideoCircle() {
+        videoCircleAccount = MaiChatAuthClient.shared(activity).accountId();
+        videoCircleAvailable = false;
+        videoCircleEntry.setVisibility(GONE);
+        if (videoCircleAccount.isEmpty()) return;
+        String account = videoCircleAccount;
+        videoCircle.request(MaiVideoCircle.FEED, new JSONObject(), result -> {
+            if (!isAttachedToWindow() || !account.equals(videoCircleAccount)) return;
+            videoCircleAvailable = result.ok();
+            videoCircleEntry.setVisibility(videoCircleAvailable ? VISIBLE : GONE);
+            adapter.notifyDataSetChanged();
+        });
     }
     private void updateMessages() {
         if (state == null)
@@ -1194,20 +1243,23 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
         });
     }
-    private void modelMenu() {
+    private void reasoningMenu() {
         if (state == null) return;
-        String[] choices = {"glm-5.3", "glm-5.3-flash", "deepseek-flash"};
-        new AlertDialog.Builder(activity).setTitle("选择模型").setItems(choices, (dialog, which) -> {
+        String[] titles = {"简单", "标准", "深度"};
+        String[] values = {"low", "high", "max"};
+        new AlertDialog.Builder(activity).setTitle("思考强度")
+            .setSingleChoiceItems(titles, java.util.Arrays.asList(values)
+                .indexOf(controller.reasoningEffort()), (dialog, which) -> {
             if (state.busy()) {
-                Toast.makeText(activity, "请先停止当前任务再切换模型", Toast.LENGTH_LONG).show();
+                Toast.makeText(activity, "请先停止当前任务再调整思考强度", Toast.LENGTH_LONG).show();
                 return;
             }
-            if (choices[which].equalsIgnoreCase(state.model)) return;
-            controller.switchModel(choices[which], success -> {
+            dialog.dismiss();
+            controller.save(state.model, state.policy, values[which], success -> {
                 if (!success) Toast.makeText(activity, controller.state.error,
                     Toast.LENGTH_LONG).show();
             });
-        }).show();
+        }).setNegativeButton("取消", null).show();
     }
     private void policyMenu() {
         if (state == null) return;
@@ -1652,7 +1704,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         drawer.setOnClickListener(v -> {});
         create.setOnClickListener(v -> {
             popup.dismiss();
-            requestNewConversation();
+            chooseDeviceForNewConversation();
         });
         sessionDrawerPopup = popup;
         sessionDrawerList = sessionList;
@@ -1682,6 +1734,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 : drafts.getOrDefault("", "")).trim().isEmpty();
         StringBuilder signature = new StringBuilder().append(blankDraft).append('|')
             .append(selected).append('|').append(state.remoteSession != null);
+        JSONArray devices = state.data.optJSONArray("devices");
+        if (devices != null) signature.append('|').append(devices.toString());
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.optJSONObject(i);
             if (item == null) continue;
@@ -1720,6 +1774,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 sessionDrawerPopup.dismiss();
                 if (remote) requestRemoteConversation(session);
                 else requestConversation(id);
+            }, v -> {
+                if (remote && !session.optBoolean("online")) {
+                    Toast.makeText(activity, "所属设备离线，暂时无法删除", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                confirmDeleteConversation(session);
             }), matchWrap());
         }
         ScrollView scroll = sessionDrawerScroll;
@@ -1734,6 +1794,63 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         int generation = ++navigationGeneration;
         updateSend();
         controller.create(success -> finishNavigation(generation));
+    }
+    private void chooseDeviceForNewConversation() {
+        if (state == null || navigationPending) return;
+        JSONArray devices = state.data.optJSONArray("devices");
+        List<JSONObject> online = new ArrayList<>();
+        if (devices != null) for (int i = 0; i < devices.length(); i++) {
+            JSONObject device = devices.optJSONObject(i);
+            if (device != null && device.optBoolean("online")) online.add(device);
+        }
+        if (online.isEmpty()) {
+            requestNewConversation();
+            return;
+        }
+        String[] labels = new String[online.size() + 1];
+        labels[0] = "这台设备";
+        for (int i = 0; i < online.size(); i++) {
+            JSONObject device = online.get(i);
+            String name = device.optString("device_name").trim();
+            labels[i + 1] = name.isEmpty() ? device.optString("device_slot") : name;
+        }
+        new AlertDialog.Builder(activity).setTitle("新对话创建在哪台设备？")
+            .setItems(labels, (dialog, which) -> {
+                if (which == 0) requestNewConversation();
+                else requestRemoteNewConversation(online.get(which - 1));
+            }).show();
+    }
+    private void requestRemoteNewConversation(JSONObject device) {
+        if (navigationPending) return;
+        navigationPending = true;
+        int generation = ++navigationGeneration;
+        updateSend();
+        controller.createOnDevice(device, "", success -> {
+            finishNavigation(generation);
+            if (!success) Toast.makeText(activity, controller.state.error,
+                Toast.LENGTH_LONG).show();
+        });
+    }
+    private void confirmDeleteConversation(JSONObject session) {
+        if (navigationPending) return;
+        if (session.optBoolean("busy")) {
+            Toast.makeText(activity, "对话仍在执行，请先停止", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String id = session.optString("id");
+        String title = session.optString("title", "新对话");
+        String owner = session.has("device_slot")
+            ? session.optString("device_name", "所属设备") : "这台设备";
+        new AlertDialog.Builder(activity).setTitle("删除对话")
+            .setMessage("删除“" + title + "”及其中的聊天记录？\n所属设备：" + owner + "\n此操作无法撤销。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("删除", (dialog, which) ->
+                controller.deleteSession(session, success -> {
+                    if (success) discardDeletedSession(id);
+                    else Toast.makeText(activity, controller.state.error,
+                        Toast.LENGTH_LONG).show();
+                }))
+            .show();
     }
     private void requestConversation(String target) {
         if (submitting || navigationPending) return;
@@ -1772,10 +1889,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             popup.showAsDropDown(anchor, anchor.getWidth() - dp(264), dp(6));
             return;
         }
-        String modelValue = state.model.isEmpty() ? AIAssistantController.DEFAULT_MODEL : state.model;
-        panel.addView(actionPanelRow("模型", modelValue, MaiChatTheme.TEXT, v -> {
+        String effort = controller.reasoningEffort();
+        String effortTitle = effort.equals("low") ? "简单" : effort.equals("max") ? "深度" : "标准";
+        panel.addView(actionPanelRow("思考强度", effortTitle, MaiChatTheme.TEXT, v -> {
             popup.dismiss();
-            modelMenu();
+            reasoningMenu();
         }), matchWrap());
         panel.addView(actionPanelDivider(), new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
         panel.addView(actionPanelRow("操作权限", policyTitle(state.policy), MaiChatTheme.TEXT, v -> {
@@ -1944,7 +2062,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                 array = new JSONArray();
             String toolGroupId = "tools:" + value.optString("id");
             StringBuilder structure = new StringBuilder(value.optString("id"));
-            structure.append(expanded.contains(toolGroupId));
+            structure.append(expanded.contains(toolGroupId)).append(videoCircleAvailable);
             for (int i = 0; i < array.length(); i++) {
                 JSONObject part = array.optJSONObject(i);
                 if (part == null || part.optString("kind").equals("reasoning")) continue;
@@ -2226,7 +2344,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             if (available && !file.getPath().equals(mediaCard.getTag())) {
                                 mediaCard.setTag(file.getPath());
                                 showAgentMediaCard(mediaCard, file, type,
-                                    artifact.optString("caption"));
+                                    artifact.optString("caption"), part);
                             }
                             if (available && part.optString("tool").equals("agent_send_media")) {
                                 view.setVisibility(GONE);
@@ -2473,6 +2591,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     // 预览资源就绪后更新该卡片，不用文件名文本代替视频或图片内容。
     private void showAgentMediaCard(LinearLayout container, File file, String type,
                                     String caption) {
+        showAgentMediaCard(container, file, type, caption, null);
+    }
+    private void showAgentMediaCard(LinearLayout container, File file, String type,
+                                    String caption, JSONObject completedPart) {
         container.removeAllViews();
         if (type.equals("image") || type.equals("video")) {
             boolean video = type.equals("video");
@@ -2660,6 +2782,39 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             description.setText(caption);
             container.addView(description, matchWrap());
         }
+        if (type.equals("video") && completedPart != null && videoCircleAvailable &&
+            MaiVideoCircle.inspectCard(completedPart).ok()) {
+            Button publish = button("发布到视频圈", "将这条 AI 生成视频提交审核",
+                view -> MaiVideoCircleDialog.confirmPublish(activity, videoCircle,
+                    completedPart, file));
+            publish.setTextColor(MaiChatTheme.BLUE);
+            publish.setBackground(MaiChatTheme.bordered(
+                MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+            LayoutParams publishLayout = new LayoutParams(
+                LayoutParams.WRAP_CONTENT, dp(38));
+            publishLayout.topMargin = dp(8);
+            container.addView(publish, publishLayout);
+        }
+        if (type.equals("video") && completedPart != null && file != null && file.isFile() &&
+            activity instanceof MainActivity) {
+            String cloudAccount = MaiChatAuthClient.shared(activity).accountId();
+            Button saveCloud = button("保存到我的云盘", "将这段视频私密保存到自己的云盘",
+                view -> ((MainActivity) activity).showCloudSave(file));
+            saveCloud.setTextColor(MaiChatTheme.BLUE);
+            saveCloud.setBackground(MaiChatTheme.bordered(
+                MaiChatTheme.BLUE_SOFT, MaiChatTheme.BORDER, 10, activity));
+            LayoutParams cloudLayout = new LayoutParams(LayoutParams.WRAP_CONTENT, dp(38));
+            cloudLayout.topMargin = dp(8);
+            container.addView(saveCloud, cloudLayout);
+            int cloudState = MaiCloudDrive.availability(cloudAccount);
+            saveCloud.setVisibility(cloudState == MaiCloudDrive.GATE_AVAILABLE ||
+                cloudState == MaiCloudDrive.GATE_RETRY ? VISIBLE : GONE);
+            MaiCloudDrive.probe(activity, available -> {
+                if (!cloudAccount.equals(MaiChatAuthClient.shared(activity).accountId())) return;
+                saveCloud.setVisibility(available == MaiCloudDrive.GATE_AVAILABLE ||
+                    available == MaiCloudDrive.GATE_RETRY ? VISIBLE : GONE);
+            });
+        }
     }
     private void showAgentMediaMenu(View anchor, File file, String type) {
         PopupMenu menu = new PopupMenu(activity, anchor);
@@ -2781,6 +2936,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     private View sessionDrawerRow(String title, String detail, boolean selected,
                                   OnClickListener action) {
+        return sessionDrawerRow(title, detail, selected, action, null);
+    }
+    private View sessionDrawerRow(String title, String detail, boolean selected,
+                                  OnClickListener action, OnClickListener delete) {
         LinearLayout row = column();
         row.setPadding(dp(14), dp(10), dp(14), dp(10));
         row.setBackground(MaiChatTheme.rounded(
@@ -2788,11 +2947,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         row.setOnClickListener(action);
         row.setClickable(true);
         row.setFocusable(true);
+        LinearLayout top = row();
         TextView heading = text(title, 15, MaiChatTheme.TEXT);
         heading.setTypeface(selected ? MaiChatTypography.semibold() : android.graphics.Typeface.SANS_SERIF);
         heading.setSingleLine(true);
         heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        row.addView(heading, matchWrap());
+        top.addView(heading, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
+        if (delete != null) {
+            ImageButton more = headerIcon(R.drawable.ic_ai_more, "删除“" + title + "”", delete);
+            more.setBackgroundColor(Color.TRANSPARENT);
+            top.addView(more, new LayoutParams(dp(36), dp(36)));
+        }
+        row.addView(top, matchWrap());
         if (!detail.isEmpty()) {
             TextView status = text(detail, 12, MaiChatTheme.BLUE);
             LayoutParams statusParams = matchWrap();

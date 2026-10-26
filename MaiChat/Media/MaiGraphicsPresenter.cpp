@@ -248,6 +248,7 @@ public:
         : mBackend(std::move(backend)),
           mEffectFile(effectDirectory + "/default.effect"),
           mConversionEffectFile(effectDirectory + "/video_conversion.effect"),
+          mP010HlgEffectFile(effectDirectory + "/MaiP010HlgConversion.effect"),
           mHdrConversionEffectFile(std::move(effectDirectory) + "/format_conversion.effect"),
           mCallback(callback),
           mUserData(userData),
@@ -277,6 +278,7 @@ public:
             }
             mGraphicsViews.clear();
             if (mConversionEffect) gs_effect_destroy(mConversionEffect);
+            if (mP010HlgEffect) gs_effect_destroy(mP010HlgEffect);
             if (mHdrConversionEffect) gs_effect_destroy(mHdrConversionEffect);
             if (mEffect) {
                 gs_effect_destroy(mEffect);
@@ -558,6 +560,17 @@ private:
         return mConversionEffect != nullptr;
     }
 
+    bool ensureP010HlgEffect() {
+        if (!mP010HlgEffectAttempted) {
+            mP010HlgEffectAttempted = true;
+            char* errors = nullptr;
+            mP010HlgEffect = gs_effect_create_from_file(mP010HlgEffectFile.c_str(), &errors);
+            if (errors) std::fprintf(stderr, "[MaiVideoHDR] P010 HLG shader: %s\n", errors);
+            if (errors) bfree(errors);
+        }
+        return mP010HlgEffect != nullptr;
+    }
+
     bool ensureHdrConversionEffect() {
         if (!mHdrConversionEffectAttempted) {
             mHdrConversionEffectAttempted = true;
@@ -704,8 +717,16 @@ private:
             return view->videoTextures[0];
         const bool highBit = frame.format == MAI_VIDEO_PIXEL_P010 ||
                              frame.format == MAI_VIDEO_PIXEL_I010;
-        if (highBit ? !ensureHdrConversionEffect() : !ensureConversionEffect()) return nullptr;
-        gs_effect_t* effect = highBit ? mHdrConversionEffect : mConversionEffect;
+        const bool fastP010Hlg = frame.format == MAI_VIDEO_PIXEL_P010 &&
+                                 frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG;
+        gs_effect_t* effect = nullptr;
+        if (fastP010Hlg && ensureP010HlgEffect())
+            effect = mP010HlgEffect;
+        else if (highBit && ensureHdrConversionEffect())
+            effect = mHdrConversionEffect;
+        else if (!highBit && ensureConversionEffect())
+            effect = mConversionEffect;
+        if (!effect) return nullptr;
         const char* techniqueName = nullptr;
         if (highBit) {
             const bool planar = frame.format == MAI_VIDEO_PIXEL_I010;
@@ -845,15 +866,18 @@ private:
     std::string mBackend;
     std::string mEffectFile;
     std::string mConversionEffectFile;
+    std::string mP010HlgEffectFile;
     std::string mHdrConversionEffectFile;
     gs_effect_t* mEffect = nullptr;
     gs_effect_t* mConversionEffect = nullptr;
+    gs_effect_t* mP010HlgEffect = nullptr;
     gs_effect_t* mHdrConversionEffect = nullptr;
     gs_eparam_t* mImageParameter = nullptr;
     gs_technique_t* mDrawTechnique = nullptr;
     gs_technique_t* mDrawTonemapTechnique = nullptr;
     bool mEffectAttempted = false;
     bool mConversionEffectAttempted = false;
+    bool mP010HlgEffectAttempted = false;
     bool mHdrConversionEffectAttempted = false;
     MaiGraphicsPresentCallback mCallback;
     void* mUserData;

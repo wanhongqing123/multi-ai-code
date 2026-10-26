@@ -408,6 +408,19 @@ private:
 
 }  // namespace
 
+MaiFfmpegExecutionResult maiRunFfmpegSerialized(const MaiFfmpegEngine& engine,
+                                                std::vector<std::string> arguments,
+                                                const std::atomic<bool>* cancel) {
+    MaiFfmpegExecutionResult result;
+    if (!engine.runFfmpeg || arguments.empty()) return result;
+    MaiToolContext context;
+    context.cancel = cancel;
+    result.exitStatus = runEngine(engine.runFfmpeg, engine.setFfmpegCancelCheck, engine,
+                                  std::move(arguments), context, result.diagnostic);
+    result.canceled = context.isCanceled();
+    return result;
+}
+
 std::unique_ptr<MaiTool> makeMaiFfmpegTool(MaiFfmpegEngine engine) {
     return engine.runFfmpeg ? std::make_unique<MaiFfmpegTool>(engine) : nullptr;
 }

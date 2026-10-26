@@ -7,12 +7,12 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QHash>
-#include <QSslSocket>
 #include <QStandardPaths>
 #include <QSettings>
 #include <QTimer>
 #include <memory>
 #include <utility>
+#include <curl/curl.h>
 
 #include "app/RemoteIMApplication.h"
 #include "auth/DesktopAuthClient.h"
@@ -109,17 +109,14 @@ int main(int argc, char* argv[]) {
     // 没有去处，不接管的话双击启动等于完全没有日志。
     AppLog::install();
 
-    // 接收图片/文件需要走 HTTPS 下载（QNetworkAccessManager），Qt 5.15 依赖 OpenSSL 1.1。
-    // 未随包携带 libssl/libcrypto 时 supportsSsl() 为假，图片/文件下载会静默失败——
-    // 表现为“文字能收、图片收不到”。此处给出明确告警便于定位。
-    qInfo().noquote() << QStringLiteral("[im] OpenSSL supportsSsl=%1 build=%2")
-                             .arg(QSslSocket::supportsSsl() ? QStringLiteral("true") : QStringLiteral("false"))
-                             .arg(QSslSocket::sslLibraryBuildVersionString());
-    if (!QSslSocket::supportsSsl()) {
-        qWarning().noquote() << QStringLiteral(
-            "[im] OpenSSL unavailable: received images/files cannot be downloaded. "
-            "Ship libssl-1_1-x64.dll and libcrypto-1_1-x64.dll alongside the app.");
-    }
+    // IM 附件和头像的 HTTPS 传输走共享 libcurl；报告实际 TLS 后端，避免把 Qt
+    // 的 supportsSsl() 误当成附件下载可用性的证据。
+    const curl_version_info_data* curl = curl_version_info(CURLVERSION_NOW);
+    const QString sslBackend = curl && curl->ssl_version ?
+        QString::fromLatin1(curl->ssl_version) : QStringLiteral("unavailable");
+    qInfo().noquote() << QStringLiteral("[im] libcurl TLS backend=%1").arg(sslBackend);
+    if (!sslBackend.startsWith(QStringLiteral("OpenSSL/")))
+        qWarning().noquote() << QStringLiteral("[im] bundled libcurl/OpenSSL unavailable");
 
     // 桌面端字体栈使用 "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei"。
     //
@@ -198,6 +195,7 @@ int main(int argc, char* argv[]) {
         auth.fetchFriendQr(std::move(completion));
     });
     window.setMaiChatAccountIdProvider([&auth] { return auth.maiChatAccountId(); });
+    window.setVideoCircleAccessProvider(auth.videoCircleAccessProvider());
     window.setMaiChatNicknameProvider([&auth] { return auth.nickname(); });
     remoteIM.setNicknameUpdater([&auth](const QString& nickname,
                                         RemoteIMCompletion completion) {
@@ -319,6 +317,9 @@ int main(int argc, char* argv[]) {
         [&window] { return window.activeAgentController(); });
     sessionChannel.setCatalogHandler([&sessionSync](const QJsonArray& sessions) {
         sessionSync.acceptCatalog(sessions);
+    });
+    sessionChannel.setDeviceHandler([&sessionSync](const QJsonArray& devices) {
+        sessionSync.acceptDevices(devices);
     });
     sessionChannel.setInboxHandler([&sessionSync](const QJsonArray& messages) {
         sessionSync.acceptInbox(messages);

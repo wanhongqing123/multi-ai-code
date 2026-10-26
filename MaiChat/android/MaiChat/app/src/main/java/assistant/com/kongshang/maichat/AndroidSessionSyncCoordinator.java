@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -25,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import org.json.JSONArray;
@@ -32,6 +34,17 @@ import org.json.JSONObject;
 
 final class AndroidSessionSyncCoordinator {
     private static final String TAG = "MaiChatSessionSync";
+    private static final String LIFECYCLE_SESSION = "session_lifecycle";
+    private static final class PendingLifecycle {
+        final String slot;
+        final String login;
+        final BiConsumer<JSONObject, String> completion;
+        PendingLifecycle(String slot, String login, BiConsumer<JSONObject, String> completion) {
+            this.slot = slot;
+            this.login = login;
+            this.completion = completion;
+        }
+    }
     private final Context context;
     private final AIAssistantController controller;
     private final MaiChatAuthClient auth;
@@ -39,17 +52,27 @@ final class AndroidSessionSyncCoordinator {
     private final String deviceId;
     private final String deviceName;
     private final ExecutorService outbound = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService lifecycleTimeouts =
+        Executors.newSingleThreadScheduledExecutor();
     private final SessionSyncPayloadAssembler incoming = new SessionSyncPayloadAssembler();
     private final BlockingQueue<JSONObject> mailbox = new LinkedBlockingQueue<>(1000);
     private final Map<String, CompletableFuture<JSONObject>> responses = new ConcurrentHashMap<>();
+    private final Map<String, PendingLifecycle> pendingLifecycle = new ConcurrentHashMap<>();
     private final Map<String, String> retryIdByFingerprint = new ConcurrentHashMap<>();
     private final Map<String, String> fingerprintByCommandId = new ConcurrentHashMap<>();
+    private final Set<String> dirtySessions = ConcurrentHashMap.newKeySet();
+    private final Set<String> initiallyPublishedSessions = ConcurrentHashMap.newKeySet();
+    private final Map<String, String> publishedMessageDigests = new ConcurrentHashMap<>();
+    private final Map<String, String> publishedStateDigests = new ConcurrentHashMap<>();
+    private final BlockingQueue<String> backfillSessions = new LinkedBlockingQueue<>(200);
+    private final Map<String, String> backfillBefore = new ConcurrentHashMap<>();
     private final Object socketLock = new Object();
     private volatile boolean closed;
     private volatile boolean connected;
     private volatile long socketHandle;
     private Thread listener;
-    private long lastPresence;
+    private volatile long lastPresence;
+    private long lastBackfill;
 
     private native long nativeCreate();
     private native boolean nativeStart(long handle, String url, String bearer,
@@ -87,6 +110,7 @@ final class AndroidSessionSyncCoordinator {
         closed = true;
         if (listener != null) listener.interrupt();
         outbound.shutdownNow();
+        lifecycleTimeouts.shutdownNow();
         long handle;
         synchronized (socketLock) {
             handle = socketHandle;
@@ -94,6 +118,7 @@ final class AndroidSessionSyncCoordinator {
         }
         if (handle != 0) nativeDestroy(handle);
         failResponses("设备同步连接已关闭");
+        failLifecycle("设备同步连接已关闭");
     }
 
     private static String newId() { return UUID.randomUUID().toString().replace("-", ""); }
@@ -110,12 +135,27 @@ final class AndroidSessionSyncCoordinator {
         responses.clear();
     }
 
+    private void finishLifecycle(String id, JSONObject result, String error) {
+        PendingLifecycle pending = pendingLifecycle.remove(id);
+        if (pending != null) pending.completion.accept(result, error);
+    }
+
+    private void failLifecycle(String error) {
+        for (String id : pendingLifecycle.keySet()) finishLifecycle(id, null, error);
+    }
+
     private void onNativeSocketEvent(int event, byte[] bytes) {
         if (closed) return;
         if (event == 1) { connected = true; return; }
         if (event == 2 || event == 4) {
             connected = false;
+            initiallyPublishedSessions.clear();
+            publishedMessageDigests.clear();
+            publishedStateDigests.clear();
+            backfillSessions.clear();
+            backfillBefore.clear();
             failResponses("设备同步连接中断");
+            failLifecycle("设备同步连接中断，请检查所属设备的会话列表");
             controller.markRemoteCatalogOffline();
             return;
         }
@@ -127,11 +167,16 @@ final class AndroidSessionSyncCoordinator {
                 CompletableFuture<JSONObject> response = responses.remove(frame.optString("id"));
                 if (response != null) response.complete(frame);
             } else if (kind.equals("catalog")) {
-                controller.acceptRemoteCatalog(frame.optJSONArray("sessions"), slot);
+                controller.acceptRemoteCatalog(frame.optJSONArray("sessions"),
+                    frame.optJSONArray("devices"), slot);
             } else if (kind.equals("inbox")) {
                 JSONArray messages = frame.optJSONArray("messages");
                 if (messages != null) for (int i = 0; i < messages.length(); i++) {
                     JSONObject message = messages.optJSONObject(i);
+                    if (message != null && LIFECYCLE_SESSION.equals(
+                        message.optString("session_id")) &&
+                        message.optString("kind").equals("event"))
+                        acceptLifecycleResult(message);
                     if (message != null && !mailbox.offer(message))
                         Log.w(TAG, "Device sync inbox is full");
                 }
@@ -233,10 +278,53 @@ final class AndroidSessionSyncCoordinator {
                     request("presence", new JSONObject().put("device_id", deviceId)
                         .put("name", deviceName.isEmpty() ? "Android" : deviceName)
                         .put("sessions", entries), 15000);
+                    Set<String> currentIds = new java.util.HashSet<>();
+                    for (int i = 0; i < entries.length(); i++) {
+                        String id = entries.getJSONObject(i).optString("id");
+                        currentIds.add(id);
+                        if (initiallyPublishedSessions.add(id)) {
+                            dirtySessions.add(id);
+                            backfillSessions.offer(id);
+                        }
+                    }
+                    for (String removed : new java.util.HashSet<>(initiallyPublishedSessions)) {
+                        if (currentIds.contains(removed)) continue;
+                        request("room-delete", new JSONObject().put("session_id", removed), 15000);
+                        initiallyPublishedSessions.remove(removed);
+                        dirtySessions.remove(removed);
+                        backfillSessions.remove(removed);
+                        backfillBefore.remove(removed);
+                        publishedStateDigests.remove(removed);
+                        publishedMessageDigests.keySet().removeIf(
+                            key -> key.startsWith(removed + ":"));
+                    }
                     lastPresence = System.currentTimeMillis();
                 }
                 JSONObject envelope = mailbox.poll(1000, TimeUnit.MILLISECONDS);
                 if (envelope != null) handle(envelope);
+                for (String session : dirtySessions) {
+                    publishSession(session, "");
+                    dirtySessions.remove(session);
+                }
+                if (System.currentTimeMillis() - lastBackfill >= 5000 &&
+                    !backfillSessions.isEmpty()) {
+                    String session = backfillSessions.peek();
+                    String next;
+                    if (!backfillBefore.containsKey(session)) {
+                        CompletableFuture<JSONObject> first = new CompletableFuture<>();
+                        controller.historyForSync(session, "", 20, first::complete);
+                        JSONArray recent = first.get(15, TimeUnit.SECONDS).optJSONArray("messages");
+                        JSONObject oldest = recent == null ? null :
+                            recent.optJSONObject(recent.length() - 1);
+                        next = recent != null && recent.length() == 20 && oldest != null
+                            ? oldest.optString("id") : null;
+                    } else next = publishSession(session, backfillBefore.get(session));
+                    if (next == null || next.isEmpty()) {
+                        backfillSessions.poll();
+                        backfillBefore.remove(session);
+                    } else backfillBefore.put(session, next);
+                    lastBackfill = System.currentTimeMillis();
+                }
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return;
@@ -257,13 +345,14 @@ final class AndroidSessionSyncCoordinator {
 
     private void handle(JSONObject envelope) throws Exception {
         String kind = envelope.optString("kind");
-        if (kind.equals("history_request")) {
-            JSONObject request = envelope.optJSONObject("payload");
-            int limit = request == null ? 10 : Math.max(1, Math.min(20, request.optInt("limit", 10)));
-            String before = request == null ? "" : request.optString("before");
-            CompletableFuture<JSONObject> page = new CompletableFuture<>();
-            controller.historyForSync(envelope.optString("session_id"), before, limit, page::complete);
-            sendPayload(envelope, "history_page", page.get(15, TimeUnit.SECONDS));
+        if (kind.equals("command") && LIFECYCLE_SESSION.equals(envelope.optString("session_id"))) {
+            CompletableFuture<JSONObject> result = new CompletableFuture<>();
+            controller.lifecycleForSync(envelope.optJSONObject("payload"), result::complete);
+            send(envelope.optString("from_slot"), envelope.optString("from_login_session_id"),
+                LIFECYCLE_SESSION, "event", new JSONObject().put("type", "command_result")
+                    .put("command_id", envelope.optString("client_message_id"))
+                    .put("result", result.get(15, TimeUnit.SECONDS)));
+            requestPresenceRefresh();
         } else if (kind.equals("command")) {
             CompletableFuture<JSONObject> result = new CompletableFuture<>();
             controller.commandForSync(envelope.optString("session_id"),
@@ -271,7 +360,10 @@ final class AndroidSessionSyncCoordinator {
             sendPayload(envelope, "event", new JSONObject().put("type", "command_result")
                 .put("command_id", envelope.optString("client_message_id"))
                 .put("result", result.get(15, TimeUnit.SECONDS)));
-        } else if (kind.equals("event") || kind.equals("history_page")) {
+            schedulePublish(envelope.optString("session_id"));
+        } else if (kind.equals("event") && LIFECYCLE_SESSION.equals(envelope.optString("session_id"))) {
+            acceptLifecycleResult(envelope);
+        } else if (kind.equals("event")) {
             acceptChunk(envelope);
         }
         request("ack", new JSONObject().put("ids",
@@ -305,6 +397,106 @@ final class AndroidSessionSyncCoordinator {
             if (fingerprint != null) retryIdByFingerprint.remove(fingerprint);
         }
         controller.acceptRemotePayload(envelope, completed);
+    }
+
+    void schedulePublish(String sessionId) {
+        if (sessionId != null && !sessionId.isEmpty()) dirtySessions.add(sessionId);
+    }
+
+    void requestPresenceRefresh() { lastPresence = 0; }
+
+    private void acceptLifecycleResult(JSONObject envelope) {
+        JSONObject completed = envelope.optJSONObject("payload");
+        if (completed == null || !completed.optString("type").equals("command_result")) return;
+        String id = completed.optString("command_id");
+        PendingLifecycle pending = pendingLifecycle.get(id);
+        if (pending == null || !pending.slot.equals(envelope.optString("from_slot")) ||
+            !pending.login.equals(envelope.optString("from_login_session_id"))) return;
+        JSONObject result = completed.optJSONObject("result");
+        finishLifecycle(id, result, result == null ? "所属设备未返回执行结果" : "");
+    }
+
+    void sendLifecycle(JSONObject device, JSONObject action,
+                       BiConsumer<JSONObject, String> completion) {
+        String toSlot = device.optString("device_slot");
+        String toLogin = device.optString("login_session_id");
+        if (closed || !device.optBoolean("online") || toSlot.isEmpty() || toLogin.isEmpty()) {
+            completion.accept(null, "所属设备离线或同步服务不可用");
+            return;
+        }
+        String id = newId();
+        pendingLifecycle.put(id, new PendingLifecycle(toSlot, toLogin, completion));
+        try {
+            lifecycleTimeouts.schedule(() -> finishLifecycle(id, null,
+                "所属设备执行状态未知，请先查看会话列表，避免重复操作"), 30, TimeUnit.SECONDS);
+            outbound.execute(() -> {
+                try {
+                    send(toSlot, toLogin, LIFECYCLE_SESSION, "command", action, id);
+                } catch (Exception failure) {
+                    finishLifecycle(id, null, failure.getMessage() == null
+                        ? "设备同步请求失败" : failure.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException stopped) {
+            finishLifecycle(id, null, "设备同步服务已停止");
+        }
+    }
+
+    private String publishSession(String sessionId, String before) throws Exception {
+        CompletableFuture<JSONObject> state = new CompletableFuture<>();
+        controller.historyForSync(sessionId, before, 20, state::complete);
+        JSONObject page = state.get(15, TimeUnit.SECONDS);
+        if (!page.optBoolean("ok")) return null;
+        JSONArray messages = page.optJSONArray("messages");
+        JSONArray permissions = page.optJSONArray("permissions");
+        JSONArray questions = page.optJSONArray("questions");
+        if (messages == null) messages = new JSONArray();
+        if (permissions == null) permissions = new JSONArray();
+        if (questions == null) questions = new JSONArray();
+        String stateDigest = hex(MessageDigest.getInstance("SHA-256").digest(
+            (permissions.toString() + questions.toString()).getBytes(StandardCharsets.UTF_8)));
+        boolean sentMessage = false;
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message == null) continue;
+            String key = sessionId + ":" + message.optString("id");
+            String digest = hex(MessageDigest.getInstance("SHA-256").digest(
+                message.toString().getBytes(StandardCharsets.UTF_8)));
+            if (digest.equals(publishedMessageDigests.get(key))) continue;
+            request("publish", new JSONObject().put("session_id", sessionId)
+                .put("messages", new JSONArray().put(message))
+                .put("permissions", permissions).put("questions", questions), 15000);
+            publishedMessageDigests.put(key, digest);
+            publishedStateDigests.put(sessionId, stateDigest);
+            sentMessage = true;
+        }
+        if (!sentMessage && !stateDigest.equals(publishedStateDigests.get(sessionId))) {
+            request("publish", new JSONObject().put("session_id", sessionId)
+                .put("messages", new JSONArray())
+                .put("permissions", permissions).put("questions", questions), 15000);
+            publishedStateDigests.put(sessionId, stateDigest);
+        }
+        JSONObject oldest = messages.optJSONObject(messages.length() - 1);
+        return messages.length() == 20 && oldest != null ? oldest.optString("id") : null;
+    }
+
+    void readRemoteHistory(JSONObject remote, String before, int limit,
+                           BiConsumer<JSONObject, String> completion) {
+        try {
+            outbound.execute(() -> {
+                JSONObject page = null;
+                String error = "";
+                try {
+                    page = request("history", new JSONObject()
+                        .put("owner_slot", remote.optString("device_slot"))
+                        .put("session_id", remote.optString("id"))
+                        .put("before", before).put("limit", limit), 15000);
+                } catch (Exception failure) { error = failure.getMessage(); }
+                completion.accept(page, error == null ? "设备同步失败" : error);
+            });
+        } catch (RejectedExecutionException stopped) {
+            completion.accept(null, "设备同步服务已停止");
+        }
     }
 
     private JSONObject send(String toSlot, String toLogin, String session, String kind,

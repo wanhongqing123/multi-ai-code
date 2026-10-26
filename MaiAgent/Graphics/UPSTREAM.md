@@ -17,6 +17,15 @@ Source directory mapping into `MaiAgent/Graphics/`:
 | `COPYING` | `COPYING` |
 
 All 21 `libobs/data/*.effect` files were copied without modification.
+`data/MaiP010HlgConversion.effect` is a MaiChat-specific derivative of the
+`P010_HLG_2020_709_Reverse` vertex and pixel shaders in upstream
+`libobs/data/format_conversion.effect`, with the same uniforms, calculations,
+and `color.effect` helpers. The shared presenter selects it only for P010 HLG
+playback. This avoids compiling all conversion techniques when an iPhone HDR
+video is opened for the first time. On an isolated iOS 26.5 simulator, cold
+effect compilation fell from 8,303 ms to 144 ms; the original MOV's final
+screen pixels matched the upstream effect exactly. Other formats still use the
+unchanged upstream file.
 Include paths affected by the flattened layout were adjusted in source files.
 The standalone build guards `util/platform.c`'s OBS-application-only filename
 formatter behind `MAI_GRAPHICS_STANDALONE`. The Metal backend has iOS UIKit

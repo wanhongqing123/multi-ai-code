@@ -20,18 +20,24 @@ private enum AIImagePreviewLayout {
 private struct AIRemoteDeviceGroup: Identifiable {
     let id: String
     let name: String
+    let device: AIRemoteDevice
     var online: Bool
     var sessions: [AIRemoteSession]
 }
 
 struct AIAssistantView: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
     let isActive: Bool
     let onExit: (() -> Void)?
     @ObservedObject private var model = AIAssistantModel.shared
+    @ObservedObject private var videoCircle = MaiVideoCircleModel.shared
+    @ObservedObject private var cloudDrive = MaiCloudDriveModel.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSessions = false
     @State private var showActions = false
     @State private var confirmClear = false
+    @State private var confirmRemoteDelete = false
+    @State private var remoteDeleteTarget: AIRemoteSession?
     @State private var sessionDrawerOffset: CGFloat = 0
     @State private var sessionDrawerWidth: CGFloat = 320
     @State private var showsWideSidebar = true
@@ -100,7 +106,11 @@ struct AIAssistantView: View {
                             composerFocusController.dismiss()
                             isAttachmentPanelPresented = false
                             showActions.toggle()
-                        }
+                        },
+                        openVideoCircle: videoCircle.availability == .available ? {
+                            showActions = false
+                            videoCircle.presentation = .circle
+                        } : nil
                     )
                     Divider().overlay(Color.black.opacity(0.06))
                     // 首次准备期间显示明确进度；已有会话的刷新继续展示旧消息，
@@ -170,16 +180,16 @@ struct AIAssistantView: View {
                 Color.black.opacity(0.001).ignoresSafeArea().contentShape(Rectangle())
                     .onTapGesture { showActions = false }
                 AIActionPanel(
-                    selectedModel: model.settings.model,
+                    selectedEffort: model.settings.effectiveReasoningEffort,
                     selectedPolicy: model.settings.policy,
                     canChangeSettings: model.selectedRemote == nil && model.configured &&
                         !model.busy && !model.isSubmitting,
                     canClear: model.selectedRemote == nil && !model.busy &&
                         !model.selected.isEmpty,
-                    selectModel: { selected in
-                        guard selected != model.settings.model else { return }
+                    selectEffort: { selected in
+                        guard selected != model.settings.effectiveReasoningEffort else { return }
                         var next = model.settings
-                        next.selectModel(selected)
+                        next.reasoningEffort = selected
                         Task { _ = await model.save(next) }
                     },
                     selectPolicy: { policy in
@@ -236,12 +246,31 @@ struct AIAssistantView: View {
         }
         .coordinateSpace(name: AIImagePreviewLayout.coordinateSpaceName)
         .statusBarHidden(model.previewImage != nil)
+        .onChange(of: model.previewImage?.filePath) { path in
+            MaiCloudDriveAgentPlaybackCache.shared.previewChanged(to: path)
+        }
         .simultaneousGesture(sessionDrawerOpenGesture(wideLayout: wideLayout))
         .onChange(of: wideLayout) { wide in
             if wide { showSessions = false }
         }
         .confirmationDialog("清空当前对话的所有消息？", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空消息", role: .destructive) { Task { await model.action("clear") } }
+        }
+        .alert("删除远端对话", isPresented: $confirmRemoteDelete) {
+            Button("取消", role: .cancel) { remoteDeleteTarget = nil }
+            Button("删除", role: .destructive) {
+                guard let target = remoteDeleteTarget else { return }
+                remoteDeleteTarget = nil
+                Task { _ = await model.deleteRemoteSession(target) }
+            }
+        } message: {
+            Text("删除“\(remoteDeleteTarget?.displayTitle ?? "对话")”及其中的聊天记录？此操作无法撤销。")
+        }
+        .task(id: isActive) {
+            guard isActive && !usesStandaloneUITestFixture else { return }
+            await videoCircle.probe()
+            cloudDrive.activate(accountID: appState.maiChatAccountID)
+            await cloudDrive.probe()
         }
         .onAppear {
             logAIHistoryEvent("page-appeared session=\(model.selected) active=\(isActive)")
@@ -369,16 +398,26 @@ struct AIAssistantView: View {
     private var remoteDeviceGroups: [AIRemoteDeviceGroup] {
         var groups: [AIRemoteDeviceGroup] = []
         var positions: [String: Int] = [:]
+        for device in model.remoteDevices {
+            positions[device.id] = groups.count
+            groups.append(AIRemoteDeviceGroup(
+                id: device.id, name: device.deviceName,
+                device: device, online: device.online, sessions: []))
+        }
         for session in model.remoteSessions {
             let key = "\(session.deviceSlot):\(session.deviceID)"
             if let position = positions[key] {
                 groups[position].sessions.append(session)
                 groups[position].online = groups[position].online || session.online
             } else {
+                let device = AIRemoteDevice(
+                    deviceSlot: session.deviceSlot, deviceName: session.deviceName,
+                    deviceID: session.deviceID, loginSessionID: session.loginSessionID,
+                    online: session.online)
                 positions[key] = groups.count
                 groups.append(AIRemoteDeviceGroup(
                     id: key, name: session.deviceName,
-                    online: session.online, sessions: [session]
+                    device: device, online: session.online, sessions: [session]
                 ))
             }
         }
@@ -386,40 +425,63 @@ struct AIAssistantView: View {
     }
 
     private func sessionDeviceHeader(_ title: String, id: String,
-                                     count: Int, online: Bool? = nil) -> some View {
+                                     count: Int, online: Bool? = nil,
+                                     createOn device: AIRemoteDevice? = nil) -> some View {
         let collapsed = collapsedSessionDevices.contains(id)
         let status = online.map { $0 ? "在线" : "离线" }
-        return Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                if collapsed { collapsedSessionDevices.remove(id) }
-                else { collapsedSessionDevices.insert(id) }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .frame(width: 14)
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 4)
-                if let status {
-                    HStack(spacing: 4) {
-                        Circle().fill(online == true ? RemoteIMStyle.green : Color.gray)
-                            .frame(width: 5, height: 5)
-                        Text(status).font(.system(size: 11))
-                    }
+        return HStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if collapsed { collapsedSessionDevices.remove(id) }
+                    else { collapsedSessionDevices.insert(id) }
                 }
-                if count > 0 { Text("\(count)").font(.system(size: 11)) }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 14)
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    if let status {
+                        HStack(spacing: 4) {
+                            Circle().fill(online == true ? RemoteIMStyle.green : Color.gray)
+                                .frame(width: 5, height: 5)
+                            Text(status).font(.system(size: 11))
+                        }
+                    }
+                    if count > 0 { Text("\(count)").font(.system(size: 11)) }
+                }
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .padding(.leading, 12).padding(.trailing, device == nil ? 12 : 2)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(RemoteIMStyle.textSecondary)
-            .padding(.horizontal, 12).frame(height: 34)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title)，\(status ?? "本机")，\(count) 个对话")
+            .accessibilityIdentifier("ai-session-device-\(id)")
+            if let device {
+                Button {
+                    Task {
+                        if await model.createRemoteSession(on: device) != nil {
+                            closeSessionDrawer()
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(RemoteIMStyle.blue)
+                .disabled(!device.online || model.remoteSessionMutationInProgress)
+                .accessibilityLabel("在\(title)上新建对话")
+                .accessibilityIdentifier("ai-remote-create-\(id)")
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title)，\(status ?? "本机")，\(count) 个对话")
-        .accessibilityIdentifier("ai-session-device-\(id)")
+        .frame(height: 34)
     }
 
     private func emptyDraftRow() -> some View {
@@ -496,35 +558,52 @@ struct AIAssistantView: View {
 
     private func remoteSessionRow(_ session: AIRemoteSession) -> some View {
         let selected = model.selectedRemote?.id == session.id
-        return Button {
-            closeSessionDrawer()
-            Task { await model.selectRemoteConversation(session) }
-        } label: {
-            HStack(spacing: 8) {
-                Text(session.displayTitle)
-                    .font(.system(size: 15, weight: selected ? .semibold : .medium))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                if let updatedAt = session.updatedAt, updatedAt > 0 {
-                    Text(remoteUpdatedLabel(updatedAt))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+        return HStack(spacing: 4) {
+            Button {
+                closeSessionDrawer()
+                Task { await model.selectRemoteConversation(session) }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 15, weight: selected ? .semibold : .medium))
                         .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if let updatedAt = session.updatedAt, updatedAt > 0 {
+                        Text(remoteUpdatedLabel(updatedAt))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if session.online && session.busy { ProgressView().controlSize(.small) }
+                    else if selected { Image(systemName: "checkmark").foregroundStyle(Color.blue) }
                 }
-                if session.online && session.busy { ProgressView().controlSize(.small) }
-                else if selected { Image(systemName: "checkmark").foregroundStyle(Color.blue) }
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-            .padding(.leading, 34).padding(.trailing, 12)
-            .background(selected ? RemoteIMStyle.blueSoft : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("ai-remote-conversation-\(session.id)")
+            Menu {
+                Button(role: .destructive) {
+                    remoteDeleteTarget = session
+                    confirmRemoteDelete = true
+                } label: {
+                    Label("删除对话", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 36, height: 44)
+            }
+            .disabled(!session.online || session.busy || model.remoteSessionMutationInProgress)
+            .accessibilityLabel("更多操作：\(session.displayTitle)")
+            .accessibilityIdentifier("ai-remote-delete-\(session.id)")
         }
-        .buttonStyle(.plain)
         .foregroundStyle(Color.primary)
-        .opacity(session.online ? 1 : 0.55)
-        .disabled(!session.online)
-        .accessibilityIdentifier("ai-remote-conversation-\(session.id)")
+        .padding(.leading, 34).padding(.trailing, 4)
+        .background(selected ? RemoteIMStyle.blueSoft : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10))
+        .opacity(session.online ? 1 : 0.8)
     }
 
     private func remoteUpdatedLabel(_ milliseconds: Int64) -> String {
@@ -588,11 +667,20 @@ struct AIAssistantView: View {
                     ForEach(remoteDeviceGroups) { group in
                         VStack(spacing: 2) {
                             sessionDeviceHeader(group.name, id: group.id,
-                                                count: group.sessions.count, online: group.online)
+                                                count: group.sessions.count, online: group.online,
+                                                createOn: group.device)
                             if !collapsedSessionDevices.contains(group.id) {
                                 VStack(spacing: 0) {
                                     ForEach(group.sessions) { session in
                                         remoteSessionRow(session)
+                                    }
+                                    if group.sessions.isEmpty {
+                                        Text("暂无对话")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, minHeight: 44,
+                                                   alignment: .leading)
+                                            .padding(.leading, 34)
                                     }
                                 }
                             }
@@ -652,6 +740,7 @@ private final class AIMessageViewportLog {
 // 键盘尺寸变化和流式片段都不替换用户当前的阅读位置意图。
 private struct AIAssistantMessageList: View {
     @ObservedObject var model: AIAssistantModel
+    @ObservedObject private var videoCircle = MaiVideoCircleModel.shared
     let focusController: AIComposerFocusController
     @Binding var isAttachmentPanelPresented: Bool
     let isActive: Bool
@@ -686,7 +775,10 @@ private struct AIAssistantMessageList: View {
                                                  quote: {
                                                      model.quotedMessage = message
                                                      focusController.focus()
-                                                 })
+                                                 },
+                                                 canPublishVideo:
+                                                    videoCircle.availability == .available &&
+                                                    videoCircle.canPublishFromThisBuild)
                                         .equatable()
                                         .id(message.id)
                                 }
@@ -947,6 +1039,7 @@ private struct AIHeader: View {
     let exit: (() -> Void)?
     let openSessions: () -> Void
     let openActions: () -> Void
+    let openVideoCircle: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -955,6 +1048,11 @@ private struct AIHeader: View {
             }
             AIHeaderButton(systemImage: "sidebar.left", label: "对话列表", action: openSessions)
             Spacer()
+            if let openVideoCircle {
+                AIHeaderButton(systemImage: "play.rectangle.on.rectangle",
+                               label: "视频圈", action: openVideoCircle)
+                    .accessibilityIdentifier("ai-video-circle-entry")
+            }
             AIHeaderButton(systemImage: "ellipsis", label: "更多", action: openActions)
         }
         .overlay { Text("创作中心").font(.system(size: 18, weight: .bold)).allowsHitTesting(false) }
@@ -973,38 +1071,40 @@ private struct AIHeaderButton: View {
             Image(systemName: systemImage).font(.system(size: 16, weight: .semibold))
                 .frame(width: 34, height: 34)
                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }.buttonStyle(.plain).foregroundStyle(Color.primary).accessibilityLabel(label)
     }
 }
 
 private struct AIActionPanel: View {
-    let selectedModel: String
+    let selectedEffort: String
     let selectedPolicy: String
     let canChangeSettings: Bool
     let canClear: Bool
-    let selectModel: (String) -> Void
+    let selectEffort: (String) -> Void
     let selectPolicy: (String) -> Void
     let clear: () -> Void
     @State private var expandedSection: Section?
 
     private enum Section: Equatable {
-        case model
+        case effort
         case policy
     }
 
     var body: some View {
         VStack(spacing: 0) {
             expandableAction(
-                title: "模型",
-                value: selectedModel.isEmpty ? "未配置" : selectedModel,
+                title: "思考强度",
+                value: effortTitle(selectedEffort),
                 image: "sparkles",
-                section: .model
+                section: .effort
             )
-            if expandedSection == .model {
-                optionGroup(identifier: "ai-model-menu") {
-                    modelOption("glm-5.3")
-                    modelOption("glm-5.3-flash")
-                    modelOption("deepseek-flash")
+            if expandedSection == .effort {
+                optionGroup(identifier: "ai-effort-menu") {
+                    effortOption("简单", value: "low")
+                    effortOption("标准", value: "high")
+                    effortOption("深度", value: "max")
                 }
             }
             Divider().padding(.leading, 42)
@@ -1061,6 +1161,7 @@ private struct AIActionPanel: View {
         .disabled(!canChangeSettings)
         .opacity(canChangeSettings ? 1 : 0.5)
         .accessibilityLabel(title)
+        .accessibilityValue(value)
     }
 
     private func optionGroup<Content: View>(
@@ -1073,9 +1174,15 @@ private struct AIActionPanel: View {
             .accessibilityIdentifier(identifier)
     }
 
-    private func modelOption(_ model: String) -> some View {
-        option(model, selected: selectedModel.caseInsensitiveCompare(model) == .orderedSame) {
-            selectModel(model)
+    private func effortOption(_ title: String, value: String) -> some View {
+        option(title, selected: selectedEffort == value) { selectEffort(value) }
+    }
+
+    private func effortTitle(_ value: String) -> String {
+        switch value {
+        case "low": return "简单"
+        case "max": return "深度"
+        default: return "标准"
         }
     }
 
@@ -1122,15 +1229,20 @@ private struct AIActionPanel: View {
     }
 }
 private struct AIMessageRow: View, Equatable {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @ObservedObject private var cloudDrive = MaiCloudDriveModel.shared
     let message: AIMessage
     let workspacePath: String
     let quote: () -> Void
+    var canPublishVideo = false
     @State private var pdfPreview: AIPDFPreviewItem?
     @State private var pdfPreviewError = false
     @State private var videoPreview: AIVideoPreviewItem?
     @State private var mediaSaveError: String?
+    @State private var cloudUploadNotice: String?
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.message == rhs.message && lhs.workspacePath == rhs.workspacePath
+        lhs.message == rhs.message && lhs.workspacePath == rhs.workspacePath &&
+            lhs.canPublishVideo == rhs.canPublishVideo
     }
     var body: some View {
         let inlineMedia = textMediaMentions
@@ -1283,6 +1395,48 @@ private struct AIMessageRow: View, Equatable {
                             Text(artifact.caption)
                                 .font(ChatTypography.body)
                                 .foregroundStyle(RemoteIMStyle.textPrimary)
+                        }
+                        if canPublishVideo, let source = publishSource(for: artifact) {
+                            Button {
+                                MaiVideoCircleModel.shared.presentation = .publish(source)
+                            } label: {
+                                Label("发布到视频圈", systemImage: "square.and.arrow.up")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(RemoteIMStyle.blue)
+                            .accessibilityIdentifier("ai-video-circle-publish-\(artifact.id)")
+                        }
+                        if cloudDrive.availability == .available,
+                           artifact.type == "video",
+                           FileManager.default.fileExists(atPath: artifact.filePath) {
+                            Button {
+                                let account = appState.maiChatAccountID
+                                guard !account.isEmpty else {
+                                    cloudUploadNotice = "请先登录 MaiChat"
+                                    return
+                                }
+                                let drive = MaiCloudDriveModel.shared
+                                drive.activate(accountID: account)
+                                Task {
+                                    await drive.addAgentVideo(
+                                        URL(fileURLWithPath: artifact.filePath),
+                                        expectedAccountID: account)
+                                    cloudUploadNotice = drive.localTasks.contains {
+                                        $0.sourcePath == artifact.filePath
+                                    } ? "已加入云盘上传" : drive.notice
+                                }
+                            } label: {
+                                Label("保存到云盘", systemImage: "icloud.and.arrow.up")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(RemoteIMStyle.blue)
+                            .accessibilityIdentifier("ai-cloud-drive-save-\(artifact.id)")
+                        }
+                        if let cloudUploadNotice {
+                            Text(cloudUploadNotice).font(.caption)
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
                         }
                     }
                     .contextMenu {
@@ -1492,8 +1646,27 @@ private struct AIMessageRow: View, Equatable {
               let fileURL = AIAssistantPathPolicy.resolve(relative,
                                                            workspacePath: workspacePath)
         else { return nil }
-        return AIAgentMediaArtifact(id: part.id, filePath: fileURL.path,
-                                    type: type, caption: object["caption"] as? String ?? "")
+        let provenance = type == "video"
+            ? MaiVideoCircleClient.inspectCompletedCard(outputJSON: part.output ?? "") : nil
+        return AIAgentMediaArtifact(
+            id: part.id, filePath: fileURL.path, type: type,
+            caption: object["caption"] as? String ?? "",
+            sourceTaskID: provenance?.sourceTaskId,
+            sourceTool: provenance?.sourceTool,
+            outputJSON: part.output ?? "")
+    }
+
+    private func publishSource(for artifact: AIAgentMediaArtifact)
+        -> MaiVideoCirclePublishSource? {
+        guard artifact.type == "video",
+              let taskID = artifact.sourceTaskID, !taskID.isEmpty,
+              let tool = artifact.sourceTool,
+              FileManager.default.fileExists(atPath: artifact.filePath)
+        else { return nil }
+        return MaiVideoCirclePublishSource(
+            id: artifact.id, fileURL: URL(fileURLWithPath: artifact.filePath),
+            outputJSON: artifact.outputJSON, caption: artifact.caption,
+            sourceTaskID: taskID, sourceTool: tool)
     }
     private func saveMediaArtifact(_ artifact: AIAgentMediaArtifact) async {
         let saveRequestedAt = Date()
@@ -1701,6 +1874,9 @@ private struct AIAgentMediaArtifact: Identifiable {
     let filePath: String
     let type: String
     let caption: String
+    let sourceTaskID: String?
+    let sourceTool: String?
+    let outputJSON: String
 }
 
 private struct AIPDFPreviewItem: Identifiable {
@@ -1980,6 +2156,101 @@ private struct AIWorkspaceAudioCard: View {
 }
 
 #if targetEnvironment(simulator)
+struct AIVideoCircleUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+    @ObservedObject private var circle = MaiVideoCircleModel.shared
+    @State private var loginError = ""
+    @State private var sampleURL: URL?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if !loginError.isEmpty { Text(loginError).foregroundStyle(.red) }
+                    if let sample = sampleURL {
+                        AIMessageRow(message: sampleMessage(sample, sourced: true),
+                                     workspacePath: sample.deletingLastPathComponent().path,
+                                     quote: {},
+                                     canPublishVideo: circle.availability == .available &&
+                                        circle.canPublishFromThisBuild)
+                        AIMessageRow(message: sampleMessage(sample, sourced: false),
+                                     workspacePath: sample.deletingLastPathComponent().path,
+                                     quote: {},
+                                     canPublishVideo: circle.availability == .available &&
+                                        circle.canPublishFromThisBuild)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("创作中心")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if circle.availability == .available {
+                        Button("视频圈") { circle.presentation = .circle }
+                            .accessibilityIdentifier("ai-video-circle-entry")
+                    }
+                }
+            }
+            .sheet(item: $circle.presentation) { presentation in
+                switch presentation {
+                case .circle:
+                    MaiVideoCircleView { circle.presentation = nil }
+                case let .publish(source):
+                    MaiVideoCirclePublishView(source: source,
+                                              close: { circle.presentation = nil },
+                                              published: { circle.presentation = .circle })
+                }
+            }
+            .task {
+                let authPort = ProcessInfo.processInfo.environment[
+                    "MAICHAT_LOCAL_UI_AUTH_PORT"] ?? "18190"
+                guard let sourceEndpoint = URL(string: "http://127.0.0.1:\(authPort)/test/video-circle/source")
+                else { loginError = "本机测试地址无效"; return }
+                let localSample = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("video-circle-ui-sample.mp4")
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: sourceEndpoint)
+                    guard (response as? HTTPURLResponse)?.statusCode == 200,
+                          !data.isEmpty else { throw URLError(.badServerResponse) }
+                    try data.write(to: localSample, options: .atomic)
+                    sampleURL = localSample
+                }
+                catch { loginError = "本机测试视频无法打开"; return }
+                guard let account = ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PHONE"],
+                      let password = ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_PASSWORD"]
+                else { loginError = "本机测试账号未提供"; return }
+                do {
+                    let session = try await MaiChatAuthClient.shared.loginWithPassword(
+                        account: account, password: password, ageConfirmed: true)
+                    appState.maiChatAccountID = session.user.id
+                    appState.maiChatNickname = session.user.nickname ?? ""
+                    await circle.probe()
+                } catch { loginError = error.localizedDescription }
+            }
+        }
+        .environmentObject(appState)
+    }
+
+    private func sampleMessage(_ sample: URL, sourced: Bool) -> AIMessage {
+        var output: [String: Any] = [
+            "delivery": "current_ai_session", "path": sample.lastPathComponent,
+            "type": "video", "mime_type": "video/mp4", "caption": "本机测试视频"
+        ]
+        if sourced {
+            output["source_task_id"] = "fixture-video-task"
+            output["source_tool"] = "wan_video"
+        }
+        let json = (try? JSONSerialization.data(withJSONObject: output))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let part = AIPart(id: sourced ? "circle-sourced" : "circle-legacy",
+                          kind: "tool", text: nil, tool: "agent_send_media",
+                          input: nil, output: json, error: nil, state: "completed",
+                          path: nil, mimeType: nil)
+        return AIMessage(id: part.id, role: "assistant", created: 1,
+                         completed: 2, active: false, parts: [part])
+    }
+}
+
 struct AIImageFullscreenUITestRoot: View {
     var body: some View {
         AIAssistantView()
@@ -2906,7 +3177,10 @@ private struct AIComposer: View, Equatable {
                 MaiLocalMusicPlayerView(music: music)
             }
             .onChange(of: localMediaRequests.cameraRequestID) { request in
-                guard request != nil else { return }
+                guard request != nil else {
+                    if cameraTarget == nil { isCameraPresented = false }
+                    return
+                }
                 Task { await openToolCamera() }
             }
             .onChange(of: localMediaRequests.musicRequestID) { request in
@@ -3055,7 +3329,8 @@ private struct AIComposer: View, Equatable {
     }
 
     private func openToolCamera() async {
-        guard model.selected == localMediaRequests.cameraSessionID,
+        guard let requestID = localMediaRequests.cameraRequestID,
+              model.selected == localMediaRequests.cameraSessionID,
               UIImagePickerController.isSourceTypeAvailable(.camera) else {
             localMediaRequests.failCamera(.unavailable)
             return
@@ -3064,8 +3339,11 @@ private struct AIComposer: View, Equatable {
             localMediaRequests.failCamera(.permissionDenied)
             return
         }
+        guard localMediaRequests.cameraRequestID == requestID,
+              model.selected == localMediaRequests.cameraSessionID else { return }
         cameraTarget = nil
         isCameraPresented = true
+        localMediaRequests.markCameraVisible(requestID)
     }
 
     private func openMusicLibrary() async {
@@ -4273,7 +4551,7 @@ private struct MaiLocalMusicPlayerView: View {
     }
 }
 
-enum AIMobileLocalMediaRequestError: LocalizedError, Sendable {
+enum AIMobileLocalMediaRequestError: LocalizedError, Sendable, Equatable {
     case unavailable
     case canceled
     case permissionDenied
@@ -4300,44 +4578,83 @@ final class AIMobileLocalMediaRequests: ObservableObject {
     @Published private(set) var musicPresentationID: UUID?
     private(set) var cameraSessionID = ""
     private(set) var cameraWorkspacePath = ""
+    private(set) var cameraState = "closed"
     var presenterActive = false
-    private var cameraCompletion: CheckedContinuation<String, Error>?
+    private var lastCameraSessionID = ""
+    private var lastCameraWorkspacePath = ""
+    private var lastCameraPath = ""
     private var musicCompletion: CheckedContinuation<String, Error>?
 
-    func requestCamera(in sessionID: String, workspacePath: String) async throws -> String {
+    func openCamera(in sessionID: String, workspacePath: String) throws -> String {
         guard presenterActive, UIApplication.shared.applicationState == .active,
-              cameraCompletion == nil, !workspacePath.isEmpty else {
+              cameraRequestID == nil, !sessionID.isEmpty, !workspacePath.isEmpty else {
             throw AIMobileLocalMediaRequestError.unavailable
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            cameraCompletion = continuation
-            cameraSessionID = sessionID
-            cameraWorkspacePath = workspacePath
-            let id = UUID()
-            cameraRequestID = id
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 120_000_000_000)
-                if cameraRequestID == id { failCamera(.canceled) }
-            }
+        cameraSessionID = sessionID
+        cameraWorkspacePath = workspacePath
+        lastCameraSessionID = sessionID
+        lastCameraWorkspacePath = workspacePath
+        lastCameraPath = ""
+        cameraState = "opening"
+        let id = UUID()
+        cameraRequestID = id
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(600))
+            if cameraRequestID == id { closeCamera(in: sessionID) }
         }
+        return cameraState
+    }
+
+    func markCameraVisible(_ requestID: UUID) {
+        guard cameraRequestID == requestID else { return }
+        cameraState = "open"
+    }
+
+    @discardableResult
+    func closeCamera(in sessionID: String) -> Bool {
+        guard cameraRequestID != nil, cameraSessionID == sessionID else { return false }
+        cameraRequestID = nil
+        cameraSessionID = ""
+        cameraWorkspacePath = ""
+        cameraState = "closed"
+        return true
+    }
+
+    func cameraStatus(in sessionID: String) -> [String: String] {
+        if cameraRequestID != nil, cameraSessionID == sessionID {
+            return ["state": cameraState]
+        }
+        let lastPhoto = URL(fileURLWithPath: lastCameraWorkspacePath,
+                            isDirectory: true).appendingPathComponent(lastCameraPath)
+        if lastCameraSessionID == sessionID, !lastCameraPath.isEmpty,
+           FileManager.default.fileExists(atPath: lastPhoto.path) {
+            return ["state": "captured", "path": lastCameraPath,
+                    "mime_type": "image/jpeg"]
+        }
+        if lastCameraSessionID == sessionID,
+           cameraState == "unavailable" || cameraState == "permission_denied" {
+            return ["state": cameraState]
+        }
+        return ["state": "closed"]
     }
 
     func finishCamera(path: String) {
-        guard let completion = cameraCompletion else { return }
-        cameraCompletion = nil
+        guard cameraRequestID != nil else { return }
+        lastCameraSessionID = cameraSessionID
+        lastCameraPath = path
         cameraRequestID = nil
         cameraSessionID = ""
         cameraWorkspacePath = ""
-        completion.resume(returning: path)
+        cameraState = "captured"
     }
 
     func failCamera(_ error: AIMobileLocalMediaRequestError) {
-        guard let completion = cameraCompletion else { return }
-        cameraCompletion = nil
+        guard cameraRequestID != nil else { return }
         cameraRequestID = nil
         cameraSessionID = ""
         cameraWorkspacePath = ""
-        completion.resume(throwing: error)
+        cameraState = error == .permissionDenied ? "permission_denied" :
+            (error == .unavailable ? "unavailable" : "closed")
     }
 
     func requestMusicSelection() async throws -> String {

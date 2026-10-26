@@ -105,46 +105,79 @@ private:
     QPointer<QWidget> window_;
 };
 
-class DesktopTakePhotoTool final : public MaiTool {
+class DesktopCameraCommandTool final : public MaiTool {
 public:
-    explicit DesktopTakePhotoTool(QWidget* window) : window_(window) {}
-    std::string name() const override { return "maichat_take_photo"; }
+    explicit DesktopCameraCommandTool(QWidget* window) : window_(window) {}
+    std::string name() const override { return "maichat_camera_command"; }
     std::string description() const override {
-        return "Open the desktop camera preview and wait for the user to press the shutter. "
-               "Save a new JPEG in the Agent workspace; cancel creates no photo.";
+        return "Control the desktop camera preview without waiting for the shutter. open returns "
+               "immediately; the user can take a JPEG photo in the current Agent workspace. "
+               "status reports whether the preview is open and the last captured photo path. "
+               "close stops the preview. Keep it open until the user asks to close it or the task ends. "
+               "Do not capture without the user's action.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{},"additionalProperties":false})";
+        return R"({"type":"object","properties":{"action":{"type":"string",)"
+            R"("enum":["open","status","close"]}},"required":["action"],)"
+            R"("additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override { return false; }
     bool requiresPerCallApproval(const std::string&) const override { return false; }
-    MaiToolResult execute(const std::string&, const MaiToolContext& context) override {
+    MaiToolResult execute(const std::string& argumentsJson, const MaiToolContext& context) override {
         if (window_.isNull())
             return MaiToolResult::failure(MaiErrorCode::NotConfigured,
                                           "MaiChat window is closed");
-        const std::string resolved = context.resolvePath(".");
-        if (resolved.empty())
-            return invalid("an accessible Agent workspace is required");
-        const QString directory = QString::fromUtf8(resolved.data(), static_cast<int>(resolved.size()));
-        QString photo;
+        const QString action = parseArguments(argumentsJson).value(QStringLiteral("action")).toString();
+        if (action != QStringLiteral("open") && action != QStringLiteral("status") &&
+            action != QStringLiteral("close")) return invalid("action must be open, status, or close");
+        if (context.sessionId.empty()) return invalid("a Session is required");
+        const QString sessionId = QString::fromStdString(context.sessionId);
+        QString directory;
+        if (action == QStringLiteral("open")) {
+            if (context.isCanceled())
+                return MaiToolResult::failure(MaiErrorCode::Canceled, "camera open was canceled");
+            const std::string resolved = context.resolvePath(".");
+            if (resolved.empty()) return invalid("an accessible Agent workspace is required");
+            directory = QString::fromUtf8(resolved.data(), static_cast<int>(resolved.size()));
+        }
+        QJsonObject output;
         QString error;
-        const auto capture = [&] {
-            if (!window_.isNull())
-                photo = DesktopCameraDialog::capturePhoto(window_.data(), directory, &error);
+        const auto run = [&] {
+            if (window_.isNull()) return;
+            if (action == QStringLiteral("open")) {
+                const bool opened = DesktopCameraDialog::openPreview(
+                    window_.data(), sessionId, directory, &error);
+                output.insert(QStringLiteral("state"), opened ? QStringLiteral("open") : QStringLiteral("closed"));
+            } else if (action == QStringLiteral("close")) {
+                const bool wasOpen = DesktopCameraDialog::closePreview(window_.data(), sessionId);
+                output.insert(QStringLiteral("state"), QStringLiteral("closed"));
+                output.insert(QStringLiteral("was_open"), wasOpen);
+            } else {
+                const bool open = DesktopCameraDialog::isPreviewOpen(window_.data(), sessionId);
+                const QString cameraError = DesktopCameraDialog::previewError(window_.data(), sessionId);
+                const QString photo = DesktopCameraDialog::lastPreviewPhoto(window_.data(), sessionId);
+                const QString state = !cameraError.isEmpty() ? QStringLiteral("error") :
+                    (open ? QStringLiteral("open") :
+                     (photo.isEmpty() ? QStringLiteral("closed") : QStringLiteral("captured")));
+                output.insert(QStringLiteral("state"), state);
+                if (!cameraError.isEmpty()) output.insert(QStringLiteral("error"), cameraError);
+                if (!photo.isEmpty()) {
+                    const QString root = QFileInfo(QString::fromStdString(context.root))
+                        .canonicalFilePath();
+                    const QString captured = QFileInfo(photo).canonicalFilePath();
+                    if (!root.isEmpty() && captured.startsWith(root + QLatin1Char('/')))
+                        output.insert(QStringLiteral("path"), QDir(root).relativeFilePath(captured));
+                }
+            }
         };
-        if (QThread::currentThread() == window_->thread()) capture();
-        else if (!QMetaObject::invokeMethod(window_.data(), capture, Qt::BlockingQueuedConnection))
+        if (QThread::currentThread() == window_->thread()) run();
+        else if (!QMetaObject::invokeMethod(window_.data(), run, Qt::BlockingQueuedConnection))
             return MaiToolResult::failure(MaiErrorCode::Internal,
-                                          "cannot dispatch camera to MaiChat UI");
+                                          "cannot dispatch camera command to MaiChat UI");
         if (!error.isEmpty())
             return MaiToolResult::failure(MaiErrorCode::Internal, error.toStdString());
-        if (photo.isEmpty())
-            return MaiToolResult::failure(MaiErrorCode::Canceled, "photo capture was canceled");
-        const QString relative = QDir(directory).relativeFilePath(photo);
         return MaiToolResult::success(
-            QJsonDocument(QJsonObject{{QStringLiteral("path"), relative},
-                                      {QStringLiteral("mime_type"), QStringLiteral("image/jpeg")}})
-                .toJson(QJsonDocument::Compact).toStdString());
+            QJsonDocument(output).toJson(QJsonDocument::Compact).toStdString());
     }
 private:
     QPointer<QWidget> window_;
@@ -296,7 +329,7 @@ private:
 
 void registerDesktopMediaTools(MaiToolRegistry& registry, QWidget* window) {
     registry.add(std::make_unique<DesktopPlayVideoTool>(window));
-    registry.add(std::make_unique<DesktopTakePhotoTool>(window));
+    registry.add(std::make_unique<DesktopCameraCommandTool>(window));
     registry.add(std::make_unique<DesktopPlayLocalMusicTool>(window));
     registry.add(std::make_unique<DesktopVideoCommandTool>(window));
 }

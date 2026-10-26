@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <variant>
@@ -160,6 +161,14 @@ public:
     struct Options {
         // 会话没指定模型时用这个。会话上配了就用会话的（MaiUpdateSession）。
         std::string defaultModel = "glm-5.3";
+        // Applied to DeepSeek requests only. Empty preserves the provider default.
+        // Accepted values are low, high, and max; wire clients ignore other values.
+        std::string reasoningEffort;
+        // Optional live source for hosts that change effort between turns. When present,
+        // it overrides reasoningEffort. It runs on the Agent worker thread before each
+        // model request, including tool follow-ups, so the host must make it thread-safe.
+        // The callback must remain callable until the Agent is destroyed.
+        std::function<std::string()> reasoningEffortProvider;
         // 模型可以连着调工具，一轮对话因此会有多次请求。
         // 相同调用与结果重复三次会提前停止；这里是不同操作也持续进行时的最终兜底。
         int maxToolIterations = 64;

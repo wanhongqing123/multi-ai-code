@@ -235,6 +235,7 @@ struct MaiChatApp: App {
 
     init() {
         AppDiagnosticLog.shared.install()
+        MaiCloudDriveAgentPlaybackCache.shared.cleanupOrphans()
         Task.detached(priority: .utility) {
             // 账号会话已取代手填共享令牌；启动时删除此前保存的连接信息。
             UserDefaults.standard.removeObject(forKey: "oss-media-signer-url")
@@ -258,7 +259,19 @@ struct MaiChatApp: App {
             Group {
                 #if targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") {
-                    if ProcessInfo.processInfo.arguments.contains("--permission-card-ui-test") {
+                    if ProcessInfo.processInfo.arguments.contains("--im-curl-download-ui-test") {
+                        IMCurlDownloadUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--im-group-ui-test") ||
+                                ProcessInfo.processInfo.arguments.contains(
+                                    "--im-group-activation-fail-ui-test") {
+                        GroupChatUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--video-circle-ui-test") {
+                        AIVideoCircleUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--cloud-drive-ui-test") {
+                        MaiCloudDriveUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--im-add-friend-menu-ui-test") {
+                        ChatAddFriendMenuUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--permission-card-ui-test") {
                         AIPermissionUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-image-fullscreen-ui-test") {
                         AIImageFullscreenUITestRoot()
@@ -342,6 +355,22 @@ struct MaiChatApp: App {
                 #endif
                 await bootstrap.load()
                 #if DEBUG && targetEnvironment(simulator)
+                if ProcessInfo.processInfo.arguments.contains(
+                    "--cloud-drive-production-canary-normal"),
+                   let appState = bootstrap.appState {
+                    do {
+                        let account = try MaiCloudDriveProductionCanaryCredential.consume()
+                        try await appState.loginWithAccountPassword(
+                            account: account.account,
+                            password: account.password,
+                            ageConfirmed: true)
+                    } catch {
+                        AppDiagnosticLog.shared.record(
+                            level: .error, category: "cloud-drive-canary",
+                            event: "account-login-failed")
+                    }
+                    return
+                }
                 // 仅本机正常 App 的交互验收使用；测试账号由本地模拟短信服务创建，
                 // 不进入真机和发布包，也不触发任何付费模型请求。
                 let environment = ProcessInfo.processInfo.environment
@@ -378,3 +407,96 @@ struct MaiChatApp: App {
         }
     }
 }
+
+#if targetEnvironment(simulator)
+/// Local TLS integration route for the production iOS downloader and C bridge.
+/// It is reachable only from a simulator launch carrying an explicit test flag.
+private struct IMCurlDownloadUITestRoot: View {
+    @State private var result = "running"
+
+    var body: some View {
+        Text(result)
+            .accessibilityIdentifier(result == "passed" ? "im-media-all-ok" : "im-media-result")
+            .task { await run() }
+    }
+
+    private func run() async {
+        guard let encoded = ProcessInfo.processInfo.environment["MAICHAT_MEDIA_TEST_CA_BASE64"],
+              let certificate = Data(base64Encoded: encoded) else {
+            result = "missing-local-certificate"
+            return
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("im-media-\(UUID().uuidString)", isDirectory: true)
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        catch { result = "create-directory-failed"; return }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let downloader = MaiChatAttachmentDownloader()
+        let image = directory.appendingPathComponent("image.png")
+        let imageResult = await transfer(
+            downloader, "https://127.0.0.1:18442/image", image, 1024 * 1024, certificate
+        )
+        guard imageResult.succeeded,
+              let imageData = try? Data(contentsOf: image),
+              imageData.starts(with: [137, 80, 78, 71]) else {
+            result = "image-failed-\(imageResult.status)-\(imageResult.curlCode)"
+            return
+        }
+        let file = directory.appendingPathComponent("file.bin")
+        let fileResult = await transfer(
+            downloader, "https://127.0.0.1:18442/file", file, 1024 * 1024, certificate
+        )
+        guard fileResult.succeeded,
+              let fileData = try? Data(contentsOf: file),
+              String(data: fileData, encoding: .utf8) == "MaiChat local TLS attachment fixture\n" else {
+            result = "file-failed-\(fileResult.status)-\(fileResult.curlCode)"
+            return
+        }
+        let held = directory.appendingPathComponent("held.bin")
+        let oldAccountGeneration = downloader.generation
+        let canceled = await withCheckedContinuation {
+            (continuation: CheckedContinuation<MaiChatAttachmentDownloadResult, Never>) in
+            downloader.download(
+                signedURL: "https://127.0.0.1:18442/held", targetURL: held,
+                maximumBytes: 1024 * 1024, certificatePEM: certificate
+            ) { response in continuation.resume(returning: response) }
+            Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                downloader.cancelAll()
+            }
+        }
+        guard canceled.status == Int32(MAI_DOWNLOAD_CANCELED.rawValue),
+              !FileManager.default.fileExists(atPath: held.path) else {
+            result = "cancel-failed-\(canceled.status)-\(canceled.curlCode)"
+            return
+        }
+        let staleTarget = directory.appendingPathComponent("stale.bin")
+        let staleResult = await withCheckedContinuation {
+            (continuation: CheckedContinuation<MaiChatAttachmentDownloadResult, Never>) in
+            downloader.download(
+                signedURL: "https://127.0.0.1:18442/file", targetURL: staleTarget,
+                maximumBytes: 1024 * 1024, generation: oldAccountGeneration,
+                certificatePEM: certificate
+            ) { response in continuation.resume(returning: response) }
+        }
+        guard staleResult.status == Int32(MAI_DOWNLOAD_CANCELED.rawValue),
+              !FileManager.default.fileExists(atPath: staleTarget.path) else {
+            result = "stale-account-failed-\(staleResult.status)"
+            return
+        }
+        result = "passed"
+    }
+
+    private func transfer(
+        _ downloader: MaiChatAttachmentDownloader,
+        _ signedURL: String, _ target: URL, _ maximumBytes: UInt64, _ certificate: Data
+    ) async -> MaiChatAttachmentDownloadResult {
+        await withCheckedContinuation { continuation in
+            downloader.download(
+                signedURL: signedURL, targetURL: target,
+                maximumBytes: maximumBytes, certificatePEM: certificate
+            ) { response in continuation.resume(returning: response) }
+        }
+    }
+}
+#endif

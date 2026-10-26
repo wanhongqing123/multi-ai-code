@@ -6,6 +6,148 @@ import XCTest
 import SQLite3
 
 final class LocalChatHistoryStoreTests: XCTestCase {
+    func testGroupHistoryIsPersistedAndDoesNotLeakIntoDirectPeerHistory() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        let direct = RemoteIMMessage(
+            fromUserID: "alice", toUserID: "ios-master", text: "私聊",
+            direction: .incoming, status: .received,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let group = RemoteIMMessage(
+            remoteID: "group-message-1", fromUserID: "alice", toUserID: "group-1",
+            groupID: "group-1", text: "群聊", direction: .incoming,
+            status: .received, createdAt: Date(timeIntervalSince1970: 101)
+        )
+        try persist([direct, group], in: store)
+        XCTAssertEqual(try conversationMessages(in: store, peerUserID: "alice"), [direct])
+        XCTAssertEqual(
+            try store.loadGroupConversationPage(
+                sdkAppID: 1_600_148_979, ownerUserID: "ios-master",
+                groupID: "group-1", before: nil, limit: 20
+            ).messages,
+            [group]
+        )
+        XCTAssertEqual(
+            try store.loadGroupConversationSummaries(
+                sdkAppID: 1_600_148_979, ownerUserID: "ios-master", groupIDs: ["group-1"]
+            ),
+            [group]
+        )
+        _ = try store.applyMutations([.removeConversation(
+            peerUserID: "alice", sdkAppID: 1_600_148_979, ownerUserID: "ios-master"
+        )])
+        XCTAssertEqual(
+            try store.loadGroupConversationPage(
+                sdkAppID: 1_600_148_979, ownerUserID: "ios-master",
+                groupID: "group-1", before: nil, limit: 20
+            ).messages,
+            [group]
+        )
+    }
+
+    func testGroupMetadataIsAccountScopedAndPurgedWithAccount() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        let group = LocalChatHistoryGroup(groupID: "group-1", name: "三人群", memberCount: 3)
+        try store.replaceGroups([group], sdkAppID: 1_600_148_979, ownerUserID: "ios-master")
+        XCTAssertEqual(try store.loadGroups(sdkAppID: 1_600_148_979, ownerUserID: "ios-master"), [group])
+        XCTAssertTrue(try store.loadGroups(sdkAppID: 1_600_148_979, ownerUserID: "other-owner").isEmpty)
+        try store.purgeAccount(ownerUserID: "ios-master", sdkAppID: 1_600_148_979)
+        XCTAssertTrue(try store.loadGroups(sdkAppID: 1_600_148_979, ownerUserID: "ios-master").isEmpty)
+    }
+
+    func testPendingGroupActivationSurvivesRestartAndCanBeCleared() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let group = LocalChatHistoryGroup(
+            groupID: "group-pending", name: "待通知群", memberCount: 3, pendingActivation: true
+        )
+        try LocalChatHistoryStore(baseDirectoryURL: directoryURL).replaceGroups(
+            [group], sdkAppID: 1_600_148_979, ownerUserID: "ios-master"
+        )
+        let reopened = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        XCTAssertEqual(try reopened.loadGroups(
+            sdkAppID: 1_600_148_979, ownerUserID: "ios-master"
+        ), [group])
+        try reopened.replaceGroups([
+            LocalChatHistoryGroup(groupID: group.groupID, name: group.name,
+                                  memberCount: group.memberCount, pendingActivation: false)
+        ], sdkAppID: 1_600_148_979, ownerUserID: "ios-master")
+        XCTAssertEqual(try LocalChatHistoryStore(baseDirectoryURL: directoryURL).loadGroups(
+            sdkAppID: 1_600_148_979, ownerUserID: "ios-master"
+        ).first?.pendingActivation, false)
+    }
+
+    func testSchemaNineGroupMetadataMigratesPendingActivationToFalse() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let databaseURL = directoryURL.appendingPathComponent("messages.sqlite3")
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &database), SQLITE_OK)
+        let opened = try XCTUnwrap(database)
+        try executeSQLite(opened, sql: """
+            CREATE TABLE groups (
+              sdk_app_id TEXT NOT NULL, owner_user_id TEXT NOT NULL,
+              group_id TEXT NOT NULL, name TEXT NOT NULL,
+              member_count INTEGER NOT NULL, updated_at REAL NOT NULL,
+              PRIMARY KEY (sdk_app_id, owner_user_id, group_id)
+            );
+            INSERT INTO groups VALUES ('1600148979', 'ios-master', 'old-group', '旧群', 3, 1);
+            PRAGMA user_version = 9;
+            """)
+        sqlite3_close(opened)
+        database = nil
+        let groups = try LocalChatHistoryStore(baseDirectoryURL: directoryURL).loadGroups(
+            sdkAppID: 1_600_148_979, ownerUserID: "ios-master"
+        )
+        XCTAssertEqual(groups, [LocalChatHistoryGroup(
+            groupID: "old-group", name: "旧群", memberCount: 3, pendingActivation: false
+        )])
+    }
+
+    func testGroupHistoryPagesByGroupIDAndStableCursor() throws {
+        let directoryURL = makeTemporaryDirectoryURL()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = LocalChatHistoryStore(baseDirectoryURL: directoryURL)
+        func groupMessage(_ suffix: Int, groupID: String) -> RemoteIMMessage {
+            RemoteIMMessage(
+                id: UUID(uuidString: String(format: "90000000-0000-0000-0000-%012d", suffix))!,
+                remoteID: "sdk-group-\(suffix)", fromUserID: "alice", toUserID: groupID,
+                groupID: groupID, text: "消息\(suffix)", direction: .incoming,
+                status: .received, createdAt: Date(timeIntervalSince1970: Double(suffix))
+            )
+        }
+        let first = groupMessage(1, groupID: "group-a")
+        let second = groupMessage(2, groupID: "group-a")
+        let third = groupMessage(3, groupID: "group-a")
+        let other = groupMessage(4, groupID: "group-b")
+        try persist([first, second, third, other], in: store)
+        let newest = try store.loadGroupConversationPage(
+            sdkAppID: 1_600_148_979, ownerUserID: "ios-master",
+            groupID: "group-a", before: nil, limit: 2
+        )
+        XCTAssertEqual(newest.messages, [second, third])
+        XCTAssertTrue(newest.hasEarlierMessages)
+        let older = try store.loadGroupConversationPage(
+            sdkAppID: 1_600_148_979, ownerUserID: "ios-master",
+            groupID: "group-a",
+            before: LocalChatHistoryCursor(createdAt: second.createdAt, messageID: second.id),
+            limit: 2
+        )
+        XCTAssertEqual(older.messages, [first])
+        XCTAssertFalse(older.hasEarlierMessages)
+        XCTAssertEqual(try store.loadGroupConversationPage(
+            sdkAppID: 1_600_148_979, ownerUserID: "ios-master",
+            groupID: "group-b", before: nil, limit: 2
+        ).messages, [other])
+    }
+
+
+
     override func setUpWithError() throws {
         try super.setUpWithError()
         try RemoteIMMediaStorage.prepareDirectories()
@@ -591,7 +733,7 @@ final class LocalChatHistoryStoreTests: XCTestCase {
         let openedVersionStatement = try XCTUnwrap(versionStatement)
         defer { sqlite3_finalize(openedVersionStatement) }
         XCTAssertEqual(sqlite3_step(openedVersionStatement), SQLITE_ROW)
-        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 8)
+        XCTAssertEqual(sqlite3_column_int(openedVersionStatement, 0), 10)
 
         var columnStatement: OpaquePointer?
         XCTAssertEqual(

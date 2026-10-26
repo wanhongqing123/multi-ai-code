@@ -5,6 +5,7 @@
 package com.kongshang.maichat;
 
 import com.kongshang.maichat.tools.MaiChatHostTools;
+import com.kongshang.maichat.tools.MobileScreenCaptureService;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.common.BitMatrix;
@@ -34,6 +35,7 @@ import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.media.MediaScannerConnection;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
@@ -131,6 +133,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final int REQUEST_SAVE_VIDEO_PERMISSION = 1009;
     private static final int REQUEST_SAVE_IMAGE_PERMISSION = 1010;
     private static final int REQUEST_FRIEND_SCAN = 1011;
+    private static final int REQUEST_SCREEN_SHARE = 1012;
+    private static final int REQUEST_CLOUD_DRIVE_MEDIA = 1013;
     private static final String TAG = "MaiChat.notify";
     private static final String MESSAGE_CHANNEL_ID = "maichat-new-messages";
     private static final String MESSAGE_GROUP_KEY = "maichat-private-messages";
@@ -138,9 +142,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     private RemoteIMSessionController session;
     private MaiChatHostTools maiChatHostTools;
+    private Consumer<Boolean> pendingScreenShare;
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
     private Dialog videoDialog;
+    private final Map<Dialog, File> cloudPlayerFiles = new HashMap<>();
+    private String cloudPlayerOwner = "";
+    private final Map<Dialog, File> cloudImageFiles = new HashMap<>();
+    private String cloudImageOwner = "";
+    private MaiCloudDriveDialog cloudDriveDialog;
     private TextView videoTranscriptOverlay;
     private boolean videoExpanded;
     private Dialog imageDialog;
@@ -309,6 +319,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onResume() {
         super.onResume();
+        MobileScreenCaptureService.setAppForeground(true);
         activityInForeground = true;
         if (session != null) session.setAppForeground(true);
         if (socialBindingVisible && socialBindingExpired()) {
@@ -340,6 +351,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
     @Override
     protected void onPause() {
+        MobileScreenCaptureService.setAppForeground(false);
         activityInForeground = false;
         socialUiHandler.removeCallbacks(socialBindingTick);
         if (session != null) session.setAppForeground(false);
@@ -520,6 +532,32 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SCREEN_SHARE) {
+            Consumer<Boolean> completion = pendingScreenShare;
+            pendingScreenShare = null;
+            boolean approved = resultCode == RESULT_OK && data != null;
+            if (approved)
+                MobileScreenCaptureService.start(this, resultCode, data);
+            if (completion != null) completion.accept(approved);
+            return;
+        }
+        if (requestCode == REQUEST_CLOUD_DRIVE_MEDIA) {
+            if (cloudDriveDialog == null || !cloudDriveDialog.isShowing()) return;
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                cloudDriveDialog.onPickCanceled();
+                return;
+            }
+            Uri uri = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException unavailable) {
+                cloudDriveDialog.onPickPermissionFailure();
+                return;
+            }
+            cloudDriveDialog.onPicked(uri);
+            return;
+        }
         if (resultCode != RESULT_OK) {
             if (aiAssistant != null) aiAssistant.handleActivityCancelled(requestCode);
             return;
@@ -537,6 +575,30 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         } else if (requestCode == REQUEST_TAKE_PHOTO && pendingCameraFile != null) {
             sendImageFile(pendingCameraFile);
             pendingCameraFile = null;
+        }
+    }
+
+    public void startScreenShareForAgent(Consumer<Boolean> completion) {
+        if (MobileScreenCaptureService.isCapturing()) {
+            completion.accept(true);
+            return;
+        }
+        if (pendingScreenShare != null) {
+            completion.accept(false);
+            return;
+        }
+        MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
+        if (manager == null) {
+            completion.accept(false);
+            return;
+        }
+        pendingScreenShare = completion;
+        try {
+            Toast.makeText(this, "请在系统弹窗选择「共享整个屏幕」", Toast.LENGTH_LONG).show();
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_SCREEN_SHARE);
+        } catch (RuntimeException error) {
+            pendingScreenShare = null;
+            completion.accept(false);
         }
     }
 
@@ -748,6 +810,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     // 切换页面时同步 Agent 前后台状态与输入草稿，避免重建页面时丢失原有会话内容。
     private void render() {
         if (destroyed) return;
+        if (videoDialog != null && cloudPlayerFiles.containsKey(videoDialog) &&
+            !cloudPlayerOwner.equals(MaiChatAuthClient.shared(this).accountId()))
+            videoDialog.dismiss();
+        if (imageDialog != null && cloudImageFiles.containsKey(imageDialog) &&
+            !cloudImageOwner.equals(MaiChatAuthClient.shared(this).accountId()))
+            imageDialog.dismiss();
         boolean landscapeIm = useLandscapeImLayout();
         // Agent 页只在当前页签可见时消费实时事件；换账号先撤销旧页状态，再配置新工作区。
         boolean showingAssistant = activityInForeground && activeTab == RemoteIMTab.ASSISTANT
@@ -756,6 +824,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String owner = session.requiresLogin() ? "" : session.settings().loginUserId();
         if (!owner.equals(displayedOwner)) {
             if (videoDialog != null) videoDialog.dismiss();
+            if (cloudDriveDialog != null && cloudDriveDialog.isShowing())
+                cloudDriveDialog.dismiss();
             assistantVoiceActive = false;
             assistantVoiceText = "";
             if (aiAssistant != null) {
@@ -3143,6 +3213,27 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         content.addView(scroll, matchMatch());
 
         String accountId = session.accountId();
+        LinearLayout cloudSection = settingsSection("内容", new String[][]{
+            {"我的云盘", "仅自己可见  ›"}
+        });
+        page.addView(cloudSection, matchWrap());
+        View cloudRow = ((ViewGroup) cloudSection.getChildAt(1)).getChildAt(0);
+        cloudRow.setContentDescription("打开我的云盘");
+        cloudRow.setOnClickListener(view -> showCloudDrive());
+        int cloudState = MaiCloudDrive.availability(accountId);
+        cloudSection.setVisibility(cloudState == MaiCloudDrive.GATE_AVAILABLE ||
+            cloudState == MaiCloudDrive.GATE_RETRY ? View.VISIBLE : View.GONE);
+        MaiCloudDrive.probe(this, available -> {
+            if (destroyed || activeTab != RemoteIMTab.ME ||
+                !accountId.equals(session.accountId())) return;
+            cloudSection.setVisibility(available == MaiCloudDrive.GATE_AVAILABLE ||
+                available == MaiCloudDrive.GATE_RETRY ? View.VISIBLE : View.GONE);
+            if (available == MaiCloudDrive.GATE_RETRY) {
+                TextView value = (TextView) ((ViewGroup) cloudRow).getChildAt(1);
+                value.setText("连接失败，可重试  ›");
+            }
+        });
+
         String accountLabel = compactAccountId(accountId);
         String nickname = session.nickname();
         LinearLayout accountSection = settingsSection("账号", new String[][]{
@@ -3196,6 +3287,36 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 toast("切换账号失败");
             }
         });
+    }
+
+    private void showCloudDrive() {
+        if (cloudDriveDialog != null && cloudDriveDialog.isShowing()) return;
+        cloudDriveDialog = new MaiCloudDriveDialog(this);
+        cloudDriveDialog.show();
+    }
+
+    void showCloudSave(File media) {
+        showCloudDrive();
+        if (cloudDriveDialog != null && cloudDriveDialog.isShowing())
+            cloudDriveDialog.confirmAgentFile(media);
+    }
+
+    MaiCloudDriveDialog currentCloudDriveDialog() { return cloudDriveDialog; }
+
+    void clearCloudDriveDialog(MaiCloudDriveDialog value) {
+        if (cloudDriveDialog == value) cloudDriveDialog = null;
+    }
+
+    void pickCloudDriveMedia(MaiCloudDriveDialog requester) {
+        if (requester != cloudDriveDialog || !requester.isShowing()) return;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES,
+            new String[]{"video/mp4", "video/quicktime", "image/*"});
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, REQUEST_CLOUD_DRIVE_MEDIA);
     }
 
     private LinearLayout settingsSection(String title, String[][] rows) {
@@ -4200,6 +4321,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
 
         dialog.setOnDismissListener(d -> {
             video.stop();
+            File cloudFile = cloudPlayerFiles.remove(dialog);
+            if (cloudFile != null) {
+                cloudFile.delete();
+                cloudPlayerOwner = "";
+            }
             if (videoDialog == dialog) {
                 videoDialog = null;
                 videoTranscriptOverlay = null;
@@ -4537,6 +4663,53 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return true;
     }
 
+    public boolean openCloudDriveVideo(String path) {
+        if (destroyed || path == null) return false;
+        try {
+            String account = MaiChatAuthClient.shared(this).accountId();
+            if (account.isEmpty()) return false;
+            File source = new File(path).getCanonicalFile();
+            File cache = getCacheDir().getCanonicalFile();
+            if (!source.isFile() || !source.getPath().startsWith(cache.getPath() + File.separator))
+                return false;
+            openVideoPlayer(source.getAbsolutePath(), 0,
+                Collections.singletonList(new GalleryItem(source.getAbsolutePath(), true)));
+            if (videoDialog == null) return false;
+            cloudPlayerFiles.put(videoDialog, source);
+            cloudPlayerOwner = account;
+            return true;
+        } catch (IOException failure) {
+            return false;
+        }
+    }
+
+    public boolean openCloudDriveImage(String path) {
+        if (destroyed || path == null) return false;
+        try {
+            String account = MaiChatAuthClient.shared(this).accountId();
+            if (account.isEmpty()) return false;
+            File source = new File(path).getCanonicalFile();
+            File cache = new File(getCacheDir(), "cloud-drive-images").getCanonicalFile();
+            if (!source.isFile() || !source.getParentFile().equals(cache)) return false;
+            if (imageDialog != null) imageDialog.dismiss();
+            showFullScreenImage(source.getAbsolutePath());
+            if (imageDialog == null) return false;
+            cloudImageFiles.put(imageDialog, source);
+            cloudImageOwner = account;
+            return true;
+        } catch (IOException failure) { return false; }
+    }
+
+    void cleanupIdleCloudDriveImages() {
+        File directory = new File(getCacheDir(), "cloud-drive-images");
+        File active = imageDialog == null ? null : cloudImageFiles.get(imageDialog);
+        File[] files = directory.listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            if (file.isFile() && !file.equals(active)) file.delete();
+        }
+    }
+
     public boolean openAgentVideo(String path, long startPositionUs) {
         if (destroyed || path == null || !new File(path).isFile()) return false;
         openVideoPlayer(path, startPositionUs);
@@ -4854,6 +5027,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             });
         else dialog.setOnKeyListener(null);
         dialog.setOnDismissListener(ignored -> {
+            File cloudFile = cloudImageFiles.remove(dialog);
+            if (cloudFile != null) {
+                cloudFile.delete();
+                cloudImageOwner = "";
+            }
             if (imageDialog == dialog) {
                 imageDialog = null;
                 galleryImageView = null;

@@ -35,7 +35,7 @@ function connected(url, token) {
     socket.send(JSON.stringify({ id, op, body }));
     return next(frame => frame.type === 'response' && frame.id === id);
   }
-  return { socket, next, request };
+  return { socket, next, request, received };
 }
 
 test('WebSocket pushes same-account catalog and mailbox without HTTP polling', async () => {
@@ -86,7 +86,7 @@ test('WebSocket pushes same-account catalog and mailbox without HTTP polling', a
 
     const body = { to_slot: 'mac', to_login_session_id: 'mac-login',
       client_message_id: 'request-one', session_id: 'ses_mac',
-      kind: 'history_request', payload: { limit: 1 } };
+      kind: 'command', payload: { action: 'prompt', text: '你好' } };
     const first = await phone.request('send-one', 'send', body);
     assert.equal(first.status, 200);
     const delivered = await mac.next(frame => frame.type === 'inbox' &&
@@ -105,6 +105,31 @@ test('WebSocket pushes same-account catalog and mailbox without HTTP polling', a
     await mac.next(frame => frame.type === 'inbox' &&
       frame.messages.some(message => message.client_message_id === 'request-reconnect'));
 
+    const roomMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `msg_batch_${index}`, role: 'assistant',
+      parts: [{ kind: 'text', text: `reply ${index}` }]
+    }));
+    assert.equal((await mac.request('publish-batch', 'publish', {
+      session_id: 'ses_mac', messages: roomMessages,
+      permissions: [], questions: []
+    })).status, 200);
+    const firstBatch = await phone.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.kind === 'event'));
+    assert.equal(firstBatch.messages.length, 8);
+    assert.equal((await phone.request('phone-presence-repeat', 'presence', {
+      device_id: 'phone-install', name: 'iPhone', sessions: []
+    })).status, 200);
+    assert.equal((await phone.request('phone-barrier', 'catalog')).status, 200);
+    assert.equal(phone.received.some(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => firstBatch.messages.some(
+        firstMessage => firstMessage.id === message.id))), false);
+    assert.equal((await phone.request('ack-batch', 'ack', {
+      ids: firstBatch.messages.map(message => message.id)
+    })).status, 200);
+    const secondBatch = await phone.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.kind === 'event'));
+    assert.equal(secondBatch.messages.length, 4);
+
     mac.socket.close();
     await once(mac.socket, 'close');
     const offline = await phone.next(frame => frame.type === 'catalog' &&
@@ -116,17 +141,131 @@ test('WebSocket pushes same-account catalog and mailbox without HTTP polling', a
       device_id: 'mac-install', name: 'Work Mac',
       sessions: [{ id: 'ses_mac', title: 'Build', updated_at: Date.now() }]
     })).status, 200);
-    const replayed = await renewed.next(frame => frame.type === 'inbox' &&
-      frame.messages.some(message => message.client_message_id === 'request-reconnect'));
-    assert.equal(replayed.messages[0].client_message_id, 'request-reconnect');
-    assert.equal((await renewed.request('ack-replay', 'ack', {
-      ids: [replayed.messages[0].id]
-    })).status, 200);
+    // A delivered command is not replayed after reconnect; the owner may already have run it.
   } finally {
     const connected = [mac, phone, other, renewed].filter(Boolean)
       .filter(client => client.socket.readyState !== WebSocket.CLOSED);
     const closed = connected.map(client => once(client.socket, 'close'));
     for (const client of connected) client.socket.terminate();
+    await Promise.all(closed);
+    await new Promise(resolve => server.close(resolve));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    db.close();
+  }
+});
+
+test('WebSocket routes create, switch and delete for the owning device', async () => {
+  const db = openSessionSyncStore(':memory:');
+  const principals = new Map([
+    ['mac-token', { accountId: 'alice', slot: 'mac', loginSessionId: 'mac-login' }],
+    ['phone-token', { accountId: 'alice', slot: 'ios_phone', loginSessionId: 'phone-login' }],
+    ['other-token', { accountId: 'bob', slot: 'ios_phone', loginSessionId: 'other-login' }]
+  ]);
+  const authorize = async headers => principals.get(headers.authorization?.slice(7)) || null;
+  const server = createServer(createSessionSyncService({ db, authorize }), authorize);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const url = `ws://127.0.0.1:${server.address().port}/v1/session-sync/ws`;
+  const mac = connected(url, 'mac-token');
+  const phone = connected(url, 'phone-token');
+  const other = connected(url, 'other-token');
+  try {
+    await Promise.all([once(mac.socket, 'open'), once(phone.socket, 'open'),
+      once(other.socket, 'open')]);
+    assert.equal((await mac.request('mac-empty', 'presence', {
+      device_id: 'mac-install', name: 'Work Mac', sessions: []
+    })).status, 200);
+    assert.equal((await phone.request('phone-empty', 'presence', {
+      device_id: 'phone-install', name: 'iPhone', sessions: []
+    })).status, 200);
+    assert.equal((await other.request('other-empty', 'presence', {
+      device_id: 'other-install', name: 'Other', sessions: []
+    })).status, 200);
+    const emptyCatalog = await phone.next(frame => frame.type === 'catalog' &&
+      frame.devices?.some(device => device.device_slot === 'mac'));
+    assert.deepEqual(emptyCatalog.sessions, []);
+    assert.equal(emptyCatalog.devices.find(device => device.device_slot === 'mac').online,
+      true);
+    assert.equal((await other.request('other-catalog', 'catalog')).body.devices
+      .some(device => device.device_slot === 'mac'), false);
+
+    const create = { to_slot: 'mac', to_login_session_id: 'mac-login',
+      client_message_id: 'create-first', session_id: 'session_lifecycle',
+      kind: 'command', payload: { action: 'session_create' } };
+    assert.equal((await other.request('other-create', 'send', create)).status, 409);
+    assert.equal((await phone.request('phone-create', 'send', create)).status, 200);
+    const requested = await mac.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.client_message_id === 'create-first'));
+    assert.equal(requested.messages[0].payload.action, 'session_create');
+    assert.equal((await mac.request('created-presence', 'presence', {
+      device_id: 'mac-install', name: 'Work Mac',
+      sessions: [{ id: 'ses_created', title: 'New Session', updated_at: Date.now() }]
+    })).status, 200);
+    const createdCatalog = await phone.next(frame => frame.type === 'catalog' &&
+      frame.sessions.some(session => session.id === 'ses_created'));
+    assert.equal(createdCatalog.sessions[0].device_slot, 'mac');
+    assert.equal((await mac.request('create-result', 'send', {
+      to_slot: 'ios_phone', to_login_session_id: 'phone-login',
+      client_message_id: 'created-event', session_id: 'session_lifecycle',
+      kind: 'event', payload: { type: 'command_result', command_id: 'create-first',
+        result: { ok: true, session_id: 'ses_created' } }
+    })).status, 200);
+    const created = await phone.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.client_message_id === 'created-event'));
+    assert.equal(created.messages[0].payload.command_id, 'create-first');
+
+    const switchCommand = { ...create, client_message_id: 'switch-workspace',
+      payload: { action: 'session_set_workspace',
+        target_session_id: 'ses_created', workspace_path: '/tmp/project' } };
+    assert.equal((await phone.request('switch-relative', 'send', {
+      ...switchCommand, client_message_id: 'switch-invalid',
+      payload: { ...switchCommand.payload, workspace_path: 'relative/project' }
+    })).status, 400);
+    assert.equal((await other.request('other-switch', 'send', switchCommand)).status,
+      409);
+    assert.equal((await phone.request('switch-send', 'send', switchCommand)).status, 200);
+    const switching = await mac.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.client_message_id === 'switch-workspace'));
+    assert.deepEqual(switching.messages[0].payload, switchCommand.payload);
+    assert.equal((await mac.request('switch-result', 'send', {
+      to_slot: 'ios_phone', to_login_session_id: 'phone-login',
+      client_message_id: 'switched-event', session_id: 'session_lifecycle',
+      kind: 'event', payload: { type: 'command_result', command_id: 'switch-workspace',
+        result: { ok: true, session_id: 'ses_created' } }
+    })).status, 200);
+    const switched = await phone.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.client_message_id === 'switched-event'));
+    assert.equal(switched.messages[0].payload.command_id, 'switch-workspace');
+
+    assert.equal((await phone.request('phone-delete', 'send', {
+      ...create, client_message_id: 'delete-created',
+      payload: { action: 'session_delete', target_session_id: 'ses_created' }
+    })).status, 200);
+    const deleting = await mac.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.client_message_id === 'delete-created'));
+    assert.equal(deleting.messages[0].payload.target_session_id, 'ses_created');
+    assert.equal((await mac.request('deleted-presence', 'presence', {
+      device_id: 'mac-install', name: 'Work Mac', sessions: []
+    })).status, 200);
+    const deletedCatalog = await phone.next(frame => frame.type === 'catalog' &&
+      frame.sessions.length === 0 && frame.devices?.some(device =>
+        device.device_slot === 'mac'));
+    assert.equal(deletedCatalog.devices.find(device => device.device_slot === 'mac')
+      .online, true);
+    assert.equal((await mac.request('delete-result', 'send', {
+      to_slot: 'ios_phone', to_login_session_id: 'phone-login',
+      client_message_id: 'deleted-event', session_id: 'session_lifecycle',
+      kind: 'event', payload: { type: 'command_result', command_id: 'delete-created',
+        result: { ok: true, session_id: 'ses_created' } }
+    })).status, 200);
+    const deleted = await phone.next(frame => frame.type === 'inbox' &&
+      frame.messages.some(message => message.client_message_id === 'deleted-event'));
+    assert.equal(deleted.messages[0].payload.command_id, 'delete-created');
+  } finally {
+    const clients = [mac, phone, other].filter(client =>
+      client.socket.readyState !== WebSocket.CLOSED);
+    const closed = clients.map(client => once(client.socket, 'close'));
+    for (const client of clients) client.socket.terminate();
     await Promise.all(closed);
     await new Promise(resolve => server.close(resolve));
     await new Promise(resolve => setTimeout(resolve, 20));

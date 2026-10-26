@@ -27,6 +27,61 @@ OSS 官方说明见 [PutObject 防覆盖请求头](https://help.aliyun.com/zh/os
 已有账号素材清理命令扫描视频圈对象时需显式加 `--include-video-circle`，先只读
 预览，再用 `--execute <账号> <同一账号>` 执行；该前缀还需 OSS 列举权限。
 
+## 私人图片与视频云盘 Multipart 签名（默认关闭）
+
+账号服务通过 loopback 并使用 `MAICHAT_CLOUD_DRIVE_INTERNAL_KEY` 调用本进程的
+`/cloud-drive/{init,sign-part,list-parts,list-uploads,complete,abort,verify,read,thumbnail,delete}`。
+`MAICHAT_CLOUD_DRIVE_ENABLED=1` 才会启用，且请求对象名必须严格在
+`cloud-drive/<账号>/YYYY-MM-DD/<UUID>.<后缀>` 下；后缀仅允许 mp4、mov、jpg、
+jpeg、png、webp、heic，后缀与 MIME 必须一致。`sign-part` 为指定
+OSS upload ID 与 partNumber 签发 5 分钟 PUT URL，并把该片的准确
+`Content-Length`（V4 additional header）及 `Content-MD5` 绑定进签名。
+账号服务的完成操作先校验 OSS ListParts；本服务调用 CompleteMultipartUpload 时
+要求禁止覆盖，并提供 HEAD 核验、私有 60 秒 GET、按需缩略图签名和删除。
+缩略图的固定 OSS `x-oss-process` 参数参与 V4 签名：图片缩到 320 像素内并转
+JPEG，视频取第 0 毫秒画面。媒体字节不经本进程。OSS 视频截帧仅支持 H.264/H.265
+且按调用计费；调用端需要缓存和失败占位图。
+`list-uploads` 只接受内部密钥、有效账号 ID 和该账号下的完整视频对象键；
+它分页调用 OSS ListMultipartUploads，但只返回**精确匹配该键**的 upload ID，
+不向 App 开放桶内列表。账号服务用它核对删除后的未完成分片；分页或 OSS
+核验失败时保留待清理记录，不能释放容量。
+
+云盘只读取 `MAICHAT_CLOUD_DRIVE_OSS_BUCKET`、`MAICHAT_CLOUD_DRIVE_OSS_REGION`、
+`MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_ID` 和
+`MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_SECRET`，不回退到素材桶或素材 RAM 凭据。
+正式私人云盘 Bucket 为 `maichat-private-cloud-drive-gz-20261025-f346b709`
+（广州，Standard/LRS）；请给它配专用 RAM 身份。素材、头像与视频圈继续使用
+原 `MAICHAT_OSS_*` 配置。在生产启用前必须用真实私有 Bucket 验证 OSS 对长度
+签名、MD5、禁止覆盖以及版本控制未开启状态的行为，配置 RAM 所需的 PutObject、GetObject、DeleteObject、
+ListParts、AbortMultipartUpload 和 ListMultipartUploads 权限，以及
+`cloud-drive/` 未完成 Multipart Upload 的生命周期清理（上传会话有效 7 天，清理规则
+可设为 8 天）。广州地域的 Standard Bucket 目前仅支持 LRS，创建时应显式指定，
+不能套用其他地域的 ZRS 配置。运营备份清理命令须显式加
+`--include-cloud-drive`，先预览再执行；它同时扫描该账号目录中的对象与未完成上传。
+本地 fake OSS 测试不能代替生产 OSS 验收。
+
+缩略图真实 OSS 验收用 `scripts/cloud-drive-thumbnail-probe.js`，必须显式传
+`--run`、专用桶/地域、`--env-file=/etc/maichat/cloud-drive.env`、一次性测试账号 ID
+及相同的 `--confirm-account`，再传不含用户内容的 H.264 MP4 和 PNG 小样本；可选
+`--heic-file` 验证 iPhone 图片。探针只在测试账号目录写随机对象，检查签名缩图响应确实是
+JPEG，再按精确对象键删除。若 OSS 清理不确定，它留下 root-only recovery journal；
+使用相同桶、地域和账号参数加 `--recover=<journal basename>` 重新核对并清理。
+此探针不读取用户云盘视频，也不测试 Dolby Vision 等未受 OSS 截帧文档支持的编码。
+
+`scripts/provision-cloud-drive-ram.py` 创建的
+`/etc/maichat/cloud-drive.env` 是 **root:root 0600 暂存配置**，脚本不会部署、
+重启服务或开启功能。当前 systemd 系统服务以 `User=maichat` 运行，但
+`EnvironmentFile=` 由系统服务管理器从自己的文件系统读取后传给服务进程；
+无需把密钥文件改成 `maichat` 可直接读取。完成 RAM 身份核对后，可在
+`maichat-media.service` 的 drop-in 中增加
+`EnvironmentFile=/etc/maichat/cloud-drive.env`，保持文件 root:root 0600；
+不要在 `ExecStart` 或以 `maichat` 身份执行的脚本里 `source` 这个文件。
+也可在 root 下将所需变量安全合并到现有 root:root 0600 的
+`/etc/maichat/media.env`。以上两种方式都须先核对实际 systemd 单元配置、
+再重载和重启服务；`MAICHAT_CLOUD_DRIVE_ENABLED` 保持为 `0`，直到真实
+OSS 与三端验收全部通过。systemd 行为见
+[systemd.exec EnvironmentFile](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)。
+
 ## 阿里云侧准备
 
 1. 创建**私有** OSS Bucket。当前目标是 `maichat-ai-video-resource`，地域
@@ -63,6 +118,8 @@ OSS 官方说明见 [PutObject 防覆盖请求头](https://help.aliyun.com/zh/os
    | `MAICHAT_AUTH_PORT` | 本机账号服务端口，默认 9100；素材操作会用账号 Bearer 向它核验权限 |
    | `MAICHAT_OSS_BUCKET`、`MAICHAT_OSS_REGION` | 可选，OSS Bucket 与地域 |
    | `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 可选，专用 OSS RAM 身份 |
+   | `MAICHAT_CLOUD_DRIVE_OSS_BUCKET`、`MAICHAT_CLOUD_DRIVE_OSS_REGION` | 云盘独立私有 Bucket 与地域；启用云盘时必填 |
+   | `MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_ID`、`MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_SECRET` | 云盘专用 RAM 凭据；启用云盘时必填 |
 
    可以用 `openssl rand -hex 32` 生成令牌。长期 AK/SK 只放服务器配置，不填在
    MaiChat App，也不要提交到仓库。服务器只监听 `127.0.0.1:9000`，公网通过 HTTPS

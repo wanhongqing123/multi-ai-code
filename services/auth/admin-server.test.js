@@ -122,3 +122,64 @@ test('local video review requires a checked decision and can hide published medi
     db.close();
   }
 });
+
+test('reported old video can be previewed and hidden outside the latest 100', async () => {
+  const db = openStore(':memory:');
+  const addUser = db.prepare(`INSERT INTO users
+    (id,account_id,phone_e164,im_user_id,created_at,updated_at)
+    VALUES(?,?,NULL,?,?,?)`);
+  addUser.run('author', 'author', 'author-im', 1, 1);
+  addUser.run('reporter', 'reporter', 'reporter-im', 1, 1);
+  const insert = db.prepare(`INSERT INTO video_circle_posts
+    (id,author_user_id,title,object_key,source_tool,source_task_id,size_bytes,
+    content_type,duration_ms,status,created_at,published_at)
+    VALUES(?,?,?,?,'wan_video','task-1',1000,'video/mp4',8000,'approved',?,?)`);
+  const oldId = '123e4567-e89b-42d3-a456-000000000000';
+  const oldKey = `video-circle/author/2026-10-22/${oldId}.mp4`;
+  insert.run(oldId, 'author', 'Reported old video', oldKey, 1, 1);
+  for (let index = 1; index <= 101; index++) {
+    const id = `123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
+    insert.run(id, 'author', `New video ${index}`,
+      `video-circle/author/2026-10-22/${id}.mp4`, index + 1, index + 1);
+  }
+  const reportId = '223e4567-e89b-42d3-a456-000000000001';
+  db.prepare(`INSERT INTO video_circle_reports
+    (id,post_id,reporter_user_id,reason,status,created_at)
+    VALUES(?,?,?,'copyright','pending',?)`).run(reportId, oldId, 'reporter', 200);
+  const removed = [];
+  const service = createAuthService({ db, sms: { async send() {} },
+    secret: randomBytes(32).toString('hex'), imSecret: randomBytes(32).toString('hex'),
+    sdkAppId: 123456789, videoCircle: {
+      signRead: async key => `https://private.example/${key}?expires=60`,
+      deleteObject: async key => { removed.push(key); }
+    } });
+  assert.equal(service.videoCircleAdmin.publishedReview().length, 100);
+  assert.equal(service.videoCircleAdmin.publishedReview().some(post => post.id === oldId), false);
+  const server = createAdminServer({ db, service, secret: 'admin-test-secret-at-least-32-chars' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const authorization = 'Basic ' + Buffer.from(
+      'admin:admin-test-secret-at-least-32-chars').toString('base64');
+    const html = await (await fetch(base, { headers: { authorization } })).text();
+    assert.match(html, /Reported old video/);
+    assert.match(html, new RegExp(`href="/video-circle/preview/${oldId}"`));
+    assert.match(html, new RegExp(`name="post_id" value="${oldId}"`));
+    assert.equal((await fetch(`${base}/video-circle/preview/${oldId}`, {
+      headers: { authorization }, redirect: 'manual' })).status, 302);
+    assert.equal((await fetch(`${base}/video-circle/hide`, {
+      method: 'POST', headers: { authorization,
+        'content-type': 'application/x-www-form-urlencoded', origin: base },
+      body: new URLSearchParams({ post_id: oldId, reason: '举报后下架' })
+    })).status, 200);
+    assert.equal(db.prepare('SELECT status FROM video_circle_posts WHERE id=?')
+      .get(oldId).status, 'hidden');
+    assert.deepEqual(removed, [oldKey]);
+    const after = await (await fetch(base, { headers: { authorization } })).text();
+    assert.match(after, /作品已不可播放/);
+    assert.equal(after.includes(`href="/video-circle/preview/${oldId}"`), false);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    db.close();
+  }
+});

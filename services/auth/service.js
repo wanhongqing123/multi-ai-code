@@ -9,6 +9,7 @@ const { createUserSig } = require('./usersig');
 const { hashPassword, validPassword, verifyPassword } = require('./password');
 const { createFriendService } = require('./friends');
 const { createVideoCircleService } = require('./video-circle-service');
+const { createCloudDriveService } = require('./cloud-drive-service');
 const { validAccountId, newAccountId } = require('./account-id');
 
 const MINUTE = 60_000;
@@ -115,6 +116,8 @@ function createAuthService(options) {
     lookupTimes: friendLookupTimes });
   const videoCircle = options.videoCircle ? createVideoCircleService({
     db, now, ...options.videoCircle }) : null;
+  const cloudDrive = options.cloudDrive ? createCloudDriveService({
+    db, now, ...options.cloudDrive }) : null;
   let nextCleanupAt = 0;
 
   function deviceSlotRequiredError(statusCode) {
@@ -763,6 +766,13 @@ function createAuthService(options) {
       db.prepare(`UPDATE video_circle_posts SET status='withdrawn',withdrawn_at=?,
         cleanup_pending=1 WHERE author_user_id=? AND status<>'withdrawn'`)
         .run(requestedAt, active.id);
+      db.prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
+        cleanup_pending=1,cleanup_after=?,
+        cleanup_hold_until=CASE WHEN status='completing' OR
+          (status='uploading' AND upload_id IS NULL) THEN ? ELSE NULL END,
+        cleanup_revision=cleanup_revision+1
+        WHERE owner_user_id=? AND status<>'deleted'`)
+        .run(requestedAt,requestedAt,requestedAt+DAY,active.id);
       db.prepare(`UPDATE sessions SET revoked_at=?,revoked_reason='account_deletion'
         WHERE user_id=? AND revoked_at IS NULL`).run(requestedAt, active.id);
       db.prepare(`UPDATE friend_requests SET status='rejected',decided_at=?
@@ -787,9 +797,12 @@ function createAuthService(options) {
       return json(202, { request_id: id, status: 'pending', due_at: dueAt,
         receipt_token: receiptToken, support_email: '1925271463@kongshang.com' });
     })();
-    if (deletion.statusCode === 202 && videoCircle) {
-      const cleanup = await videoCircle.cleanupAccount(session.user_id);
-      return json(202, { ...deletion.body, video_cleanup_pending: cleanup.pending > 0 });
+    if (deletion.statusCode === 202) {
+      const circle = videoCircle ? await videoCircle.cleanupAccount(session.user_id) : null;
+      const cloud = cloudDrive ? await cloudDrive.cleanupAccount(session.user_id) : null;
+      return json(202, { ...deletion.body,
+        ...(circle ? { video_cleanup_pending:circle.pending > 0 } : {}),
+        ...(cloud ? { cloud_video_cleanup_pending:cloud.pending > 0 } : {}) });
     }
     return deletion;
   }
@@ -949,6 +962,11 @@ function createAuthService(options) {
       if (!videoCircle) return json(404, { error: 'Not found' });
       if (!session) return authenticationFailure(headers);
       return videoCircle.handle(method, path, request, session, query);
+    }
+    if (path.startsWith('/v1/cloud-drive/')) {
+      if (!cloudDrive) return json(404,{ error:'Not found' });
+      if (!session) return authenticationFailure(headers);
+      return cloudDrive.handle(method,path,request,session,query);
     }
     if (path.startsWith('/v1/friends')) {
       if (!session) return authenticationFailure(headers);
@@ -1145,7 +1163,8 @@ function createAuthService(options) {
   }
 
   return { handle, normalizePhone, authenticate, cleanupExpiredRecords,
-    createTestAccount, disableTestAccount, videoCircleAdmin: videoCircle };
+    createTestAccount, disableTestAccount, videoCircleAdmin: videoCircle,
+    cleanupCloudDrive:cloudDrive?.sweep };
 }
 
 module.exports = { createAuthService, normalizePhone };

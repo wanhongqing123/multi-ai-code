@@ -318,6 +318,7 @@ add_library(maiagent STATIC
   AgentTools/MaiTemporalWatermarkTool.cpp
   AgentTools/MaiTodoWriteTool.cpp
   AgentTools/MaiQuestionTool.cpp
+  AgentTools/MaiSessionTools.cpp
   AgentTools/MaiSubAgentTools.cpp
   AgentTools/MaiShellTool.cpp
   AgentTools/MaiScreenshotTool.cpp

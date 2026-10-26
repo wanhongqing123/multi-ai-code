@@ -30,6 +30,7 @@ private:
     void requestHistory(const QString& before, int limit);
     void sendOrStop();
     void sendAction(const QJsonObject& action, bool clearDraft);
+    void removeOptimisticMessage(const QString& id);
     void renderMessages();
     void updateThinking();
     void renderRequests(const QJsonObject& payload);

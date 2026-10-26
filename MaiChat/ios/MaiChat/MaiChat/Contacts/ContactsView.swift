@@ -59,17 +59,12 @@ struct ContactsView: View {
     }
 }
 
-private enum FriendQRDestination: String, Identifiable {
-    case scan, mine
-    var id: String { rawValue }
-}
-
 struct AddContactDialog: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var isPresented: Bool
     @FocusState private var isAccountFocused: Bool
     @State private var isSubmitting = false
-    @State private var qrDestination: FriendQRDestination?
+    @State private var isShowingMyQRCode = false
 
     var body: some View {
         ZStack {
@@ -109,19 +104,11 @@ struct AddContactDialog: View {
                     )
                     .onSubmit(addContact)
 
-                HStack(spacing: 14) {
-                    Button {
-                        isAccountFocused = false
-                        qrDestination = .scan
-                    } label: {
-                        Label("扫一扫", systemImage: "qrcode.viewfinder")
-                    }
-                    Button {
-                        isAccountFocused = false
-                        qrDestination = .mine
-                    } label: {
-                        Label("我的二维码", systemImage: "qrcode")
-                    }
+                Button {
+                    isAccountFocused = false
+                    isShowingMyQRCode = true
+                } label: {
+                    Label("我的二维码", systemImage: "qrcode")
                 }
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(RemoteIMStyle.blue)
@@ -169,18 +156,9 @@ struct AddContactDialog: View {
                 isAccountFocused = true
             }
         }
-        .sheet(item: $qrDestination) { destination in
+        .sheet(isPresented: $isShowingMyQRCode) {
             NavigationStack {
-                switch destination {
-                case .mine:
-                    FriendQRShareView(userID: appState.maiChatAccountID)
-                case .scan:
-                    FriendQRScanView { userID in
-                        qrDestination = nil
-                        appState.newContactUserID = userID
-                        isAccountFocused = false
-                    }
-                }
+                FriendQRShareView(userID: appState.maiChatAccountID)
             }
         }
     }
@@ -240,31 +218,55 @@ struct FriendQRShareView: View {
     }
 }
 
-private struct FriendQRScanView: View {
+struct MaiChatQRScanSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var desktopRequestID: String?
+    let onUserID: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            if let desktopRequestID {
+                DesktopLoginApprovalView(requestID: desktopRequestID) {
+                    self.desktopRequestID = nil
+                }
+            } else {
+                MaiChatQRScanView(onUserID: onUserID) { requestID in
+                    desktopRequestID = requestID
+                }
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("关闭") { dismiss() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MaiChatQRScanView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var cameraAuthorized = false
     @State private var cameraDenied = false
     @State private var errorMessage: String?
     @State private var scanGeneration = 0
     let onUserID: (String) -> Void
+    let onDesktopRequestID: (String) -> Void
 
     var body: some View {
         VStack(spacing: 18) {
-            Text("扫描对方的 MaiChat 好友二维码")
+            Text("扫描好友二维码或电脑登录二维码")
                 .foregroundStyle(RemoteIMStyle.textSecondary)
             ZStack {
                 RoundedRectangle(cornerRadius: 18)
                     .fill(Color(red: 0.08, green: 0.12, blue: 0.19))
-                if cameraAuthorized {
+                if simulatedCode != nil {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 74, weight: .ultraLight))
+                        .foregroundStyle(.white)
+                } else if cameraAuthorized {
                     MaiChatQRCodeCameraView(
                         isActive: scenePhase == .active && errorMessage == nil,
-                        onCode: { text in
-                            guard let userID = MaiChatFriendLink.userID(from: text) else {
-                                errorMessage = "这不是 MaiChat 好友二维码"
-                                return
-                            }
-                            onUserID(userID)
-                        },
+                        onCode: { receiveCode($0) },
                         onUnavailable: { errorMessage = "相机不可用" }
                     )
                     .id(scanGeneration)
@@ -292,12 +294,16 @@ private struct FriendQRScanView: View {
             if cameraDenied {
                 Link("打开系统设置", destination: URL(string: UIApplication.openSettingsURLString)!)
             }
+            if let code = simulatedCode {
+                Button("模拟识别二维码") { receiveCode(code) }
+            }
             Spacer(minLength: 0)
         }
         .padding(20)
         .navigationTitle("扫一扫")
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            if simulatedCode != nil { return }
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .authorized: cameraAuthorized = true
             case .notDetermined:
@@ -306,6 +312,33 @@ private struct FriendQRScanView: View {
             default: cameraDenied = true
             }
         }
+    }
+
+    private func receiveCode(_ text: String) {
+        if let userID = MaiChatFriendLink.userID(from: text) {
+            onUserID(userID)
+        } else if let requestID = MaiChatDesktopLoginQRCode.requestID(from: text) {
+            onDesktopRequestID(requestID)
+        } else {
+            errorMessage = "这不是 MaiChat 好友或电脑登录二维码"
+        }
+    }
+
+    private var simulatedCode: String? {
+        #if targetEnvironment(simulator)
+        let environment = ProcessInfo.processInfo.environment
+        if ProcessInfo.processInfo.arguments.contains("--friend-qr-ui-test") {
+            return environment["MAICHAT_FRIEND_QR_TEST_VALUE"]
+        }
+        if environment["MAICHAT_LOCAL_UI_PHONE"] != nil,
+           let desktopQRCode = environment["MAICHAT_LOCAL_UI_DESKTOP_QR"],
+           !desktopQRCode.isEmpty {
+            return desktopQRCode
+        }
+        return nil
+        #else
+        return nil
+        #endif
     }
 }
 

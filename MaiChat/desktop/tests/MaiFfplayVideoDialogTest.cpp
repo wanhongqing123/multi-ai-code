@@ -2,6 +2,8 @@
 // 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QElapsedTimer>
 #include <QComboBox>
+#include <QCameraInfo>
+#include <QDir>
 #include <QFileInfo>
 #include <QPointer>
 #include <QPushButton>
@@ -12,6 +14,8 @@
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QStackedWidget>
+#include <QTemporaryDir>
+#include <QTimer>
 #include <QWidget>
 #include <QtTest>
 
@@ -26,6 +30,7 @@
 #include "MaiChatTools/DesktopMediaTools.h"
 #include "MaiTool.h"
 #include "ui/MaiFfplayVideoDialog.h"
+#include "ui/DesktopCameraDialog.h"
 #include "ui/MainWindow.h"
 #include "app/RemoteIMApplication.h"
 #include "im/FakeRemoteIMClient.h"
@@ -61,6 +66,9 @@ private slots:
     void opensControlsAndClosesVideoPopup_data();
     void opensControlsAndClosesVideoPopup();
     void opensAtRequestedSourceTime();
+    void cameraDoesNotOpenAfterAgentCancellation();
+    void cameraActivePreviewClosesOnAgentCancellation();
+    void agentCameraOpensAndClosesWithoutWaitingForShutter();
     void slowedPlaybackExtendsAudibleOutput();
     void localVideoShowsPixels();
     void mainWindowDocksSamePlayerAcrossNavigationAndFullscreen();
@@ -72,12 +80,12 @@ void MaiFfplayVideoDialogTest::opensAtRequestedSourceTime() {
     registerDesktopMediaTools(registry, &host);
     MaiTool* openTool = registry.find("maichat_play_video");
     QVERIFY(openTool != nullptr);
-    MaiTool* cameraTool = registry.find("maichat_take_photo");
+    MaiTool* cameraTool = registry.find("maichat_camera_command");
     QVERIFY(cameraTool != nullptr);
     QVERIFY(!cameraTool->requiresApproval("{}"));
     QVERIFY(!cameraTool->requiresPerCallApproval("{}"));
     MaiToolContext emptyContext;
-    QVERIFY(cameraTool->execute("{}", emptyContext).hasError());
+    QVERIFY(cameraTool->execute(R"({"action":"open"})", emptyContext).hasError());
     MaiTool* musicTool = registry.find("maichat_play_local_music");
     QVERIFY(musicTool != nullptr);
     QVERIFY(!musicTool->requiresApproval("{}"));
@@ -113,6 +121,100 @@ void MaiFfplayVideoDialogTest::opensAtRequestedSourceTime() {
     QVERIFY2(firstPosition >= 500'000, "playback started before the requested source time");
     dialog->close();
     QTRY_VERIFY(dialog.isNull());
+}
+
+void MaiFfplayVideoDialogTest::cameraDoesNotOpenAfterAgentCancellation() {
+    QWidget host;
+    MaiToolRegistry registry;
+    registerDesktopMediaTools(registry, &host);
+    MaiTool* camera = registry.find("maichat_camera_command");
+    QVERIFY(camera != nullptr);
+    std::atomic<bool> canceled{true};
+    MaiToolContext context;
+    context.sessionId = "ses_camera_test";
+    context.cancel = &canceled;
+    const MaiToolResult result = camera->execute(R"({"action":"open"})", context);
+    QCOMPARE(result.error().code(), MaiErrorCode::Canceled);
+    QString error;
+    QCOMPARE(DesktopCameraDialog::capturePhoto(nullptr, QDir::tempPath(), &error, &canceled),
+             QString());
+    QVERIFY(error.isEmpty());
+}
+
+void MaiFfplayVideoDialogTest::agentCameraOpensAndClosesWithoutWaitingForShutter() {
+    if (qEnvironmentVariable("MAICHAT_TEST_REAL_CAMERA_CANCEL") != QStringLiteral("1"))
+        QSKIP("Real camera test must be explicitly enabled");
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen"))
+        QSKIP("Qt camera preview requires the normal desktop platform plugin");
+    if (QCameraInfo::availableCameras().isEmpty()) QSKIP("No camera is connected");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QWidget host;
+    host.show();
+    MaiToolRegistry registry;
+    registerDesktopMediaTools(registry, &host);
+    MaiTool* camera = registry.find("maichat_camera_command");
+    QVERIFY(camera != nullptr);
+    MaiToolContext context;
+    context.sessionId = "ses_camera_test";
+    context.root = directory.path().toStdString();
+    const MaiToolResult closed = camera->execute(R"({"action":"status"})", context);
+    QVERIFY(!closed.hasError());
+    QVERIFY(QString::fromStdString(closed.output()).contains(QStringLiteral("closed")));
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const MaiToolResult opened = camera->execute(R"({"action":"open"})", context);
+    QVERIFY(!opened.hasError());
+    QVERIFY(elapsed.elapsed() < 2000);
+    QVERIFY(DesktopCameraDialog::isPreviewOpen(&host, QStringLiteral("ses_camera_test")));
+    auto* preview = host.findChild<QDialog*>(QStringLiteral("desktopCameraDialog"));
+    QVERIFY(preview != nullptr);
+    auto* shutter = preview->findChild<QPushButton*>(QStringLiteral("desktopCameraShutter"));
+    QVERIFY(shutter != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(shutter->isEnabled(), 7000);
+    if (qEnvironmentVariableIsSet("MAICHAT_CAMERA_SCREENSHOT")) {
+        const QPixmap picture = preview->grab();
+        QVERIFY(!picture.isNull());
+        QVERIFY(picture.save(qEnvironmentVariable("MAICHAT_CAMERA_SCREENSHOT")));
+    }
+    MaiToolContext other = context;
+    other.sessionId = "ses_other";
+    QVERIFY(camera->execute(R"({"action":"open"})", other).hasError());
+    QVERIFY(!camera->execute(R"({"action":"close"})", other).hasError());
+    QVERIFY(DesktopCameraDialog::isPreviewOpen(&host, QStringLiteral("ses_camera_test")));
+    const MaiToolResult result = camera->execute(R"({"action":"close"})", context);
+    QVERIFY(!result.hasError());
+    const MaiToolResult reopened = camera->execute(R"({"action":"open"})", context);
+    QVERIFY(!reopened.hasError());
+    QCoreApplication::processEvents();
+    QVERIFY(DesktopCameraDialog::isPreviewOpen(&host, QStringLiteral("ses_camera_test")));
+    QVERIFY(!camera->execute(R"({"action":"close"})", context).hasError());
+    QTRY_VERIFY_WITH_TIMEOUT(!DesktopCameraDialog::isPreviewOpen(
+        &host, QStringLiteral("ses_camera_test")), 3000);
+    QVERIFY(QDir(directory.path()).entryList(QStringList{QStringLiteral("*.jpg")},
+        QDir::Files).isEmpty());
+}
+
+void MaiFfplayVideoDialogTest::cameraActivePreviewClosesOnAgentCancellation() {
+    if (qEnvironmentVariable("MAICHAT_TEST_REAL_CAMERA_CANCEL") != QStringLiteral("1"))
+        QSKIP("Real camera test must be explicitly enabled");
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("offscreen"))
+        QSKIP("Qt camera preview requires the normal desktop platform plugin");
+    if (QCameraInfo::availableCameras().isEmpty()) QSKIP("No camera is connected");
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    std::atomic<bool> canceled{false};
+    QTimer::singleShot(1200, [&] { canceled.store(true, std::memory_order_relaxed); });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QString error;
+    const QString photo = DesktopCameraDialog::capturePhoto(
+        nullptr, directory.path(), &error, &canceled);
+    QVERIFY(photo.isEmpty());
+    QVERIFY(error.isEmpty());
+    QVERIFY(elapsed.elapsed() < 5000);
+    QVERIFY(QDir(directory.path()).entryList(QStringList{QStringLiteral("*.jpg")},
+        QDir::Files).isEmpty());
 }
 
 void MaiFfplayVideoDialogTest::mainWindowDocksSamePlayerAcrossNavigationAndFullscreen() {

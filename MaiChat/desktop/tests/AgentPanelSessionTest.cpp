@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
@@ -35,6 +36,8 @@
 
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
+#include "agent/AgentSessionList.h"
+#include "agent/DesktopSessionSyncHost.h"
 #include "markdown/MarkdownView.h"
 #include "ui/ComposerTextEdit.h"
 #include "ui/UiZoom.h"
@@ -270,7 +273,11 @@ private slots:
     void newSessionAvoidsFilesystemRoot();
     void newSessionUsesAppWorkspaceInsteadOfProcessDirectory();
     void newSessionOffersWorkspaceChoice();
-    void chosenWorkspaceCreatesIndependentSession();
+    void chosenWorkspaceKeepsCurrentSession();
+    void explicitNewSessionUsesChosenDirectory();
+    void chosenWorkspaceRejectsBusySession();
+    void sessionToolEventsRefreshListAndRecoverDeletedSelection();
+    void localSessionMenuOffersDelete();
     void answerFromAnotherSessionDoesNotLeakIn();
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
@@ -302,6 +309,8 @@ private slots:
     void videoArtifactUsesCompactPlayBadge();
     void audioArtifactUsesCompactPlaybackCard();
     void quotedMessageIsSentAndShownInTheComposer();
+    void remotePromptAppearsInOpenOwnerSession();
+    void localPromptKeepsOneBubbleAfterUserMessageEvent();
 };
 
 namespace {
@@ -350,6 +359,67 @@ struct Harness {
 };
 
 }  // namespace
+
+void AgentPanelSessionTest::remotePromptAppearsInOpenOwnerSession() {
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    const QString sessionId = controller.createSession(QDir::currentPath());
+    panel.openSession(sessionId);
+    auto* view = panel.findChild<MarkdownView*>();
+    QVERIFY(view != nullptr);
+
+    // Same entry point used when an iPhone sends into a Mac-owned Session.
+    DesktopSessionSyncHost host(controller);
+    const QJsonObject result = host.applyCommand(sessionId,
+        {{QStringLiteral("action"), QStringLiteral("prompt")},
+         {QStringLiteral("text"), QStringLiteral("你好")}});
+    QVERIFY(result.value(QStringLiteral("ok")).toBool());
+    const QString userId = result.value(QStringLiteral("user_message_id")).toString();
+    QVERIFY(!userId.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(view->contains(userId), 3000);
+    view->selectAll();
+    QCOMPARE(view->selectedText().count(QStringLiteral("你好")), 1);
+    view->clearSelection();
+    const QString capturePath = qEnvironmentVariable("MAICHAT_REMOTE_USER_CAPTURE");
+    if (!capturePath.isEmpty()) QVERIFY(panel.grab().save(capturePath));
+}
+
+void AgentPanelSessionTest::localPromptKeepsOneBubbleAfterUserMessageEvent() {
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.resize(700, 500);
+    panel.show();
+    const QString sessionId = controller.createSession(QDir::currentPath());
+    panel.openSession(sessionId);
+    auto* editor = panel.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("agentSendButton"));
+    auto* view = panel.findChild<MarkdownView*>();
+    QVERIFY(editor != nullptr && send != nullptr && view != nullptr);
+    editor->setPlainText(QStringLiteral("本机消息"));
+    send->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.agent().isBusy(sessionId.toStdString()), 3000);
+    const auto messages = controller.agent().listMessagesPage(sessionId.toStdString(), "", 2);
+    QCOMPARE(messages.size(), std::size_t(2));
+    const QString userId = QString::fromStdString(messages.back().id);
+    QCOMPARE(messages.back().role, MaiRole::User);
+    QTRY_VERIFY_WITH_TIMEOUT(view->contains(userId), 3000);
+    QCoreApplication::processEvents(); // Deliver queued MessageUpdated after the local button path.
+    QVERIFY(view->contains(userId + QStringLiteral("-quote-action")));
+    QVERIFY(!view->contains(QStringLiteral("local-1")));
+    view->selectAll();
+    QCOMPARE(view->selectedText().count(QStringLiteral("本机消息")), 1);
+    view->clearSelection();
+
+    const QString otherSession = controller.createSession(QDir::currentPath());
+    panel.openSession(otherSession);
+    panel.openSession(sessionId);
+    QVERIFY(view->contains(userId));
+    view->selectAll();
+    QCOMPARE(view->selectedText().count(QStringLiteral("本机消息")), 1);
+    view->clearSelection();
+}
 
 void AgentPanelSessionTest::completedPdfToolShowsPreviewCardAfterRestore() {
     QTemporaryDir workspace;
@@ -634,7 +704,8 @@ void AgentPanelSessionTest::answerFromAnotherSessionDoesNotLeakIn() {
 
 void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
     Harness harness;
-    harness.panel->setModelLabel(QStringLiteral("glm-5.3"));
+    harness.panel->setModelLabel(QStringLiteral("deepseek-flash"));
+    harness.panel->setReasoningEffortLabel(QStringLiteral("high"));
     QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
     QPushButton* chip = harness.panel->findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QPushButton* policy = harness.panel->findChild<QPushButton*>(QStringLiteral("agentApprovalPolicy"));
@@ -648,7 +719,7 @@ void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
     QTest::mouseClick(more, Qt::LeftButton);
     auto* actions = harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel"));
     QVERIFY(actions && actions->isVisible());
-    auto* modelSection = actions->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
+    auto* modelSection = actions->findChild<QPushButton*>(QStringLiteral("agentEffortSection"));
     QVERIFY(modelSection);
     QTest::mouseClick(modelSection, Qt::LeftButton);
     const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_UI_CAPTURE");
@@ -657,12 +728,12 @@ void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
         QVERIFY(actions->grab().save(capturePath + QStringLiteral(".popup.png")));
     }
     auto* option = actions->findChild<QPushButton*>(
-        QStringLiteral("agentModelOption-glm-5.3-flash"));
+        QStringLiteral("agentEffortOption-max"));
     QVERIFY(option && option->isVisible());
-    QSignalSpy selected(harness.panel.get(), &AgentChatPanel::modelChangeRequested);
+    QSignalSpy selected(harness.panel.get(), &AgentChatPanel::reasoningEffortChangeRequested);
     QTest::mouseClick(option, Qt::LeftButton);
     QCOMPARE(selected.count(), 1);
-    QCOMPARE(selected.first().first().toString(), QStringLiteral("glm-5.3-flash"));
+    QCOMPARE(selected.first().first().toString(), QStringLiteral("max"));
     MaiSession session;
     QVERIFY(harness.controller->agent().getSession(harness.mine.toStdString(), session));
     QVERIFY(session.model.empty());
@@ -790,12 +861,12 @@ void AgentPanelSessionTest::newSessionOffersWorkspaceChoice() {
     QVERIFY(!workspace->text().startsWith(QStringLiteral("工作目录 ·")));
     QCOMPARE(openWorkspace->accessibleName(), QStringLiteral("打开当前工作目录"));
     QVERIFY(openWorkspace->width() < workspace->width());
-    auto* modelSection = actionPanel->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
+    auto* modelSection = actionPanel->findChild<QPushButton*>(QStringLiteral("agentEffortSection"));
     QVERIFY(modelSection != nullptr);
-    QVERIFY(modelSection->accessibleName().startsWith(QStringLiteral("模型：")));
+    QVERIFY(modelSection->accessibleName().startsWith(QStringLiteral("思考强度：")));
 }
 
-void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {
+void AgentPanelSessionTest::chosenWorkspaceKeepsCurrentSession() {
     QTemporaryDir firstDirectory;
     QTemporaryDir secondDirectory;
     QVERIFY(firstDirectory.isValid());
@@ -806,11 +877,43 @@ void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {
     panel.openSessionInDirectory(firstDirectory.path());
     const QString firstSession = panel.sessionId();
     QVERIFY(!firstSession.isEmpty());
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QVERIFY(controller.sendPrompt(firstSession, QStringLiteral("Keep this conversation")));
+    QVERIFY(finished.wait(15000));
+    const auto before = controller.agent().listMessages(firstSession.toStdString());
+    QVERIFY(!before.empty());
+    auto* editor = panel.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
+    QVERIFY(editor != nullptr);
+    editor->setPlainText(QStringLiteral("Keep the unsent draft"));
     panel.openSessionInDirectory(secondDirectory.path());
+    const QString secondSession = panel.sessionId();
+    QCOMPARE(secondSession, firstSession);
+    QCOMPARE(editor->toPlainText(), QStringLiteral("Keep the unsent draft"));
+    QCOMPARE(controller.agent().listSessions().size(), std::size_t(1));
+    QCOMPARE(controller.agent().listMessages(firstSession.toStdString()).size(), before.size());
+
+    MaiSession current;
+    QVERIFY(controller.agent().getSession(firstSession.toStdString(), current));
+    QCOMPARE(QDir(QString::fromStdString(current.directory)).canonicalPath(),
+             QDir(secondDirectory.path()).canonicalPath());
+}
+
+void AgentPanelSessionTest::explicitNewSessionUsesChosenDirectory() {
+    QTemporaryDir firstDirectory;
+    QTemporaryDir secondDirectory;
+    QVERIFY(firstDirectory.isValid());
+    QVERIFY(secondDirectory.isValid());
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    panel.openSessionInDirectory(firstDirectory.path());
+    const QString firstSession = panel.sessionId();
+    QVERIFY(!firstSession.isEmpty());
+
+    panel.openNewSessionInDirectory(secondDirectory.path());
     const QString secondSession = panel.sessionId();
     QVERIFY(!secondSession.isEmpty());
     QVERIFY(secondSession != firstSession);
-
+    QCOMPARE(controller.agent().listSessions().size(), std::size_t(2));
     MaiSession first;
     MaiSession second;
     QVERIFY(controller.agent().getSession(firstSession.toStdString(), first));
@@ -819,6 +922,96 @@ void AgentPanelSessionTest::chosenWorkspaceCreatesIndependentSession() {
              QDir(firstDirectory.path()).canonicalPath());
     QCOMPARE(QDir(QString::fromStdString(second.directory)).canonicalPath(),
              QDir(secondDirectory.path()).canonicalPath());
+}
+
+void AgentPanelSessionTest::chosenWorkspaceRejectsBusySession() {
+    QTemporaryDir firstDirectory;
+    QTemporaryDir secondDirectory;
+    QVERIFY(firstDirectory.isValid());
+    QVERIFY(secondDirectory.isValid());
+    auto model = std::make_unique<DelayedFirstChunkModel>(false);
+    auto* delayed = model.get();
+    AgentController controller(std::move(model), QString());
+    AgentChatPanel panel(controller);
+    panel.openSessionInDirectory(firstDirectory.path());
+    const QString sessionId = panel.sessionId();
+    QVERIFY(controller.sendPrompt(sessionId, QStringLiteral("Keep the current workspace")));
+    QTRY_VERIFY(delayed->entered());
+
+    panel.openSessionInDirectory(secondDirectory.path());
+    QCOMPARE(panel.sessionId(), sessionId);
+    QCOMPARE(controller.agent().listSessions().size(), std::size_t(1));
+    MaiSession current;
+    QVERIFY(controller.agent().getSession(sessionId.toStdString(), current));
+    QCOMPARE(QDir(QString::fromStdString(current.directory)).canonicalPath(),
+             QDir(firstDirectory.path()).canonicalPath());
+    delayed->release();
+}
+
+void AgentPanelSessionTest::sessionToolEventsRefreshListAndRecoverDeletedSelection() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    AgentChatPanel panel(controller);
+    const QString current = controller.createSession(directory.path());
+    panel.openSession(current);
+    QSignalSpy changed(&panel, &AgentChatPanel::sessionListChanged);
+
+    const auto created = controller.agent().submit(
+        MaiCreateSession{directory.path().toStdString(), "Another topic", ""});
+    QVERIFY(created);
+    QTRY_VERIFY(changed.count() >= 1);
+    QCOMPARE(panel.sessionId(), current);
+
+    QVERIFY(controller.agent().submit(MaiDeleteSession{created.value()}));
+    QTRY_VERIFY(changed.count() >= 2);
+    QCOMPARE(panel.sessionId(), current);
+
+    QVERIFY(controller.agent().submit(MaiDeleteSession{current.toStdString()}));
+    QTRY_VERIFY(panel.sessionId() != current);
+    QVERIFY(!panel.sessionId().isEmpty());
+    QCOMPARE(controller.agent().listSessions().size(), std::size_t(1));
+}
+
+void AgentPanelSessionTest::localSessionMenuOffersDelete() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AgentController controller(std::make_unique<SilentModel>(), QString());
+    const QString sessionId = controller.createSession(directory.path(), QStringLiteral("测试对话"));
+    QVERIFY(!sessionId.isEmpty());
+    const QString anotherId = controller.createSession(directory.path(), QStringLiteral("另一段对话"));
+    QVERIFY(!anotherId.isEmpty());
+    AgentSessionList list(controller);
+    list.resize(330, 480);
+    list.show();
+    list.refresh();
+    list.setCurrent(sessionId);
+    auto* rows = list.findChild<QListWidget*>();
+    QVERIFY(rows != nullptr);
+    QListWidgetItem* sessionRow = nullptr;
+    for (int index = 0; index < rows->count(); ++index) {
+        if (rows->item(index)->data(Qt::UserRole).toString() == anotherId)
+            sessionRow = rows->item(index);
+    }
+    QVERIFY(sessionRow != nullptr);
+    if (qEnvironmentVariableIsSet("MAICHAT_SESSION_LIST_SCREENSHOT"))
+        QVERIFY(list.grab().save(qEnvironmentVariable("MAICHAT_SESSION_LIST_SCREENSHOT")));
+    const QRect row = rows->visualItemRect(sessionRow);
+    QSignalSpy requested(&list, &AgentSessionList::deleteSessionRequested);
+    QSignalSpy selected(&list, &AgentSessionList::selected);
+    QTest::mouseClick(rows->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      QPoint(row.right() - UiZoom::s(24), row.center().y()));
+    auto* menu = list.findChild<QMenu*>(QStringLiteral("agentSessionMenu"));
+    QTRY_VERIFY(menu != nullptr && menu->isVisible());
+    if (qEnvironmentVariableIsSet("MAICHAT_SESSION_MENU_SCREENSHOT"))
+        QVERIFY(menu->grab().save(qEnvironmentVariable("MAICHAT_SESSION_MENU_SCREENSHOT")));
+    QCOMPARE(menu->actions().size(), 1);
+    QCOMPARE(menu->actions().first()->text(), QStringLiteral("删除对话"));
+    menu->actions().first()->trigger();
+    QCOMPARE(requested.size(), 1);
+    QCOMPARE(requested.takeFirst().at(0).toString(), anotherId);
+    QCOMPARE(selected.size(), 0);
+    menu->close();
 }
 
 // 待审批操作切换会话后仍需绑定原会话；返回时显示原请求而非重新发起操作。
@@ -1371,7 +1564,7 @@ void AgentPanelSessionTest::composerMatchesImLayoutAndUsesEmbeddedSendAction() {
     QVERIFY(!policy->isVisible());
     auto* actions = harness.panel->findChild<QWidget*>(QStringLiteral("agentActionPanel"));
     QVERIFY(actions != nullptr);
-    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentModelSection")) != nullptr);
+    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentEffortSection")) != nullptr);
     QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentPolicySection")) != nullptr);
     QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentClearConversation")) != nullptr);
     QVERIFY(policy->menu() != nullptr);

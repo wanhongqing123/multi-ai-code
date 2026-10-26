@@ -99,6 +99,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ANDROID)
   set(OPENSSL_INCLUDE_DIR "${mai_openssl_build}/include" CACHE PATH "" FORCE)
 endif()
 add_subdirectory(../../MaiAgent maiagent EXCLUDE_FROM_ALL)
+add_subdirectory(../Network mai_network EXCLUDE_FROM_ALL)
 if(TARGET maichat_openssl_build)
   add_dependencies(maiagent maichat_openssl_build)
   add_dependencies(libcurl_static maichat_openssl_build)
@@ -241,6 +242,8 @@ add_library(maichat_mobile STATIC
   ../Media/MaiVideoColorParameters.cpp
   ../Media/MaiImageDecode.cpp
   ../Media/MaiImageEncode.cpp
+  ../Media/MaiVideoCircleMark.cpp
+  ../MaiChatTools/MaiCloudDriveTools.cpp
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
 if(ANDROID)
@@ -253,14 +256,15 @@ endif()
 add_dependencies(maichat_mobile maichat_ffmpeg_build)
 target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/include")
 target_include_directories(maichat_mobile PRIVATE
-  "${ffmpeg_source}/fftools")
+  "${ffmpeg_source}/fftools" ../../MaiAgent/include)
 target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media ../SessionSync
   PRIVATE ../../MaiAgent/third_party/nlohmann
     ../../MaiAgent/third_party/websocketpp
     ../../MaiAgent/third_party/asio/asio/include
     ${MAI_OPENSSL_INCLUDE_DIR})
 target_compile_definitions(maichat_mobile PRIVATE ASIO_STANDALONE _WEBSOCKETPP_CPP11_STRICT_)
-target_link_libraries(maichat_mobile PRIVATE maiagent
+target_link_libraries(maichat_mobile PRIVATE maiagent mai_curl_download mai_video_circle_client
+  mai_cloud_drive_client
   ${MAI_OPENSSL_SSL_TARGET} ${MAI_OPENSSL_CRYPTO_TARGET}
   maiagent_cv_video_analysis
   maichat_ffmpeg_tools
@@ -276,6 +280,7 @@ endif()
 if(ANDROID)
   target_link_libraries(maichat_mobile PRIVATE camera2ndk mediandk)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  target_compile_definitions(maichat_mobile PRIVATE MAICHAT_MOBILE_IOS=1)
   target_link_libraries(maichat_mobile PRIVATE
     "-framework CoreMedia" "-framework CoreVideo" "-framework VideoToolbox")
 endif()

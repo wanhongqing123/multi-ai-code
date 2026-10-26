@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { purgeAccountAssets } = require('./purge-account-assets');
+const { purgeAccountAssets, main } = require('./purge-account-assets');
 
 test('account asset purge only touches keys below the exact owner prefix', async () => {
   const deleted = [];
@@ -39,4 +39,61 @@ test('circle objects are included only by an explicit account cleanup option', a
   const circle = await purgeAccountAssets(client, 'test_account', true, true);
   assert.equal(circle.object_counts['video-circle'], 1);
   assert.deepEqual(deleted, ['video-circle/test_account/2026-10-22/clip.mp4']);
+});
+
+test('private cloud purge includes exact owner objects and incomplete multipart uploads', async () => {
+  const deleted = [];
+  const aborted = [];
+  const key = 'cloud-drive/test_account/2026-10-24/video.mov';
+  const client = {
+    async list(options) {
+      assert.notEqual(options.prefix,'cloud-drive/test_account/');
+      return { objects:[] };
+    },
+    async deleteMulti() { throw new Error('Media bucket must not delete cloud data'); }
+  };
+  const cloudClient = {
+    async list(options) {
+      return { objects: options.prefix === 'cloud-drive/test_account/' ?
+        [{ name:key }] : [] };
+    },
+    async listUploads(options) {
+      assert.equal(options.prefix,'cloud-drive/test_account/');
+      return { uploads:[{ name:key,uploadId:'upload_123' }],isTruncated:false };
+    },
+    async deleteMulti(keys) { deleted.push(...keys); },
+    async abortMultipartUpload(name,id) { aborted.push([name,id]); }
+  };
+  const defaultResult = await purgeAccountAssets(client,'test_account',true);
+  assert.equal(defaultResult.object_counts['cloud-drive'],undefined);
+  const preview = await purgeAccountAssets(client,'test_account',false,false,cloudClient);
+  assert.equal(preview.object_counts['cloud-drive'],1);
+  assert.equal(preview.multipart_upload_counts['cloud-drive'],1);
+  assert.deepEqual(aborted,[]);
+  const executed = await purgeAccountAssets(client,'test_account',true,false,cloudClient);
+  assert.equal(executed.object_counts['cloud-drive'],1);
+  assert.deepEqual(deleted,[key]);
+  assert.deepEqual(aborted,[[key,'upload_123']]);
+  await assert.rejects(purgeAccountAssets(client,
+    'test_account',false,false,{
+    list:async () => ({ objects:[] }),
+    listUploads:async () => ({ uploads:[{ name:'cloud-drive/other_user/file.mp4',
+      uploadId:'upload_999' }],isTruncated:false })
+  }),/outside the account prefix/);
+});
+
+test('cloud purge command requires separate bucket and credentials', async () => {
+  const media = { MAICHAT_OSS_BUCKET:'media-bucket',
+    MAICHAT_OSS_REGION:'oss-cn-guangzhou',
+    ALIBABA_CLOUD_ACCESS_KEY_ID:'media-id',
+    ALIBABA_CLOUD_ACCESS_KEY_SECRET:'media-secret' };
+  await assert.rejects(main(['--include-cloud-drive','test_account'],media),
+    /with OSS credentials/);
+  await assert.rejects(main(['--include-cloud-drive','test_account'],{
+    ...media,
+    MAICHAT_CLOUD_DRIVE_OSS_BUCKET:'media-bucket',
+    MAICHAT_CLOUD_DRIVE_OSS_REGION:'oss-cn-guangzhou',
+    MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_ID:'cloud-id',
+    MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_SECRET:'cloud-secret'
+  }),/with OSS credentials/);
 });

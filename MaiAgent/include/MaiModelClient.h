@@ -112,6 +112,10 @@ struct MaiToolSpec {
 struct MaiModelRequest {
     // 模型名。会话上配了就用会话的，否则用 MaiAgent::Options::defaultModel。
     std::string model;
+    // Empty uses the provider default. DeepSeek accepts low, high, or max.
+    // Wire clients omit unsupported values rather than sending invalid API parameters;
+    // this value affects this request only and never changes stored conversation state.
+    std::string reasoningEffort;
     // 模型的基础指令。它独立于历史：Chat Completions 在线协议边界转成首条 system 消息，
     // Responses 实现应直接映射到顶层 instructions 字段。
     std::string baseInstructions;

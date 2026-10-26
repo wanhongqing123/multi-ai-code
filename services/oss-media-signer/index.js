@@ -26,6 +26,8 @@ const UPLOAD_TTL_SECONDS = 15 * 60;
 const READ_TTL_SECONDS = 24 * 60 * 60;
 const AVATAR_READ_TTL_SECONDS = 5 * 60;
 const CIRCLE_READ_TTL_SECONDS = 60;
+const CLOUD_READ_TTL_SECONDS = 60;
+const CLOUD_PART_TTL_SECONDS = 5 * 60;
 const MAX_AVATAR_BYTES = 2_000_000;
 const UPLOAD_PURPOSES = Object.freeze({
   ark_asset_input: Object.freeze({ prefix: 'ark-asset-inputs', types: ['image', 'video'] }),
@@ -69,10 +71,10 @@ function headerValue(headers, name) {
   return typeof entry?.[1] === 'string' ? entry[1] : '';
 }
 
-function requestBody(event) {
+function requestBody(event, maxBytes = 4096) {
   let body = event.body || '';
   if (event.isBase64Encoded) body = Buffer.from(body, 'base64').toString('utf8');
-  if (typeof body !== 'string' || Buffer.byteLength(body) > 4096) return null;
+  if (typeof body !== 'string' || Buffer.byteLength(body) > maxBytes) return null;
   try { return JSON.parse(body); } catch { return null; }
 }
 
@@ -104,6 +106,7 @@ function createHandler(options = {}) {
     } catch { return false; }
   });
   let client;
+  let cloudClient;
 
   function storageClient() {
     if (!client) client = makeClient({
@@ -117,6 +120,18 @@ function createHandler(options = {}) {
     return client;
   }
 
+  function cloudStorageClient() {
+    if (!cloudClient) cloudClient = makeClient({
+      accessKeyId: env.MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_ID,
+      accessKeySecret: env.MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_SECRET,
+      bucket: env.MAICHAT_CLOUD_DRIVE_OSS_BUCKET,
+      region: env.MAICHAT_CLOUD_DRIVE_OSS_REGION,
+      authorizationV4: true,
+      secure: true
+    });
+    return cloudClient;
+  }
+
   function validCircleKey(key, accountId = '') {
     return typeof key === 'string' &&
       /^video-circle\/[a-z][a-z0-9_-]{2,31}\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.mp4$/.test(key) &&
@@ -128,6 +143,38 @@ function createHandler(options = {}) {
     const supplied = headerValue(headers, 'x-maichat-video-circle-key');
     return expected.length >= 32 && supplied.length === expected.length &&
       timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  }
+
+  function validCloudKey(key, accountId = '') {
+    return typeof key === 'string' &&
+      /^cloud-drive\/[a-z][a-z0-9_-]{2,31}\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.(mp4|mov|jpg|jpeg|png|webp|heic)$/.test(key) &&
+      (!accountId || key.startsWith(`cloud-drive/${accountId}/`));
+  }
+
+  function cloudContentType(key) {
+    if (typeof key !== 'string') return null;
+    if (key.endsWith('.mov')) return 'video/quicktime';
+    if (key.endsWith('.mp4')) return 'video/mp4';
+    if (key.endsWith('.jpg') || key.endsWith('.jpeg')) return 'image/jpeg';
+    if (key.endsWith('.png')) return 'image/png';
+    if (key.endsWith('.webp')) return 'image/webp';
+    if (key.endsWith('.heic')) return 'image/heic';
+    return null;
+  }
+
+  function internalCloudRequest(headers) {
+    const expected = env.MAICHAT_CLOUD_DRIVE_INTERNAL_KEY || '';
+    const supplied = headerValue(headers, 'x-maichat-cloud-drive-key');
+    return expected.length >= 32 && supplied.length === expected.length &&
+      timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  }
+
+  function validCloudUploadId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_+\/=-]{1,512}$/.test(value);
+  }
+
+  function cloudPartNumber(value) {
+    return Number.isInteger(value) && value >= 1 && value <= 10000;
   }
 
   return async function handle(eventInput) {
@@ -180,6 +227,207 @@ function createHandler(options = {}) {
         return jsonResponse(200, { deleted: true });
       } catch {
         return jsonResponse(502, { error: 'Circle storage operation failed' });
+      }
+    }
+    const cloudAction = ['/cloud-drive/init', '/cloud-drive/sign-part',
+      '/cloud-drive/list-parts', '/cloud-drive/list-uploads',
+      '/cloud-drive/complete', '/cloud-drive/abort',
+      '/cloud-drive/verify', '/cloud-drive/read', '/cloud-drive/thumbnail',
+      '/cloud-drive/delete']
+      .find(suffix => route === suffix);
+    if (cloudAction) {
+      if (method !== 'POST' || env.MAICHAT_CLOUD_DRIVE_ENABLED !== '1')
+        return jsonResponse(404, { error: 'Not found' });
+      if (!internalCloudRequest(event.headers))
+        return jsonResponse(403, { error: 'Internal authorization required' });
+      const body = requestBody(event,32768);
+      const key = body?.object_key;
+      const accountId = body?.account_id;
+      const type = cloudContentType(key);
+      if (!/^[a-z][a-z0-9_-]{2,31}$/.test(accountId || '') ||
+          !validCloudKey(key,accountId) ||
+          ((cloudAction === '/cloud-drive/init' ||
+            cloudAction === '/cloud-drive/verify') && body.content_type !== type) ||
+          (cloudAction === '/cloud-drive/verify' &&
+            (!Number.isSafeInteger(body.expected_bytes) || body.expected_bytes < 1 ||
+              body.expected_bytes > (type?.startsWith('image/') ? 20_000_000 : 2_000_000_000))) ||
+          (['/cloud-drive/sign-part','/cloud-drive/list-parts',
+            '/cloud-drive/complete','/cloud-drive/abort'].includes(cloudAction) &&
+            !validCloudUploadId(body.upload_id)))
+        return jsonResponse(400, { error: 'Invalid private video object' });
+      const bucket = env.MAICHAT_CLOUD_DRIVE_OSS_BUCKET || '';
+      const region = env.MAICHAT_CLOUD_DRIVE_OSS_REGION || '';
+      if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) ||
+          bucket === env.MAICHAT_OSS_BUCKET ||
+          !/^oss-[a-z0-9-]+$/.test(region) ||
+          !env.MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_ID ||
+          !env.MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_SECRET)
+        return jsonResponse(503, { error: 'Cloud storage signer is not configured' });
+      try {
+        const storage = cloudStorageClient();
+        if (cloudAction === '/cloud-drive/init') {
+          const response = await storage.initMultipartUpload(key, {
+            mime:type, headers: { 'x-oss-object-acl':'private',
+              'x-oss-forbid-overwrite':'true' } });
+          if (!validCloudUploadId(response?.uploadId))
+            throw new Error('OSS returned an invalid upload ID');
+          return jsonResponse(200,{ upload_id:response.uploadId });
+        }
+        if (cloudAction === '/cloud-drive/sign-part') {
+          const number = body.part_number;
+          const bytes = body.expected_bytes;
+          const md5 = body.content_md5_base64;
+          if (!cloudPartNumber(number) || !Number.isSafeInteger(bytes) ||
+              bytes < 1 || bytes > 8*1024*1024 ||
+              typeof md5 !== 'string' || !/^[A-Za-z0-9+/]{22}==$/.test(md5) ||
+              Buffer.from(md5,'base64').length !== 16)
+            return jsonResponse(400,{ error:'Invalid upload part' });
+          const headers = { 'Content-Length':String(bytes), 'Content-MD5':md5 };
+          const url = await storage.signatureUrlV4('PUT',CLOUD_PART_TTL_SECONDS,
+            { headers, queries:{ partNumber:number, uploadId:body.upload_id } },
+            key,['content-length']);
+          if (typeof url !== 'string' || !url.startsWith('https://'))
+            throw new Error('OSS returned an invalid part URL');
+          return jsonResponse(200,{ upload_url:url,upload_headers:headers });
+        }
+        if (cloudAction === '/cloud-drive/list-parts') {
+          const parts = [];
+          let marker = 0;
+          do {
+            const page = await storage.listParts(key,body.upload_id,
+              { 'max-parts':1000,'part-number-marker':marker });
+            // ali-oss returns the parsed XML Part node directly. A single
+            // Part is an object; multiple Parts are an array.
+            const pageParts = Array.isArray(page.parts) ? page.parts
+              : page.parts ? [page.parts] : [];
+            for (const part of pageParts) {
+              const number = Number(part.PartNumber ?? part.partNumber);
+              const bytes = Number(part.Size ?? part.size);
+              const etag = part.ETag ?? part.etag;
+              if (!cloudPartNumber(number) || !Number.isSafeInteger(bytes) ||
+                  bytes < 1 || typeof etag !== 'string' || !etag)
+                throw new Error('OSS returned an invalid part');
+              parts.push({ part_number:number,size_bytes:bytes,etag });
+            }
+            if (page.isTruncated === true || page.isTruncated === 'true') {
+              const next = Number(page.nextPartNumberMarker);
+              if (!cloudPartNumber(next) || next <= marker)
+                throw new Error('OSS part pagination did not advance');
+              marker = next;
+            } else break;
+          } while (parts.length <= 10000);
+          if (parts.length > 10000) throw new Error('Too many OSS parts');
+          parts.sort((a,b) => a.part_number-b.part_number);
+          return jsonResponse(200,{ parts });
+        }
+        if (cloudAction === '/cloud-drive/list-uploads') {
+          // ListUploads is bucket scoped. The internal caller may inspect only
+          // its authenticated account's exact, validated object key.
+          const uploadIds = [];
+          const seenIds = new Set();
+          const seenMarkers = new Set();
+          let keyMarker;
+          let uploadIdMarker;
+          for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+            const query = { prefix:key,'max-uploads':1000 };
+            if (keyMarker !== undefined) {
+              query['key-marker'] = keyMarker;
+              query['upload-id-marker'] = uploadIdMarker;
+            }
+            const page = await storage.listUploads(query);
+            if (!Array.isArray(page?.uploads))
+              throw new Error('OSS returned an invalid upload list');
+            for (const upload of page.uploads) {
+              if (typeof upload?.name !== 'string' ||
+                  !upload.name.startsWith(key))
+                throw new Error('OSS returned an upload outside the requested prefix');
+              if (upload.name !== key) continue;
+              if (!validCloudUploadId(upload.uploadId) ||
+                  seenIds.has(upload.uploadId))
+                throw new Error('OSS returned an invalid or duplicate upload ID');
+              seenIds.add(upload.uploadId);
+              uploadIds.push(upload.uploadId);
+              if (uploadIds.length > 10000)
+                throw new Error('Too many exact-key OSS uploads');
+            }
+            if (page.isTruncated !== true && page.isTruncated !== false)
+              throw new Error('OSS returned an invalid pagination state');
+            if (!page.isTruncated)
+              return jsonResponse(200,{ upload_ids:uploadIds });
+            const nextKey = page.nextKeyMarker;
+            const nextId = page.nextUploadIdMarker;
+            if (typeof nextKey !== 'string' || !nextKey.startsWith(key) ||
+                typeof nextId !== 'string' || !validCloudUploadId(nextId))
+              throw new Error('OSS upload pagination did not advance');
+            const marker = `${nextKey}\u0000${nextId}`;
+            if (seenMarkers.has(marker))
+              throw new Error('OSS upload pagination repeated a marker');
+            seenMarkers.add(marker);
+            keyMarker = nextKey;
+            uploadIdMarker = nextId;
+          }
+          throw new Error('Too many OSS upload pages');
+        }
+        if (cloudAction === '/cloud-drive/complete') {
+          const parts = body.parts;
+          if (!Array.isArray(parts) || parts.length < 1 || parts.length > 10000 ||
+              parts.some((part,index) =>
+                part?.part_number !== index+1 || typeof part.etag !== 'string' ||
+                !/^\"?[A-Fa-f0-9]{32}\"?$/.test(part.etag)))
+            return jsonResponse(400,{ error:'Invalid completion parts' });
+          await storage.completeMultipartUpload(key,body.upload_id,
+            parts.map(part => ({ number:part.part_number,etag:part.etag })),
+            { headers:{ 'x-oss-forbid-overwrite':'true' } });
+          return jsonResponse(200,{ completed:true });
+        }
+        if (cloudAction === '/cloud-drive/abort') {
+          try { await storage.abortMultipartUpload(key,body.upload_id); }
+          catch (error) {
+            if (error?.status !== 404 && error?.code !== 'NoSuchUpload') throw error;
+          }
+          return jsonResponse(200,{ aborted:true });
+        }
+        if (cloudAction === '/cloud-drive/verify') {
+          let head;
+          try { head = await storage.head(key); }
+          catch (error) {
+            if (error?.status === 404 || error?.code === 'NoSuchKey')
+              return jsonResponse(200,{ exists:false });
+            throw error;
+          }
+          const headers = head?.res?.headers || head?.headers || {};
+          const bytes = Number(headers['content-length']);
+          const contentType = headers['content-type'];
+          // HEAD success means an object exists even when metadata mismatches.
+          // Cleanup must never treat an oversized or mistyped object as absent.
+          return jsonResponse(200,{ exists:true,
+            size_bytes: bytes, content_type: contentType });
+        }
+        if (cloudAction === '/cloud-drive/read') {
+          const url = await storage.signatureUrlV4('GET',CLOUD_READ_TTL_SECONDS,
+            { headers: {} },key);
+          if (typeof url !== 'string' || !url.startsWith('https://'))
+            throw new Error('Invalid signed read URL');
+          return jsonResponse(200,{ read_url:url,
+            read_expires_in:CLOUD_READ_TTL_SECONDS });
+        }
+        if (cloudAction === '/cloud-drive/thumbnail') {
+          const transform = type.startsWith('image/')
+            ? 'image/resize,m_lfit,w_320,h_320/format,jpg'
+            : 'video/snapshot,t_0,f_jpg,w_320';
+          // Processing must be in the V4 signature. Appending it to an
+          // ordinary read URL would allow signature rejection or bypass.
+          const url = await storage.signatureUrlV4('GET',CLOUD_READ_TTL_SECONDS,
+            { headers:{},queries:{ 'x-oss-process':transform } },key);
+          if (typeof url !== 'string' || !url.startsWith('https://'))
+            throw new Error('Invalid signed thumbnail URL');
+          return jsonResponse(200,{ thumbnail_url:url,
+            thumbnail_expires_in:CLOUD_READ_TTL_SECONDS });
+        }
+        await storage.delete(key);
+        return jsonResponse(200,{ deleted:true });
+      } catch {
+        return jsonResponse(502,{ error:'Cloud storage operation failed' });
       }
     }
     if (method === 'GET' && route === '/portrait-auth-callback')

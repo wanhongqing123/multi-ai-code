@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "app/RemoteIMApplication.h"
+#include "auth/DesktopVideoCircleAccess.h"
 #include "diagnostics/RemoteDiagnosticsController.h"
 #include "model/MessageNotification.h"
 #include "remote/RemoteDesktopController.h"
@@ -57,7 +58,10 @@ class QListWidgetItem;
 class QSystemTrayIcon;
 class QTimer;
 class QImage;
+class QPixmap;
 class ImagePreviewDialog;
+class VideoCircleDialog;
+class CloudDriveDialog;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -85,6 +89,7 @@ public:
     void setAccountModelKeys(QHash<QString, QString> keys, const QString& error = {});
     void setModelKeyRefreshHandler(std::function<void()> handler);
     void setMediaServiceAccessProvider(std::function<QPair<QString, QString>()> provider);
+    void setVideoCircleAccessProvider(std::function<DesktopVideoCircleAccess()> provider);
     void setFriendQrProvider(std::function<void(FriendQrCompletion)> provider);
     void setMaiChatAccountIdProvider(std::function<QString()> provider);
     void setMaiChatNicknameProvider(std::function<QString()> provider);
@@ -168,6 +173,10 @@ private:
     void showRemotePage();
     void showAgentPage();
     void rebuildAgentPage();
+    void probeVideoCircleAvailability();
+    void probeCloudDriveAvailability();
+    void openVideoCircle(const QString& completedCardJson = {}, const QString& sourcePath = {});
+    void openCloudDrive(const QString& suggestedVideo = {});
     void requestAgentModelChange(const QString& model);
     void syncNavigationSelection();
     void updateNavigationSelection(QPushButton* selectedButton);
@@ -216,7 +225,8 @@ private:
     QString composerPeerId_;
     QWidget* pendingReplyBar_ = nullptr;
     QLabel* pendingReplyLabel_ = nullptr;
-    void openImagePreview(const QString& imagePath, QWidget* source = nullptr);
+    void openImagePreview(const QString& imagePath, QWidget* source = nullptr,
+                          const QPixmap* decodedImage = nullptr);
     void openFilePreview(const RemoteIMFileAttachment& attachment);
     void openVideoPreview(const RemoteIMVideoAttachment& attachment);
     void syncVideoDock();
@@ -296,6 +306,16 @@ private:
     std::function<QString()> arkApiKeyProvider_;
     std::function<QPair<QString, QString>()> wanCredentialsProvider_;
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider_;
+    std::function<DesktopVideoCircleAccess()> videoCircleAccessProvider_;
+    VideoCircleDialog* videoCircleDialog_ = nullptr;
+    CloudDriveDialog* cloudDriveDialog_ = nullptr;
+    QWidget* cloudSettingsRow_ = nullptr;
+    QLabel* cloudSettingsValue_ = nullptr;
+    QPushButton* cloudSettingsButton_ = nullptr;
+    unsigned cloudDriveProbeGeneration_ = 0;
+    bool cloudDriveAvailable_ = false;
+    unsigned videoCircleProbeGeneration_ = 0;
+    bool videoCircleAvailable_ = false;
     std::function<void(FriendQrCompletion)> friendQrProvider_;
     std::function<QString()> maiChatAccountIdProvider_;
     std::function<QString()> maiChatNicknameProvider_;
@@ -380,6 +400,7 @@ private:
     AgentSessionList* agentSessions_ = nullptr;
     DesktopSessionSyncCoordinator* sessionSync_ = nullptr;
     QJsonArray remoteAgentSessions_;
+    QJsonArray remoteAgentDevices_;
     RemoteDesktopController* remoteDesktop_ = nullptr;
     bool remoteDesktopShutdown_ = false;
     bool remoteDesktopShutdownComplete_ = false;

@@ -13,6 +13,16 @@ bin/aicli/
 *.deb
 *.rpm
 *.blockmap
+*.apk
+*.ipa
+*.app/
+MaiChat/**/dist-*/
+**/.cache/
+**/__pycache__/
+
+# Optional upstream source trees copied by local dependency builds.
+MaiAgent/third_party/onnxruntime/onnxruntime/test/
+MaiAgent/third_party/onnxruntime/winml/test/
 
 # Generated icons (produced by scripts/build-icons.mjs)
 build/icon.png

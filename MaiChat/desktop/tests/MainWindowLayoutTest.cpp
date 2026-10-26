@@ -1,6 +1,7 @@
 // 文件作用：验证桌面端主窗口消息、视频封面和状态提示的布局行为。
 // 运行边界：由测试进程驱动实际组件或替身，不作为正式 App 的用户入口。
 #include <QAbstractButton>
+#include <QBuffer>
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -19,6 +20,8 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QPushButton>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QScrollArea>
 #include <QScreen>
 #include <QSettings>
@@ -32,14 +35,20 @@
 #include <QDir>
 #include <QDropEvent>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QImage>
+#include <QHostAddress>
 #include <QInputMethodEvent>
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include "agent/AgentChatPanel.h"
 #include "agent/AgentController.h"
+#include "agent/AgentSessionList.h"
+#include "agent/DesktopSessionSyncCoordinator.h"
 #include "markdown/MarkdownView.h"
 #include <QTextBlock>
 #include <QTextList>
@@ -109,6 +118,8 @@ private slots:
     void exposesResizableSplitters();
     void agentConversationListUsesResizableSplitter();
     void agentAccountsUseDistinctDefaultStorage();
+    void agentSessionDeletionUsesChineseProductDialog();
+    void remoteSessionLifecycleUsesProductDialogsAndOwnerRoute();
     void compactSplittersKeepDragTargets_data();
     void compactSplittersKeepDragTargets();
     void composerResizeHandleAlignsWithEditorBorder_data();
@@ -126,14 +137,18 @@ private slots:
     void contactsNavigationShowsProfileBeforeChat();
     void composerDraftAndQuoteStayWithTheirContact();
     void attachmentDraftStaysWithItsContact();
+    void sentImageDoesNotReturnAsDraftDuringConversationChange();
     void contactsCurrentSelectionDoesNotLeaveContactsPage();
     void settingsNavigationShowsAccountWithoutDiagnostics();
+    void settingsAvatarUpdatesWhenSelfProfileArrives();
+    void settingsAvatarSurvivesNetworkLossAfterRestart();
+    void settingsAvatarLoadsRealProfileUrl();
     void settingsLogoutRequiresConfirmationAndCallsHandler();
     void agentSettingsUseInlineActionsWithoutModelDialog();
-    void agentModelSwitchKeepsConversationAndRefreshesAccountKeys();
-    void agentModelSwitchBeforeFirstSessionUsesSelectedProvider();
+    void agentReasoningEffortKeepsConversation();
+    void agentReasoningEffortBeforeFirstSessionKeepsDeepSeek();
     void agentAccountKeysUpdateModelWithoutSavingSecrets();
-    void agentPartialKeysRequireExplicitModelSelection();
+    void agentDeepSeekKeyAloneConfiguresMainModel();
     void agentModelFailureRefreshesWithoutDialog();
     void agentSettingsDeletesSharedTokenFromSettings();
     void agentSettingsIgnoresLegacyTokenStoreFailure();
@@ -1500,6 +1515,171 @@ void MainWindowLayoutTest::agentAccountsUseDistinctDefaultStorage() {
     QDir(rootB).removeRecursively();
 }
 
+void MainWindowLayoutTest::agentSessionDeletionUsesChineseProductDialog() {
+    const QString owner = QStringLiteral("delete-dialog-%1")
+                              .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const QString dataRoot = QStandardPaths::writableLocation(
+        QStandardPaths::AppLocalDataLocation);
+    const QString accountHash = QString::fromLatin1(
+        QCryptographicHash::hash(owner.toUtf8(), QCryptographicHash::Sha256).toHex());
+    const QString accountRoot = QDir(dataRoot).filePath(
+        QStringLiteral("Agent/Accounts/%1").arg(accountHash));
+
+    {
+        RemoteIMApplication app(owner, std::make_unique<FakeRemoteIMClient>());
+        MainWindow window(app);
+        window.resize(1200, 800);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* navigation = window.findChild<QPushButton*>(
+            QStringLiteral("agentNavButton"));
+        auto* panel = window.findChild<AgentChatPanel*>();
+        auto* list = window.findChild<AgentSessionList*>();
+        auto* controller = window.findChild<AgentController*>();
+        QVERIFY(navigation != nullptr);
+        QVERIFY(panel != nullptr);
+        QVERIFY(list != nullptr);
+        QVERIFY(controller != nullptr);
+        navigation->click();
+        panel->openSession();
+        const QString sessionId = panel->sessionId();
+        QVERIFY(!sessionId.isEmpty());
+        MaiSession session;
+        QVERIFY(controller->agent().getSession(sessionId.toStdString(), session));
+        QVERIFY(session.isUntitled());
+
+        struct DialogState {
+            bool shown = false;
+            QString title;
+            QString body;
+            QString cancel;
+            QString deleteText;
+            bool cancelDefault = false;
+            bool nativeQuestionBox = false;
+            int buttonGap = -1;
+        } state;
+        const auto requestDelete = [&](bool confirm) {
+            state = {};
+            QTimer::singleShot(80, &window, [&] {
+                QWidget* modal = QApplication::activeModalWidget();
+                state.nativeQuestionBox = qobject_cast<QMessageBox*>(modal) != nullptr;
+                auto* dialog = qobject_cast<AppMessageDialog*>(modal);
+                if (dialog == nullptr) return;
+                state.shown = true;
+                auto* title = dialog->findChild<QLabel*>(
+                    QStringLiteral("appMessageTitle"));
+                auto* body = dialog->findChild<QLabel*>(
+                    QStringLiteral("appMessageBody"));
+                auto* cancel = dialog->findChild<QPushButton*>(
+                    QStringLiteral("appMessageCancel"));
+                auto* remove = dialog->findChild<QPushButton*>(
+                    QStringLiteral("appMessageDanger"));
+                state.title = title ? title->text() : QString();
+                state.body = body ? body->text() : QString();
+                state.cancel = cancel ? cancel->text() : QString();
+                state.deleteText = remove ? remove->text() : QString();
+                state.cancelDefault = cancel != nullptr && cancel->isDefault();
+                if (cancel != nullptr && remove != nullptr)
+                    state.buttonGap = remove->geometry().left() -
+                                      cancel->geometry().right() - 1;
+                const QString screenshot = qEnvironmentVariable(
+                    "MAICHAT_DELETE_DIALOG_SCREENSHOT");
+                if (!confirm && !screenshot.isEmpty())
+                    dialog->grab().save(screenshot);
+                if (confirm && remove) remove->click();
+                else if (cancel) cancel->click();
+                else dialog->reject();
+            });
+            return QMetaObject::invokeMethod(
+                list, "deleteSessionRequested", Qt::DirectConnection,
+                Q_ARG(QString, sessionId));
+        };
+
+        QVERIFY(requestDelete(false));
+        QVERIFY(state.shown);
+        QVERIFY(!state.nativeQuestionBox);
+        QCOMPARE(state.title, QStringLiteral("删除对话"));
+        QVERIFY(state.body.contains(QStringLiteral("新对话")));
+        QVERIFY(!state.body.contains(QStringLiteral("New session")));
+        QCOMPARE(state.cancel, QStringLiteral("取消"));
+        QCOMPARE(state.deleteText, QStringLiteral("删除"));
+        QVERIFY(state.cancelDefault);
+        QVERIFY(state.buttonGap >= UiZoom::s(8));
+        QVERIFY(controller->agent().getSession(sessionId.toStdString(), session));
+
+        QVERIFY(requestDelete(true));
+        QVERIFY(state.shown);
+        QTRY_VERIFY(!controller->agent().getSession(sessionId.toStdString(), session));
+    }
+    QDir(accountRoot).removeRecursively();
+}
+
+void MainWindowLayoutTest::remoteSessionLifecycleUsesProductDialogsAndOwnerRoute() {
+    const QString owner = QStringLiteral("remote-lifecycle-%1")
+                              .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    RemoteIMApplication app(owner, std::make_unique<FakeRemoteIMClient>());
+    MainWindow window(app);
+    window.resize(1200, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* list = window.findChild<AgentSessionList*>();
+    QVERIFY(list);
+    auto* navigation = window.findChild<QPushButton*>(QStringLiteral("agentNavButton"));
+    QVERIFY(navigation);
+    navigation->click();
+    QList<QJsonObject> sent;
+    DesktopSessionSyncCoordinator coordinator(
+        [&](const QString& path, const QByteArray&, const QJsonObject& body,
+            DesktopSessionSyncCoordinator::Completion completion) {
+            if (path == QStringLiteral("session-sync/send")) sent.append(body);
+            QTimer::singleShot(0, [completion = std::move(completion)] { completion({}, {}); });
+        },
+        [&] { return window.activeAgentController(); }, nullptr,
+        QStringLiteral("mac-install"), QStringLiteral("Mac"));
+    window.setSessionSyncCoordinator(&coordinator);
+    const QJsonObject device{{QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
+                             {QStringLiteral("device_name"), QStringLiteral("iPhone")},
+                             {QStringLiteral("device_id"), QStringLiteral("phone-install")},
+                             {QStringLiteral("login_session_id"), QStringLiteral("phone-login")},
+                             {QStringLiteral("online"), true}};
+    coordinator.acceptDevices(QJsonArray{device});
+    const QString createScreenshot = qEnvironmentVariable("MAICHAT_REMOTE_CREATE_SCREENSHOT");
+    if (!createScreenshot.isEmpty()) QVERIFY(list->grab().save(createScreenshot));
+    QVERIFY(QMetaObject::invokeMethod(list, "remoteCreateRequested", Qt::DirectConnection,
+                                      Q_ARG(QJsonObject, device)));
+    QVERIFY(QApplication::activeModalWidget() == nullptr);
+    QCOMPARE(sent.size(), 1);
+    QCOMPARE(sent.first().value(QStringLiteral("session_id")).toString(),
+             QStringLiteral("session_lifecycle"));
+    QCOMPARE(sent.first().value(QStringLiteral("payload")).toObject()
+                 .value(QStringLiteral("action")).toString(),
+             QStringLiteral("session_create"));
+    QVERIFY(!sent.first().value(QStringLiteral("payload")).toObject()
+                  .contains(QStringLiteral("workspace_path")));
+    QJsonObject remote = device;
+    remote.insert(QStringLiteral("id"), QStringLiteral("ses_phone"));
+    remote.insert(QStringLiteral("title"), QStringLiteral("手机对话"));
+    coordinator.acceptCatalog(QJsonArray{remote});
+    QTimer::singleShot(80, &window, [] {
+        auto* dialog = qobject_cast<AppMessageDialog*>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        const QString screenshot = qEnvironmentVariable("MAICHAT_REMOTE_DELETE_DIALOG_SCREENSHOT");
+        if (!screenshot.isEmpty()) dialog->grab().save(screenshot);
+        auto* remove = dialog->findChild<QPushButton*>(QStringLiteral("appMessageDanger"));
+        if (remove) remove->click();
+    });
+    QVERIFY(QMetaObject::invokeMethod(list, "remoteDeleteRequested", Qt::DirectConnection,
+                                      Q_ARG(QJsonObject, remote)));
+    QCOMPARE(sent.size(), 2);
+    QCOMPARE(sent.last().value(QStringLiteral("payload")).toObject()
+                 .value(QStringLiteral("action")).toString(),
+             QStringLiteral("session_delete"));
+    QCOMPARE(sent.last().value(QStringLiteral("payload")).toObject()
+                 .value(QStringLiteral("target_session_id")).toString(),
+             QStringLiteral("ses_phone"));
+    window.setSessionSyncCoordinator(nullptr);
+}
+
 void MainWindowLayoutTest::rendersEmptyConversationState() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -1998,6 +2178,58 @@ void MainWindowLayoutTest::attachmentDraftStaysWithItsContact() {
     QCOMPARE(editor->toPlainText(), QStringLiteral("B text"));
 }
 
+void MainWindowLayoutTest::sentImageDoesNotReturnAsDraftDuringConversationChange() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString imagePath = directory.filePath(QStringLiteral("sent.png"));
+    QImage image(120, 90, QImage::Format_RGB32);
+    image.fill(Qt::green);
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fakeClient = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    app.addContact(QStringLiteral("peer-a"), QStringLiteral("A"));
+    app.addContact(QStringLiteral("peer-b"), QStringLiteral("B"));
+    app.selectPeer(QStringLiteral("peer-a"));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("messageEditor"));
+    auto* send = window.findChild<QPushButton*>(QStringLiteral("sendButton"));
+    QVERIFY(editor != nullptr);
+    QVERIFY(send != nullptr);
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(imagePath)});
+    dropOnComposer(editor, &mime);
+    editor->insertPlainText(QStringLiteral("First with image"));
+
+    bool switched = false;
+    connect(&app, &RemoteIMApplication::stateChanged, &window, [&] {
+        if (switched || app.chatState().selectedPeerId() != QStringLiteral("peer-a")) return;
+        const auto messages = app.chatState().messagesWith(QStringLiteral("peer-a"));
+        if (messages.isEmpty() || !messages.last().hasImage) return;
+        switched = true;
+        app.selectPeer(QStringLiteral("peer-b"));
+    });
+    send->click();
+    QVERIFY(switched);
+    app.selectPeer(QStringLiteral("peer-a"));
+    QVERIFY(!editor->toPlainText().contains(QChar(0xFFFC)));
+    editor->insertPlainText(QStringLiteral("Second text only"));
+    send->click();
+    QCOMPARE(fakeClient->lastText(), QStringLiteral("Second text only"));
+    const auto messages = app.chatState().messagesWith(QStringLiteral("peer-a"));
+    QCOMPARE(messages.size(), 2);
+    QVERIFY(messages.first().hasImage);
+    QVERIFY(!messages.last().hasImage);
+    const QString capturePath = qEnvironmentVariable("MAICHAT_REPEAT_IMAGE_CAPTURE");
+    if (!capturePath.isEmpty()) {
+        QTest::qWait(150);
+        QVERIFY(window.grab().save(capturePath));
+    }
+}
+
 void MainWindowLayoutTest::contactsCurrentSelectionDoesNotLeaveContactsPage() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2065,6 +2297,141 @@ void MainWindowLayoutTest::settingsNavigationShowsAccountWithoutDiagnostics() {
     QVERIFY(settingsPage->findChildren<QLineEdit*>().isEmpty());
 }
 
+void MainWindowLayoutTest::settingsAvatarUpdatesWhenSelfProfileArrives() {
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QImage red(32, 32, QImage::Format_RGB32);
+    red.fill(QColor(230, 20, 20));
+    QByteArray png;
+    QBuffer imageBuffer(&png);
+    QVERIFY(imageBuffer.open(QIODevice::WriteOnly));
+    QVERIFY(red.save(&imageBuffer, "PNG"));
+    int requests = 0;
+    connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (QTcpSocket* socket = server.nextPendingConnection()) {
+            connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                socket->readAll();
+                ++requests;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " +
+                    QByteArray::number(png.size()) + "\r\nConnection: close\r\n\r\n" + png);
+                socket->disconnectFromHost();
+            });
+            connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+        }
+    });
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    FakeRemoteIMClient* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    window.show();
+    auto* settings = window.findChild<QPushButton*>(QStringLiteral("settingsNavButton"));
+    auto* avatar = window.findChild<QLabel*>(QStringLiteral("selfProfileAvatar"));
+    QVERIFY(settings && avatar);
+    settings->click();
+    const QString url = QStringLiteral("http://127.0.0.1:%1/avatar.png").arg(server.serverPort());
+    fake->selfProfileReceived(QStringLiteral("desktop-user"), QStringLiteral("真实头像"), url);
+    QVERIFY(avatar->property("avatarRequestsEnabled").toBool());
+    QCOMPARE(avatar->accessibleName(), QStringLiteral("真实头像"));
+    QTRY_VERIFY_WITH_TIMEOUT(requests > 0, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        const QColor center = avatar->grab().toImage().pixelColor(
+            avatar->width() / 2, avatar->height() / 2);
+        return center.red() > 200 && center.green() < 80 && center.blue() < 80;
+    }(), 3000);
+    const QByteArray capture = qgetenv("MAICHAT_AVATAR_CAPTURE");
+    if (!capture.isEmpty())
+        QVERIFY(window.grab().save(QString::fromUtf8(capture)));
+}
+
+void MainWindowLayoutTest::settingsAvatarSurvivesNetworkLossAfterRestart() {
+    const QByteArray childUrl = qgetenv("MAICHAT_AVATAR_CACHE_CHILD_URL");
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    FakeRemoteIMClient* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-cache-user"), std::move(client));
+    MainWindow window(app);
+    window.show();
+    auto* avatar = window.findChild<QLabel*>(QStringLiteral("selfProfileAvatar"));
+    auto* settings = window.findChild<QPushButton*>(QStringLiteral("settingsNavButton"));
+    QVERIFY(avatar && settings);
+    settings->click();
+
+    const auto isRed = [avatar] {
+        const QColor center = avatar->grab().toImage().pixelColor(
+            avatar->width() / 2, avatar->height() / 2);
+        return center.red() > 200 && center.green() < 80 && center.blue() < 80;
+    };
+    if (!childUrl.isEmpty()) {
+        fake->selfProfileReceived(QStringLiteral("desktop-cache-user"),
+                                  QStringLiteral("Cached"), QString::fromUtf8(childUrl));
+        QTRY_VERIFY_WITH_TIMEOUT(isRed(), 3000);
+        return;
+    }
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QImage red(32, 32, QImage::Format_RGB32);
+    red.fill(QColor(230, 20, 20));
+    QByteArray png;
+    QBuffer imageBuffer(&png);
+    QVERIFY(imageBuffer.open(QIODevice::WriteOnly));
+    QVERIFY(red.save(&imageBuffer, "PNG"));
+    connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (QTcpSocket* socket = server.nextPendingConnection()) {
+            connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                socket->readAll();
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " +
+                    QByteArray::number(png.size()) + "\r\nConnection: close\r\n\r\n" + png);
+                socket->disconnectFromHost();
+            });
+            connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+        }
+    });
+    const QString url = QStringLiteral("http://127.0.0.1:%1/cache-avatar.png").arg(server.serverPort());
+    const QString cachePath = QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
+        .filePath(QStringLiteral("avatars/") + QString::fromLatin1(
+            QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha256).toHex()) +
+            QStringLiteral(".png"));
+    QFile::remove(cachePath);
+    fake->selfProfileReceived(QStringLiteral("desktop-cache-user"), QStringLiteral("Cached"), url);
+    QTRY_VERIFY_WITH_TIMEOUT(isRed(), 3000);
+    QVERIFY(QFileInfo::exists(cachePath));
+    server.close();
+
+    QProcess child;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("MAICHAT_AVATAR_CACHE_CHILD_URL"), url);
+    child.setProcessEnvironment(environment);
+    child.start(QCoreApplication::applicationFilePath(),
+                {QStringLiteral("settingsAvatarSurvivesNetworkLossAfterRestart")});
+    QVERIFY(child.waitForFinished(10000));
+    QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(child.exitCode(), 0);
+    QFile::remove(cachePath);
+}
+
+void MainWindowLayoutTest::settingsAvatarLoadsRealProfileUrl() {
+    const QByteArray url = qgetenv("MAICHAT_AVATAR_LIVE_URL");
+    if (url.isEmpty()) QSKIP("No live avatar URL supplied");
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    FakeRemoteIMClient* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("desktop-live-avatar-user"), std::move(client));
+    MainWindow window(app);
+    window.show();
+    auto* settings = window.findChild<QPushButton*>(QStringLiteral("settingsNavButton"));
+    auto* avatar = window.findChild<QLabel*>(QStringLiteral("selfProfileAvatar"));
+    auto* navAvatar = window.findChild<QLabel*>(QStringLiteral("navLogo"));
+    QVERIFY(settings && avatar && navAvatar);
+    settings->click();
+    const QImage fallback = avatar->grab().toImage();
+    const QImage navFallback = navAvatar->grab().toImage();
+    fake->selfProfileReceived(QStringLiteral("desktop-live-avatar-user"),
+                              QStringLiteral("Real profile"), QString::fromUtf8(url));
+    QTRY_VERIFY_WITH_TIMEOUT(avatar->grab().toImage() != fallback, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(navAvatar->grab().toImage() != navFallback, 20000);
+    const QByteArray capture = qgetenv("MAICHAT_AVATAR_CAPTURE");
+    if (!capture.isEmpty()) QVERIFY(window.grab().save(QString::fromUtf8(capture)));
+}
+
 void MainWindowLayoutTest::settingsLogoutRequiresConfirmationAndCallsHandler() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2116,15 +2483,15 @@ void MainWindowLayoutTest::agentSettingsUseInlineActionsWithoutModelDialog() {
     QTest::mouseClick(more, Qt::LeftButton);
     auto* actions = window.findChild<QWidget*>(QStringLiteral("agentActionPanel"));
     QVERIFY(actions && actions->isVisible());
-    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentModelSection")));
+    QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentEffortSection")));
     QVERIFY(actions->findChild<QPushButton*>(QStringLiteral("agentPolicySection")));
 }
 
-void MainWindowLayoutTest::agentModelSwitchKeepsConversationAndRefreshesAccountKeys() {
+void MainWindowLayoutTest::agentReasoningEffortKeepsConversation() {
     const QString oldOrganization = QCoreApplication::organizationName();
     const QString oldApplication = QCoreApplication::applicationName();
     QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
-    QCoreApplication::setApplicationName(QStringLiteral("InlineModelSwitch"));
+    QCoreApplication::setApplicationName(QStringLiteral("InlineReasoningEffort"));
     QSettings settings;
     settings.clear();
     auto client = std::make_unique<FakeRemoteIMClient>();
@@ -2157,32 +2524,22 @@ void MainWindowLayoutTest::agentModelSwitchKeepsConversationAndRefreshesAccountK
     auto* more = panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
     QVERIFY(more);
     QTest::mouseClick(more, Qt::LeftButton);
-    auto* section = panel->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
+    auto* section = panel->findChild<QPushButton*>(QStringLiteral("agentEffortSection"));
     QVERIFY(section);
     QTest::mouseClick(section, Qt::LeftButton);
     auto* option = panel->findChild<QPushButton*>(
-        QStringLiteral("agentModelOption-deepseek-flash"));
+        QStringLiteral("agentEffortOption-max"));
     QVERIFY(option);
     QTest::mouseClick(option, Qt::LeftButton);
-    QTRY_COMPARE_WITH_TIMEOUT(refreshed, 1, 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(settings.value(QStringLiteral("agent/model")).toString(),
-                              QStringLiteral("deepseek-flash"), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(settings.value(QStringLiteral("agent/reasoningEffort")).toString(),
+                              QStringLiteral("max"), 5000);
+    QCOMPARE(refreshed, 0);
     QCOMPARE(window.findChild<AgentChatPanel*>(), panel);
     QCOMPARE(panel->sessionId(), session);
     QCOMPARE(draft->toPlainText(), QStringLiteral("未发送的草稿"));
     QCOMPARE(view->verticalScrollBar()->value(), 37);
     QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
-    window.setModelKeyRefreshHandler([&] {
-        window.setAccountModelKeys({}, QStringLiteral("网络连接失败"));
-    });
-    QTest::mouseClick(more, Qt::LeftButton);
-    auto* failedOption = panel->findChild<QPushButton*>(
-        QStringLiteral("agentModelOption-glm-5.3"));
-    QVERIFY(failedOption);
-    if (!failedOption->isVisible()) QTest::mouseClick(section, Qt::LeftButton);
-    QTest::mouseClick(failedOption, Qt::LeftButton);
-    QCOMPARE(settings.value(QStringLiteral("agent/model")).toString(),
-             QStringLiteral("deepseek-flash"));
+    QVERIFY(panel->findChild<QPushButton*>(QStringLiteral("agentModelOption-glm-5.3")) == nullptr);
     QVERIFY(window.findChild<AgentChatPanel*>() == panel);
     QCOMPARE(panel->sessionId(), session);
     QCOMPARE(draft->toPlainText(), QStringLiteral("未发送的草稿"));
@@ -2192,11 +2549,11 @@ void MainWindowLayoutTest::agentModelSwitchKeepsConversationAndRefreshesAccountK
     QCoreApplication::setApplicationName(oldApplication);
 }
 
-void MainWindowLayoutTest::agentModelSwitchBeforeFirstSessionUsesSelectedProvider() {
+void MainWindowLayoutTest::agentReasoningEffortBeforeFirstSessionKeepsDeepSeek() {
     const QString oldOrganization = QCoreApplication::organizationName();
     const QString oldApplication = QCoreApplication::applicationName();
     QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
-    QCoreApplication::setApplicationName(QStringLiteral("InlineModelBeforeSession"));
+    QCoreApplication::setApplicationName(QStringLiteral("InlineEffortBeforeSession"));
     QSettings settings;
     settings.clear();
     auto client = std::make_unique<FakeRemoteIMClient>();
@@ -2214,12 +2571,12 @@ void MainWindowLayoutTest::agentModelSwitchBeforeFirstSessionUsesSelectedProvide
     QVERIFY(panel->sessionId().isEmpty());
     QTest::mouseClick(panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions")),
                       Qt::LeftButton);
-    QTest::mouseClick(panel->findChild<QPushButton*>(QStringLiteral("agentModelSection")),
+    QTest::mouseClick(panel->findChild<QPushButton*>(QStringLiteral("agentEffortSection")),
                       Qt::LeftButton);
     QTest::mouseClick(panel->findChild<QPushButton*>(
-        QStringLiteral("agentModelOption-deepseek-flash")), Qt::LeftButton);
-    QCOMPARE(settings.value(QStringLiteral("agent/model")).toString(),
-             QStringLiteral("deepseek-flash"));
+        QStringLiteral("agentEffortOption-low")), Qt::LeftButton);
+    QCOMPARE(settings.value(QStringLiteral("agent/reasoningEffort")).toString(),
+             QStringLiteral("low"));
     QCOMPARE(panel->sessionId(), QString());
     panel->openSession();
     MaiSession session;
@@ -2248,7 +2605,7 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     window.setAccountModelKeys(accountKeys);
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip != nullptr);
-    QCOMPARE(chip->text(), QStringLiteral("glm-5.3"));
+    QCOMPARE(chip->text(), QStringLiteral("deepseek-flash"));
     auto* draft = window.findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(draft != nullptr);
     draft->setPlainText(QStringLiteral("正在编辑的草稿"));
@@ -2271,7 +2628,7 @@ void MainWindowLayoutTest::agentAccountKeysUpdateModelWithoutSavingSecrets() {
     QCoreApplication::setApplicationName(originalApplication);
 }
 
-void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
+void MainWindowLayoutTest::agentDeepSeekKeyAloneConfiguresMainModel() {
     const QString originalOrganization = QCoreApplication::organizationName();
     const QString originalApplication = QCoreApplication::applicationName();
     QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
@@ -2285,8 +2642,8 @@ void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
                              QString(40, QLatin1Char('D'))}});
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip);
-    QCOMPARE(chip->text(), QStringLiteral("模型未开通"));
-    QVERIFY(!chip->isEnabled());
+    QCOMPARE(chip->text(), QStringLiteral("deepseek-flash"));
+    QVERIFY(chip->isEnabled());
     auto* panel = window.findChild<AgentChatPanel*>();
     QVERIFY(panel);
     panel->openSession();
@@ -2295,11 +2652,11 @@ void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
     auto* more = panel->findChild<QPushButton*>(QStringLiteral("agentMoreActions"));
     QVERIFY(more);
     QTest::mouseClick(more, Qt::LeftButton);
-    auto* section = panel->findChild<QPushButton*>(QStringLiteral("agentModelSection"));
+    auto* section = panel->findChild<QPushButton*>(QStringLiteral("agentEffortSection"));
     QVERIFY(section);
     QTest::mouseClick(section, Qt::LeftButton);
     auto* option = panel->findChild<QPushButton*>(
-        QStringLiteral("agentModelOption-deepseek-flash"));
+        QStringLiteral("agentEffortOption-max"));
     QVERIFY(option);
     QTest::mouseClick(option, Qt::LeftButton);
     QCOMPARE(chip->text(), QStringLiteral("deepseek-flash"));
@@ -2307,8 +2664,8 @@ void MainWindowLayoutTest::agentPartialKeysRequireExplicitModelSelection() {
     QCOMPARE(window.findChild<AgentChatPanel*>(), panel);
     QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
     settings.sync();
-    QCOMPARE(settings.value(QStringLiteral("agent/model")).toString(),
-             QStringLiteral("deepseek-flash"));
+    QCOMPARE(settings.value(QStringLiteral("agent/reasoningEffort")).toString(),
+             QStringLiteral("max"));
     settings.clear();
     QCoreApplication::setOrganizationName(originalOrganization);
     QCoreApplication::setApplicationName(originalApplication);
@@ -2400,7 +2757,7 @@ void MainWindowLayoutTest::agentSettingsIgnoresLegacyTokenStoreFailure() {
                              {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}});
     auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
     QVERIFY(chip);
-    QCOMPARE(chip->text(), QStringLiteral("glm-5.3"));
+    QCOMPARE(chip->text(), QStringLiteral("deepseek-flash"));
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton")) == nullptr);
     QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
 }

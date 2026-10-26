@@ -12,6 +12,49 @@ final class AppDiagnosticLog: @unchecked Sendable {
 }
 
 final class MasterChatStateTests: XCTestCase {
+    func testGroupActivationMarkerHasExactWirePayload() {
+        let payload = Data(#"{"type":"maichat_group_activation","v":1}"#.utf8)
+        XCTAssertEqual(RemoteIMGroupActivationCodec.encode(), payload)
+        XCTAssertTrue(RemoteIMGroupActivationCodec.isActivation(payload))
+        XCTAssertFalse(RemoteIMGroupActivationCodec.isActivation(
+            Data(#"{"type":"maichat_group_activation","v":2}"#.utf8)
+        ))
+        XCTAssertFalse(RemoteIMGroupActivationCodec.isActivation(Data("ordinary message".utf8)))
+    }
+
+    func testGroupMessagesStaySeparateFromDirectConversationsAndSurviveContactRemoval() throws {
+        var state = MasterChatState(ownerUserID: "owner")
+        try state.upsertFriend(userID: "alice")
+        let direct = try state.queueOutgoingText(to: "alice", text: "私聊")
+        let group = try state.queueOutgoingGroupText(to: "group-1", text: "群聊")
+        let incoming = try XCTUnwrap(state.receiveGroupText(
+            "来自 Alice", groupID: "group-1", fromUserID: "alice", remoteID: "group-msg-1"
+        ))
+        XCTAssertEqual(state.messages(with: "alice"), [direct])
+        XCTAssertEqual(state.messages(inGroup: "group-1"), [group, incoming])
+        XCTAssertNil(state.contacts.first(where: { $0.userID == "group-1" }))
+        state.selectGroup(groupID: "group-1")
+        XCTAssertEqual(state.selectedConversation, .group("group-1"))
+        state.selectPeer(userID: "alice")
+        XCTAssertEqual(state.selectedConversation, .direct("alice"))
+        state.removeContactAndMessages(userID: "alice")
+        XCTAssertTrue(state.messages(with: "alice").isEmpty)
+        XCTAssertEqual(state.messages(inGroup: "group-1"), [group, incoming])
+    }
+
+    func testGroupSelfEchoBeforeSendReceiptReconcilesOneRow() throws {
+        var state = MasterChatState(ownerUserID: "owner")
+        let queued = try state.queueOutgoingGroupText(to: "group-1", text: "你好")
+        let echo = try XCTUnwrap(state.receiveGroupText(
+            "你好", groupID: "group-1", fromUserID: "owner", remoteID: "sdk-msg-1"
+        ))
+        try state.reconcileOutgoingGroupDelivery(
+            id: queued.id, remoteID: "sdk-msg-1", createdAt: echo.createdAt
+        )
+        XCTAssertNil(state.message(id: queued.id))
+        XCTAssertEqual(state.messages(inGroup: "group-1"), [echo])
+    }
+
     func testFriendLinkCarriesOnlyAccountIDAndRejectsOtherQRTypes() throws {
         let userID = "u0123456789abcdef01234567"
         let url = try XCTUnwrap(MaiChatFriendLink.url(for: userID))

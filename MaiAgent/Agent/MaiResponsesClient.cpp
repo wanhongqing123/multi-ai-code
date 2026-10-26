@@ -214,6 +214,10 @@ MaiResult<std::string> buildBody(const MaiModelRequest& request,
     }
 
     Json body{{"model", request.model}, {"input", std::move(input)}, {"stream", true}};
+    if (request.model == "deepseek-flash" &&
+        (request.reasoningEffort == "low" || request.reasoningEffort == "high" ||
+         request.reasoningEffort == "max"))
+        body["reasoning"] = Json{{"effort", request.reasoningEffort}};
     if (!request.baseInstructions.empty()) body["instructions"] = request.baseInstructions;
     if (request.temperature >= 0.0) body["temperature"] = request.temperature;
     if (!request.tools.empty()) {

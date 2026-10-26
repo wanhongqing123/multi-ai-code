@@ -185,6 +185,17 @@ struct MaiChatMediaServiceAccess: Sendable {
     let accountToken: String
 }
 
+struct MaiChatVideoCircleAccess: Sendable {
+    let authBaseURL: String
+    let mediaBaseURL: String
+    let accountToken: String
+}
+
+struct MaiChatCloudDriveAccess: Sendable {
+    let authBaseURL: String
+    let accountToken: String
+}
+
 private struct MaiChatAuthServerError: Decodable {
     let error: String
     let code: String?
@@ -686,6 +697,48 @@ actor MaiChatAuthClient {
         components.fragment = nil
         guard let url = components.url else { throw MaiChatAuthError.invalidServerResponse }
         return MaiChatMediaServiceAccess(baseURL: url.absoluteString, accountToken: token)
+    }
+
+    func videoCircleAccessIfAvailable() async throws -> MaiChatVideoCircleAccess? {
+        guard let media = try await mediaServiceAccessIfAvailable(),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else { return nil }
+        #if DEBUG && targetEnvironment(simulator)
+        if let localURL = ProcessInfo.processInfo.environment["MAICHAT_LOCAL_VIDEO_CIRCLE_URL"],
+           let url = URL(string: localURL), url.scheme == "https",
+           url.host == "localhost" || url.host == "127.0.0.1" {
+            return MaiChatVideoCircleAccess(
+                authBaseURL: url.absoluteString, mediaBaseURL: url.absoluteString,
+                accountToken: media.accountToken)
+        }
+        #endif
+        components.path = "/api"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else { throw MaiChatAuthError.invalidServerResponse }
+        return MaiChatVideoCircleAccess(authBaseURL: url.absoluteString,
+                                        mediaBaseURL: media.baseURL,
+                                        accountToken: media.accountToken)
+    }
+
+    func cloudDriveAccessIfAvailable() async throws -> MaiChatCloudDriveAccess? {
+        guard let media = try await mediaServiceAccessIfAvailable(),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else { return nil }
+        #if DEBUG && targetEnvironment(simulator)
+        if let localURL = ProcessInfo.processInfo.environment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"],
+           let url = URL(string: localURL), url.scheme == "https",
+           url.host == "localhost" || url.host == "127.0.0.1" {
+            return MaiChatCloudDriveAccess(authBaseURL: url.absoluteString,
+                                           accountToken: media.accountToken)
+        }
+        #endif
+        components.path = "/api"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else { throw MaiChatAuthError.invalidServerResponse }
+        return MaiChatCloudDriveAccess(authBaseURL: url.absoluteString,
+                                       accountToken: media.accountToken)
     }
 
     /// 先撤销本机登录，保证 App 在切换过程中被系统结束时不会恢复旧账号。

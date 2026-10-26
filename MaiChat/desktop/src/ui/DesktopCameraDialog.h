@@ -4,6 +4,8 @@
 #include <QDialog>
 #include <QString>
 
+#include <atomic>
+
 class QCamera;
 class QCameraImageCapture;
 class QCameraViewfinder;
@@ -13,12 +15,19 @@ class QPushButton;
 class DesktopCameraDialog final : public QDialog {
 public:
     // 返回新建 JPEG 绝对路径；取消返回空路径和空错误，无摄像头或失败返回错误。
-    static QString capturePhoto(QWidget* parent, const QString& directory, QString* error);
+    static QString capturePhoto(QWidget* parent, const QString& directory, QString* error,
+                                const std::atomic<bool>* canceled = nullptr);
+    static bool openPreview(QWidget* parent, const QString& sessionId,
+                            const QString& directory, QString* error);
+    static bool closePreview(QWidget* parent, const QString& sessionId);
+    static bool isPreviewOpen(QWidget* parent, const QString& sessionId);
+    static QString previewError(QWidget* parent, const QString& sessionId);
+    static QString lastPreviewPhoto(QWidget* parent, const QString& sessionId);
 
     ~DesktopCameraDialog() override;
 
 private:
-    DesktopCameraDialog(QWidget* parent, const QString& destination);
+    DesktopCameraDialog(QWidget* parent, const QString& destination, bool persistent = false);
     void reject() override;
     void takePhoto();
 
@@ -31,5 +40,6 @@ private:
     QString savedPath_;
     QString pendingPath_;
     QString error_;
+    bool persistent_ = false;
     int pendingCapture_ = -1;
 };

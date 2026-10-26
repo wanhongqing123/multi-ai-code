@@ -117,6 +117,28 @@ struct RemoteIMUserProfile: Equatable {
     let avatarURL: String?
 }
 
+struct RemoteIMGroup: Equatable {
+    let groupID: String
+    let name: String
+    let memberCount: Int
+}
+
+struct IncomingRemoteIMGroupText: Equatable {
+    let groupID: String
+    let fromUserID: String
+    let text: String
+    let remoteID: String?
+    let createdAt: Date
+}
+
+struct RemoteIMGroupHistoryPage: Equatable {
+    /// SDK returns newest first; this array is oldest first for chat rendering.
+    let messages: [IncomingRemoteIMGroupText]
+    /// Oldest raw SDK message ID scanned, including non-text messages.
+    let nextCursor: String?
+    let hasMore: Bool
+}
+
 struct RemoteIMFriendRequest: Identifiable, Sendable {
     let userID: String
     let displayName: String
@@ -130,6 +152,7 @@ enum RemoteIMClientError: Error, LocalizedError {
     case sdkNotIntegrated
     case sdkInitializationFailed
     case operationFailed(code: Int32, description: String)
+    case groupActivationFailed(groupID: String, code: Int32, description: String)
 
     var errorDescription: String? {
         switch self {
@@ -139,6 +162,8 @@ enum RemoteIMClientError: Error, LocalizedError {
             return "IM SDK 初始化失败"
         case let .operationFailed(code, description):
             return "IM 操作失败(\(code)): \(description)"
+        case let .groupActivationFailed(groupID, code, description):
+            return "群已建立（\(groupID)），但未能通知成员(\(code)): \(description)。请勿重复建群。"
         }
     }
 }
@@ -151,6 +176,8 @@ protocol RemoteIMClient: AnyObject {
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)? { get set }
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)? { get set }
     var onIncomingVideo: ((IncomingRemoteIMVideo) -> Void)? { get set }
+    var onIncomingGroupText: ((IncomingRemoteIMGroupText) -> Void)? { get set }
+    var onGroupMembershipChanged: (() -> Void)? { get set }
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)? { get set }
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws
@@ -161,6 +188,11 @@ protocol RemoteIMClient: AnyObject {
         origin: RemoteIMMessageOrigin,
         quote: RemoteIMQuote?
     ) async throws -> RemoteIMSendReceipt
+    func createGroup(name: String, memberUserIDs: [String]) async throws -> RemoteIMGroup
+    func joinedGroups() async throws -> [RemoteIMGroup]
+    func sendGroupText(to groupID: String, text: String) async throws -> RemoteIMSendReceipt
+    func groupHistory(groupID: String, count: Int, beforeRemoteID: String?) async throws
+        -> RemoteIMGroupHistoryPage
     func sendActivity(
         to userID: String,
         signal: RemoteIMActivitySignal
@@ -199,6 +231,37 @@ protocol RemoteIMClient: AnyObject {
 }
 
 extension RemoteIMClient {
+    var onIncomingGroupText: ((IncomingRemoteIMGroupText) -> Void)? {
+        get { nil }
+        set {}
+    }
+
+    var onGroupMembershipChanged: (() -> Void)? {
+        get { nil }
+        set {}
+    }
+
+    func createGroup(name: String, memberUserIDs: [String]) async throws -> RemoteIMGroup {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func joinedGroups() async throws -> [RemoteIMGroup] {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func sendGroupText(to groupID: String, text: String) async throws -> RemoteIMSendReceipt {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func groupHistory(groupID: String, count: Int, beforeRemoteID: String?) async throws
+        -> RemoteIMGroupHistoryPage {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func groupHistory(groupID: String, count: Int) async throws -> RemoteIMGroupHistoryPage {
+        try await groupHistory(groupID: groupID, count: count, beforeRemoteID: nil)
+    }
+
     func blockUser(userID: String) async throws {
         throw RemoteIMClientError.sdkNotIntegrated
     }

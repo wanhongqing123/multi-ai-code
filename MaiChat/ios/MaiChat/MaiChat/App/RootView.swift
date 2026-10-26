@@ -18,12 +18,25 @@ struct RootView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var systemNotificationCenter = RemoteIMSystemNotificationCenter.shared
-    @State private var selectedTab: AppTab = .messages
+    @ObservedObject private var videoCircle = MaiVideoCircleModel.shared
+    @State private var selectedTab: AppTab = {
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains(
+            "--cloud-drive-production-canary-normal") { return .me }
+        #endif
+        return .messages
+    }()
     @State private var previousMainTab: AppTab = .messages
     @State private var hasOpenedAssistant = false
     @State private var assistantOpenGeneration = 0
     @State private var activeChatContact: RemoteIMContact?
+    @State private var activeChatGroup: RemoteIMGroup?
+    @State private var isShowingCreateGroup = false
+    @State private var pendingCreatedGroup: RemoteIMGroup?
+    @State private var pendingAddFriendAfterGroup = false
     @State private var isShowingAddContact = false
+    @State private var isShowingQRScanner = false
+    @State private var pendingScannedFriendID: String?
     @State private var movingContact: RemoteIMContact?
     @State private var contactGroupActionName: String?
     @State private var renamingContactGroup: String?
@@ -65,9 +78,19 @@ struct RootView: View {
                         case .messages:
                             ChatView(
                                 activeContact: $activeChatContact,
+                                activeGroup: $activeChatGroup,
                                 showRemoteDesktop: {
                                     activeChatContact = nil
+                                    activeChatGroup = nil
                                     selectedTab = .remote
+                                },
+                                showCreateGroup: { isShowingCreateGroup = true },
+                                showAddContact: {
+                                    appState.newContactUserID = ""
+                                    isShowingAddContact = true
+                                },
+                                showScanQRCode: {
+                                    isShowingQRScanner = true
                                 },
                                 bottomBar: AnyView(RootTabBar(
                                     selectedTab: $selectedTab,
@@ -99,7 +122,7 @@ struct RootView: View {
                     // 消息页的底栏位于其导航根内；若改由外层条件插入，
                     // 返回手势期间出现时机会滞后，并在清除选中项时改变两页尺寸。
                     if selectedTab != .messages && selectedTab != .assistant &&
-                       activeChatContact == nil {
+                       activeChatContact == nil && activeChatGroup == nil {
                         RootTabBar(
                             selectedTab: $selectedTab,
                             remoteDesktop: appState.remoteDesktop,
@@ -224,8 +247,8 @@ struct RootView: View {
         // 竖屏上下分区，横屏左右分区；聊天或创作中心始终保留可触摸的输入区。
         // 全屏切换只改变同一个播放器的尺寸，不重新打开文件或重置播放位置。
         .overlay {
-            GeometryReader { geometry in
-                if let presentation = appState.agentVideoPresentation {
+            if let presentation = appState.agentVideoPresentation {
+                GeometryReader { geometry in
                     MaiFfplayVideoScreen(path: presentation.path,
                                          startSeconds: presentation.startSeconds,
                                          entryDirection: presentation.entryDirection,
@@ -287,8 +310,8 @@ struct RootView: View {
                               geometry.size.height / 2 : dockHeight / 2)
                     .zIndex(100)
                 }
+                .ignoresSafeArea(edges: isVideoExpanded ? .all : [])
             }
-            .ignoresSafeArea(edges: isVideoExpanded ? .all : [])
         }
         .statusBarHidden(galleryImage != nil ||
                          (isVideoExpanded && appState.agentVideoPresentation != nil))
@@ -328,6 +351,7 @@ struct RootView: View {
         .onChange(of: appState.shouldShowInitialLogin) { needsLogin in
             if needsLogin {
                 activeChatContact = nil
+                activeChatGroup = nil
                 selectedTab = .messages
                 previousMainTab = .messages
                 hasOpenedAssistant = false
@@ -335,6 +359,22 @@ struct RootView: View {
             }
             Task {
                 await offerNotificationPermissionIfNeeded()
+            }
+        }
+        .onChange(of: appState.masterUserID) { _ in
+            clearSelectedChatForAccountChange()
+        }
+        .onChange(of: appState.maiChatAccountID) { _ in
+            clearSelectedChatForAccountChange()
+        }
+        .onChange(of: appState.groups.map(\.groupID)) { joinedGroupIDs in
+            if let activeChatGroup,
+               !joinedGroupIDs.contains(activeChatGroup.groupID) {
+                self.activeChatGroup = nil
+            }
+            if let pendingCreatedGroup,
+               !joinedGroupIDs.contains(pendingCreatedGroup.groupID) {
+                self.pendingCreatedGroup = nil
             }
         }
         .onChange(of: systemNotificationCenter.pendingRouteRevision) { _ in
@@ -381,10 +421,15 @@ struct RootView: View {
                 Text(errorMessage)
                     .font(.footnote)
                     .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .accessibilityLabel(errorMessage)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .background(.red, in: Capsule())
-                    .padding(.top, 8)
+                    // Keep transient IM errors below the 54-point page header.
+                    // A long error previously covered every top-bar action.
+                    .padding(.top, 64)
                     .padding(.horizontal, 16)
                     .onTapGesture {
                         if appState.errorMessage == errorMessage {
@@ -395,6 +440,63 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: appState.errorMessage)
+        .sheet(isPresented: $isShowingCreateGroup, onDismiss: {
+            if let pendingCreatedGroup {
+                activeChatContact = nil
+                activeChatGroup = pendingCreatedGroup
+                self.pendingCreatedGroup = nil
+            } else if pendingAddFriendAfterGroup {
+                pendingAddFriendAfterGroup = false
+                appState.newContactUserID = ""
+                isShowingAddContact = true
+            }
+        }) {
+            GroupCreationView(
+                friends: appState.chatState.contacts.filter {
+                    appState.acceptedFriendIMIDs.contains($0.userID)
+                },
+                recoveryGroup: appState.groupCreationRecovery,
+                refreshFriends: { await appState.refreshAcceptedFriends() },
+                create: { name, memberUserIDs in
+                    guard let group = await appState.createGroup(
+                        name: name, memberUserIDs: memberUserIDs
+                    ) else { return false }
+                    pendingCreatedGroup = group
+                    return true
+                },
+                addFriend: {
+                    pendingAddFriendAfterGroup = true
+                    isShowingCreateGroup = false
+                },
+                openRecoveredGroup: {
+                    guard let group = appState.groupCreationRecovery else { return }
+                    appState.selectGroup(groupID: group.groupID)
+                    pendingCreatedGroup = group
+                    isShowingCreateGroup = false
+                }
+            )
+        }
+        .sheet(isPresented: $isShowingQRScanner, onDismiss: {
+            guard let pendingScannedFriendID else { return }
+            appState.newContactUserID = pendingScannedFriendID
+            self.pendingScannedFriendID = nil
+            isShowingAddContact = true
+        }) {
+            MaiChatQRScanSheet { userID in
+                pendingScannedFriendID = userID
+                isShowingQRScanner = false
+            }
+        }
+        .sheet(item: $videoCircle.presentation) { presentation in
+            switch presentation {
+            case .circle:
+                MaiVideoCircleView { videoCircle.presentation = nil }
+            case let .publish(source):
+                MaiVideoCirclePublishView(source: source,
+                                          close: { videoCircle.presentation = nil },
+                                          published: { videoCircle.presentation = .circle })
+            }
+        }
     }
 
     private func openAssistant() {
@@ -429,11 +531,24 @@ struct RootView: View {
     }
 
     private func offerNotificationPermissionIfNeeded() async {
+#if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--im-group-ui-test") ||
+            ProcessInfo.processInfo.arguments.contains("--im-group-activation-fail-ui-test") {
+            return
+        }
+#endif
         await systemNotificationCenter.refreshAuthorizationStatus()
         guard systemNotificationCenter.authorizationStatus == .notDetermined,
               !notificationPermissionPromptDismissed
         else { return }
         isShowingNotificationPermissionPrompt = true
+    }
+
+    private func clearSelectedChatForAccountChange() {
+        activeChatContact = nil
+        activeChatGroup = nil
+        pendingCreatedGroup = nil
+        isShowingCreateGroup = false
     }
 
     private func dismissNotificationPermissionPrompt() {
@@ -481,6 +596,7 @@ struct RootView: View {
         else { return }
         appState.selectContact(contact)
         selectedTab = .messages
+        activeChatGroup = nil
         activeChatContact = contact
         AppDiagnosticLog.shared.record(
             level: .info,

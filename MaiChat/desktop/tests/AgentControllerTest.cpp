@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -184,6 +185,8 @@ private slots:
     void sends_selected_images_as_multimodal_input();
     void registers_a_screenshot_tool_that_requires_approval();
     void registers_host_tools_after_builtin_tools();
+    void desktopSessionToolUsesAccountDefaultWhenPathOmitted();
+    void desktopSessionToolConfirmsExplicitDirectory();
     void finishingAnotherSessionDoesNotReclassifyReasoning();
     void desktopReadsOutsideSessionWorkingDirectory();
     void desktopWriteOutsideWaitsForApproval();
@@ -196,6 +199,7 @@ void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
         std::thread thread;
         std::mutex mutex;
         std::string authorization;
+        std::string body;
         int requestCount = 0;
         int port = 0;
         Probe() {
@@ -204,6 +208,7 @@ void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     authorization = request.get_header_value("Authorization");
+                    body = request.body;
                     ++requestCount;
                 }
                 response.set_content(
@@ -238,6 +243,7 @@ void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
     request.messages.push_back(MaiModelMessage{MaiModelRole::User, "Hello"});
     MaiStreamSink sink;
     const std::atomic<bool> cancel{false};
+    request.reasoningEffort = "max";
     request.model = "glm-5.3";
     QVERIFY(!client.stream(request, sink, cancel));
     request.model = "deepseek-flash";
@@ -247,12 +253,17 @@ void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
         QCOMPARE(glm.requestCount, 1);
         QCOMPARE(QString::fromStdString(glm.authorization),
                  QStringLiteral("Bearer glm-account-key"));
+        QVERIFY(!QJsonDocument::fromJson(QByteArray::fromStdString(glm.body))
+                     .object().contains(QStringLiteral("reasoning")));
     }
     {
         std::lock_guard<std::mutex> lock(deepseek.mutex);
         QCOMPARE(deepseek.requestCount, 1);
         QCOMPARE(QString::fromStdString(deepseek.authorization),
                  QStringLiteral("Bearer deepseek-account-key"));
+        QCOMPARE(QJsonDocument::fromJson(QByteArray::fromStdString(deepseek.body))
+                     .object().value(QStringLiteral("reasoning")).toObject()
+                     .value(QStringLiteral("effort")).toString(), QStringLiteral("max"));
     }
     keys.insert(QStringLiteral("deepseek"), QStringLiteral("rotated-account-key"));
     QVERIFY(!client.stream(request, sink, cancel));
@@ -490,6 +501,10 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     bool foundBuiltin = false;
     bool foundHost = false;
     bool foundAgentMedia = false;
+    bool foundSessionList = false;
+    bool foundSessionCreate = false;
+    bool foundSessionDelete = false;
+    bool desktopCreateOffersDirectory = false;
     bool foundSeedance = false;
     bool foundSeedream = false;
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
@@ -502,6 +517,17 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     for (const MaiToolSpec& tool : scripted->lastRequest().tools) {
         if (tool.name == "file_read") foundBuiltin = true;
         if (tool.name == "agent_send_media") foundAgentMedia = true;
+        if (tool.name == "session_list") foundSessionList = true;
+        if (tool.name == "session_create") {
+            foundSessionCreate = true;
+            const QJsonObject schema = QJsonDocument::fromJson(
+                QByteArray::fromStdString(tool.parametersJson)).object();
+            desktopCreateOffersDirectory = schema.value(QStringLiteral("properties"))
+                                               .toObject().contains(QStringLiteral("directory")) &&
+                                           !schema.value(QStringLiteral("required"))
+                                                .toArray().contains(QStringLiteral("directory"));
+        }
+        if (tool.name == "session_delete") foundSessionDelete = true;
         if (tool.name == "maichat_probe") foundHost = true;
         if (tool.name == "seedance_video") foundSeedance = true;
         if (tool.name == "seedream_image") foundSeedream = true;
@@ -516,6 +542,8 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     QVERIFY(foundBuiltin);
     QVERIFY(foundHost);
     QVERIFY(foundAgentMedia);
+    QVERIFY(foundSessionList && foundSessionCreate && foundSessionDelete);
+    QVERIFY(desktopCreateOffersDirectory);
     QVERIFY(!foundSeedance);
     QVERIFY(!foundSeedream);
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
@@ -532,6 +560,60 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
             QStringLiteral("onnxruntime_providers_shared.dll")));
     QCOMPARE(foundVideoMatting, mattingAssetsPresent);
 #endif
+}
+
+void AgentControllerTest::desktopSessionToolUsesAccountDefaultWhenPathOmitted() {
+    QTemporaryDir account;
+    QTemporaryDir customWorkspace;
+    QVERIFY(account.isValid());
+    QVERIFY(customWorkspace.isValid());
+    auto model = std::make_unique<OutsideReadModel>(
+        R"({"title":"Default workspace session"})", "session_create");
+    AgentController controller(std::move(model), account.filePath(QStringLiteral("agent.db")));
+    const QString current = controller.createSession(customWorkspace.path());
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QVERIFY(controller.sendPrompt(current, QStringLiteral("Create another conversation")));
+    QVERIFY(finished.wait(15000));
+
+    const auto sessions = controller.agent().listSessions();
+    QCOMPARE(sessions.size(), std::size_t(2));
+    const QString expected = QDir(account.path()).filePath(QStringLiteral("Workspace"));
+    QVERIFY(QFileInfo(expected).isDir());
+    for (const MaiSession& session : sessions) {
+        if (session.id == current.toStdString()) continue;
+        QCOMPARE(QDir(QString::fromStdString(session.directory)).canonicalPath(),
+                 QDir(expected).canonicalPath());
+        QCOMPARE(QString::fromStdString(session.title), QStringLiteral("Default workspace session"));
+    }
+}
+
+void AgentControllerTest::desktopSessionToolConfirmsExplicitDirectory() {
+    QTemporaryDir account;
+    QTemporaryDir original;
+    QTemporaryDir chosen;
+    QVERIFY(account.isValid() && original.isValid() && chosen.isValid());
+    const QByteArray arguments = QJsonDocument(QJsonObject{
+        {QStringLiteral("directory"), chosen.path()},
+        {QStringLiteral("title"), QStringLiteral("Chosen workspace session")}})
+        .toJson(QJsonDocument::Compact);
+    auto model = std::make_unique<OutsideReadModel>(arguments.toStdString(), "session_create");
+    AgentController controller(std::move(model), account.filePath(QStringLiteral("agent.db")));
+    const QString current = controller.createSession(original.path());
+    QSignalSpy asked(&controller, &AgentController::permissionAsked);
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QVERIFY(controller.sendPrompt(current, QStringLiteral("Create in the chosen folder")));
+    QTRY_COMPARE(asked.size(), 1);
+    QCOMPARE(controller.agent().listSessions().size(), std::size_t(1));
+    QVERIFY(controller.approvePermission(asked.first().at(0).toString()));
+    QVERIFY(finished.wait(15000));
+
+    const auto sessions = controller.agent().listSessions();
+    QCOMPARE(sessions.size(), std::size_t(2));
+    for (const MaiSession& session : sessions) {
+        if (session.id == current.toStdString()) continue;
+        QCOMPARE(QDir(QString::fromStdString(session.directory)).canonicalPath(),
+                 QDir(chosen.path()).canonicalPath());
+    }
 }
 
 void AgentControllerTest::finishingAnotherSessionDoesNotReclassifyReasoning() {

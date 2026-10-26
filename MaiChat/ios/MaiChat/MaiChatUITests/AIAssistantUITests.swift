@@ -4,6 +4,813 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testCloudDriveAgentPlaybackCacheLifecycle() throws {
+        #if targetEnvironment(simulator)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launch()
+        let lifecycle = app.buttons["cloud-drive-agent-cache-lifecycle"]
+        XCTAssertTrue(lifecycle.waitForExistence(timeout: 25))
+        lifecycle.tap()
+        XCTAssertTrue(app.staticTexts["云盘播放关闭与切号通过"]
+            .waitForExistence(timeout: 10))
+        app.terminate()
+        app.launch()
+        let relaunch = app.buttons["cloud-drive-agent-cache-relaunch"]
+        XCTAssertTrue(relaunch.waitForExistence(timeout: 20))
+        relaunch.tap()
+        XCTAssertTrue(app.staticTexts["云盘孤儿清理通过"].waitForExistence(timeout: 10))
+        app.terminate()
+        #else
+        throw XCTSkip("云盘 Agent 播放缓存只在模拟器验证")
+        #endif
+    }
+
+    @MainActor func testCloudDriveHostDisabledCode() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 disabled TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let trigger = app.buttons["cloud-drive-tool-smoke"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 30))
+        trigger.tap()
+        XCTAssertTrue(app.staticTexts["工具列表错误: not_configured"]
+            .waitForExistence(timeout: 15))
+        app.terminate()
+        #else
+        throw XCTSkip("云盘错误码用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveHostPlayDelete() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let start = app.buttons["cloud-drive-upload-sample"]
+        XCTAssertTrue(start.waitForExistence(timeout: 30))
+        start.tap()
+        XCTAssertTrue(app.buttons[
+            "cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
+            .waitForExistence(timeout: 60))
+        app.buttons["cloud-drive-tool-play-delete"].tap()
+        let success = app.staticTexts["云盘工具已播放并删除"]
+        let status = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "云盘工具")).firstMatch
+        XCTAssertTrue(success.waitForExistence(timeout: 30),
+                      "工具状态：\(status.exists ? status.label : "缺失")")
+        XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 15))
+        app.terminate()
+        #else
+        throw XCTSkip("云盘工具宿主用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveHostImageOpenDelete() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        var reset = URLRequest(url: URL(string: "http://127.0.0.1:18449/test/reset")!)
+        reset.httpMethod = "POST"
+        let (_, resetResponse) = try await URLSession.shared.data(for: reset)
+        XCTAssertEqual((resetResponse as? HTTPURLResponse)?.statusCode, 204)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        let run = app.buttons["cloud-drive-tool-image-open-delete"]
+        XCTAssertTrue(run.waitForExistence(timeout: 30))
+        run.tap()
+        XCTAssertTrue(app.staticTexts["云盘图片工具已打开并删除"]
+            .waitForExistence(timeout: 120))
+        XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 20))
+        #else
+        throw XCTSkip("云盘 Agent 图片用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveHostTools() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let trigger = app.buttons["cloud-drive-tool-smoke"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 30))
+        trigger.tap()
+        XCTAssertTrue(app.staticTexts["云盘工具已受理上传"].waitForExistence(timeout: 30))
+        app.terminate()
+        #else
+        throw XCTSkip("云盘工具宿主用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveHostPauseAndAbort() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449")!
+        guard let (certificate, response) = try? await URLSession.shared.data(
+            from: control.appendingPathComponent("test/cert")),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        var reset = URLRequest(url: control.appendingPathComponent("test/reset"))
+        reset.httpMethod = "POST"
+        let (_, resetResponse) = try await URLSession.shared.data(for: reset)
+        XCTAssertEqual((resetResponse as? HTTPURLResponse)?.statusCode, 204)
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let start = app.buttons["cloud-drive-upload-large-sample"]
+        XCTAssertTrue(start.waitForExistence(timeout: 30))
+        start.tap()
+        let action = app.buttons["cloud-drive-tool-pause-abort"]
+        XCTAssertTrue(action.waitForExistence(timeout: 20))
+        var firstPartStored = false
+        for _ in 0..<100 {
+            let (data, _) = try await URLSession.shared.data(
+                from: control.appendingPathComponent("test/state"))
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            if (state["parts"] as? [Int] ?? []).contains(1) {
+                firstPartStored = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(firstPartStored, "服务器应收到首个分片")
+        action.tap()
+        XCTAssertTrue(app.staticTexts["云盘工具暂停并取消通过"].waitForExistence(timeout: 30))
+        let (data, _) = try await URLSession.shared.data(
+            from: control.appendingPathComponent("test/state"))
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(state["status"] as? String, "deleted",
+                       "Agent 取消应同时删除 OSS 上传会话")
+        app.terminate()
+        #else
+        throw XCTSkip("云盘工具宿主用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveDisabledHidesNormalAppEntry() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 disabled TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 35))
+        me.tap()
+        XCTAssertTrue(app.buttons["personal-profile-entry"].waitForExistence(timeout: 10))
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertFalse(app.buttons["my-cloud-drive-entry"].exists,
+                       "云盘服务明确关闭时不应显示可操作入口")
+        app.terminate()
+        #else
+        throw XCTSkip("门控用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDrivePhotoKeepsOriginalName() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let trigger = app.buttons["cloud-drive-photo-original-name"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 30))
+        trigger.tap()
+        XCTAssertTrue(app.staticTexts["IMG_0042.mp4"].waitForExistence(timeout: 60),
+                      "相册源名称应写入云盘列表，而非 staging UUID")
+        app.terminate()
+        #else
+        throw XCTSkip("相册命名用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveCrashCleanupKeepsResumableSource() async throws {
+        #if targetEnvironment(simulator)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launch()
+        let trigger = app.buttons["cloud-drive-cleanup-recovery"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 30))
+        trigger.tap()
+        XCTAssertTrue(app.staticTexts["云盘缓存恢复通过"].waitForExistence(timeout: 10))
+        app.terminate()
+        #else
+        throw XCTSkip("云盘缓存恢复用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveSlowPhotoImportRejectsAccountSwitch() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449")!
+        guard let (certificate, response) = try? await URLSession.shared.data(
+            from: control.appendingPathComponent("test/cert")),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        func sessions() async throws -> Int {
+            let (data, _) = try await URLSession.shared.data(
+                from: control.appendingPathComponent("test/state"))
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            return try XCTUnwrap(state["sessions"] as? Int)
+        }
+        let before = try await sessions()
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let trigger = app.buttons["cloud-drive-simulate-account-switch"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 30))
+        trigger.tap()
+        XCTAssertTrue(app.staticTexts["已阻止跨账号上传"].waitForExistence(timeout: 10))
+        let after = try await sessions()
+        XCTAssertEqual(after, before,
+                       "慢导入后切号不得向旧或新账号发起上传")
+        app.terminate()
+        #else
+        throw XCTSkip("云盘切号用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDrivePauseRelaunchResumeReusesParts() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449")!
+        guard let (certificate, response) = try? await URLSession.shared.data(
+            from: control.appendingPathComponent("test/cert")),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let (initialData, _) = try await URLSession.shared.data(
+            from: control.appendingPathComponent("test/state"))
+        let initialState = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: initialData) as? [String: Any])
+        let initialSessions = try XCTUnwrap(initialState["sessions"] as? Int)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let start = app.buttons["cloud-drive-upload-large-sample"]
+        XCTAssertTrue(start.waitForExistence(timeout: 30))
+        start.tap()
+        let pause = app.buttons["暂停"].firstMatch
+        XCTAssertTrue(pause.waitForExistence(timeout: 20))
+        var firstPartStored = false
+        for _ in 0..<100 {
+            let (data, _) = try await URLSession.shared.data(
+                from: control.appendingPathComponent("test/state"))
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let parts = state["parts"] as? [Int] ?? []
+            if parts.contains(1) { firstPartStored = true; break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(firstPartStored, "服务器应先收到第一分片")
+        pause.tap()
+        XCTAssertTrue(app.buttons["继续"].firstMatch.waitForExistence(timeout: 30))
+        app.terminate()
+        app.launch()
+        let resume = app.buttons["继续"].firstMatch
+        XCTAssertTrue(resume.waitForExistence(timeout: 30), "重启后应恢复未完成任务")
+        let paused = XCTAttachment(screenshot: app.screenshot())
+        paused.name = "cloud-drive-paused-after-relaunch"
+        paused.lifetime = .keepAlways
+        add(paused)
+        app.buttons["cloud-drive-tool-resume"].tap()
+        XCTAssertTrue(app.staticTexts["云盘工具已继续"].waitForExistence(timeout: 10))
+        let video = app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
+        XCTAssertTrue(video.waitForExistence(timeout: 120))
+        let (data, _) = try await URLSession.shared.data(
+            from: control.appendingPathComponent("test/state"))
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(state["sessions"] as? Int, initialSessions + 1,
+                       "续传应复用原上传会话和已完成分片")
+        XCTAssertEqual(state["parts"] as? [Int], [1, 2, 3])
+        app.terminate()
+        #else
+        throw XCTSkip("云盘续传用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveLocalUploadPlayDelete() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let upload = app.buttons["cloud-drive-upload-sample"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 30))
+        upload.tap()
+        let item = app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
+        XCTAssertTrue(item.waitForExistence(timeout: 90))
+        let uploaded = XCTAttachment(screenshot: app.screenshot())
+        uploaded.name = "cloud-drive-local-uploaded"
+        uploaded.lifetime = .keepAlways
+        add(uploaded)
+        item.tap()
+        XCTAssertTrue(app.buttons["ffplay-close"].waitForExistence(timeout: 60))
+        app.buttons["ffplay-close"].tap()
+        let menu = app.buttons["cloud-drive-video-menu-123e4567-e89b-42d3-a456-426614174000"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        app.buttons["删除"].tap()
+        app.buttons["删除文件"].tap()
+        XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))
+        app.terminate()
+        #else
+        throw XCTSkip("云盘 UI 用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveImageUploadPreviewDelete() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        let upload = app.buttons["cloud-drive-upload-image-sample"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 30))
+        upload.tap()
+        let id = "123e4567-e89b-42d3-a456-426614174000"
+        let image = app.buttons["cloud-drive-play-\(id)"]
+        XCTAssertTrue(image.waitForExistence(timeout: 90))
+        XCTAssertEqual(image.label, "查看图片")
+        let uploaded = XCTAttachment(screenshot: app.screenshot())
+        uploaded.name = "cloud-drive-image-uploaded"
+        uploaded.lifetime = .keepAlways
+        add(uploaded)
+        image.tap()
+        let close = app.buttons["cloud-drive-image-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 60))
+        let fullImage = XCTAttachment(screenshot: app.screenshot())
+        fullImage.name = "cloud-drive-image-preview"
+        fullImage.lifetime = .keepAlways
+        add(fullImage)
+        close.tap()
+        let menu = app.buttons["cloud-drive-video-menu-\(id)"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        app.buttons["删除"].tap()
+        app.buttons["删除文件"].tap()
+        XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))
+        #else
+        throw XCTSkip("云盘图片 UI 用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveNormalAppSettingsEntryAndEmptyState() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        let me = app.buttons["我"]
+        XCTAssertTrue(me.waitForExistence(timeout: 35))
+        me.tap()
+        let entry = app.buttons["my-cloud-drive-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 20))
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["我的云盘"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["云盘空间"].waitForExistence(timeout: 15))
+        let ownVideo = app.buttons[
+            "cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
+        XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 3) ||
+                      ownVideo.waitForExistence(timeout: 3))
+        let fakeIMError = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "IM 操作失败")).firstMatch
+        if fakeIMError.exists { fakeIMError.tap() }
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "cloud-drive-normal-app-empty"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.terminate()
+        #else
+        throw XCTSkip("云盘 UI 用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testVideoCircleNormalAppOpensPlaysAndReturns() async throws {
+        #if targetEnvironment(simulator)
+        let fixture = URL(string: "http://127.0.0.1:18290")!
+        let (statusData, statusResponse) = try await URLSession.shared.data(
+            from: fixture.appendingPathComponent("test/video-circle/status"))
+        guard (statusResponse as? HTTPURLResponse)?.statusCode == 200,
+              let object = try JSONSerialization.jsonObject(with: statusData) as? [String: Any],
+              let posts = object["posts"] as? [[String: Any]],
+              let postID = posts.first(where: { $0["status"] as? String == "approved" })?["id"]
+                as? String else { throw XCTSkip("需要本机已审核测试视频") }
+        let (certificate, _) = try await URLSession.shared.data(
+            from: fixture.appendingPathComponent("test/cert"))
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-viewer"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18290"
+        app.launchEnvironment["MAICHAT_LOCAL_VIDEO_CIRCLE_URL"] = "https://localhost:18445"
+        app.launchEnvironment["MAICHAT_LOCAL_VIDEO_CIRCLE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 35))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let entry = app.buttons["ai-video-circle-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 35))
+        let beforeTap = XCTAttachment(screenshot: app.screenshot())
+        beforeTap.name = "video-circle-before-first-tap"
+        beforeTap.lifetime = .keepAlways
+        add(beforeTap)
+        try await Task.sleep(for: .seconds(1))
+        // The visible header control responds at this screen point; XCUITest's
+        // synthesized element-center tap misses it despite reporting a 64pt frame.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.82, dy: 0.10)).tap()
+        guard app.otherElements["video-circle-screen"].waitForExistence(timeout: 5) else {
+            let afterTap = XCTAttachment(screenshot: app.screenshot())
+            afterTap.name = "video-circle-after-first-tap"
+            afterTap.lifetime = .keepAlways
+            add(afterTap)
+            XCTFail("正常 App 首次点击后视频圈未打开；frame=\(entry.frame)")
+            app.terminate()
+            return
+        }
+        let play = app.buttons["video-circle-play-\(postID)"]
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        let entered = XCTAttachment(screenshot: app.screenshot())
+        entered.name = "video-circle-normal-app-opened"
+        entered.lifetime = .keepAlways
+        add(entered)
+        play.tap()
+        let closePlayer = app.buttons["ffplay-close"]
+        XCTAssertTrue(closePlayer.waitForExistence(timeout: 120))
+        let playback = XCTAttachment(screenshot: app.screenshot())
+        playback.name = "video-circle-normal-app-playback"
+        playback.lifetime = .keepAlways
+        add(playback)
+        closePlayer.tap()
+        app.buttons["video-circle-close"].tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.82, dy: 0.10)).tap()
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        app.buttons["video-circle-close"].tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        app.terminate()
+        #else
+        throw XCTSkip("正常 App 视频圈 UI 用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testVideoCircleLocalTwoAccountPublishReviewPlaybackWithdraw() async throws {
+        #if targetEnvironment(simulator)
+        executionTimeAllowance = 600
+        let fixture = URL(string: "http://127.0.0.1:18290")!
+        let source = try XCTUnwrap(Bundle(for: Self.self).url(
+            forResource: "video-circle-source", withExtension: "mp4"))
+        XCTAssertGreaterThan(try Data(contentsOf: source).count, 0)
+        let (certificate, certificateResponse) = try await URLSession.shared.data(
+            from: fixture.appendingPathComponent("test/cert"))
+        guard (certificateResponse as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机视频圈假 auth/OSS 服务")
+        }
+
+        func launch(account: String, normalApp: Bool = false) -> XCUIApplication {
+            let app = XCUIApplication()
+            if !normalApp {
+                app.launchArguments = ["--ai-ui-test", "--video-circle-ui-test"]
+            }
+            app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = account
+            app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+                "local sync UI test passphrase"
+            app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18290"
+            app.launchEnvironment["MAICHAT_LOCAL_VIDEO_CIRCLE_URL"] =
+                "https://localhost:18445"
+            app.launchEnvironment["MAICHAT_LOCAL_VIDEO_CIRCLE_CA_BASE64"] =
+                certificate.base64EncodedString()
+            app.launch()
+            return app
+        }
+        func capture(_ app: XCUIApplication, _ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        func fixtureStatus() async throws -> [String: Any] {
+            let (data, response) = try await URLSession.shared.data(
+                from: fixture.appendingPathComponent("test/video-circle/status"))
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+
+        let baseline = try await fixtureStatus()
+        let baselineIDs = Set(((baseline["posts"] as? [[String: Any]]) ?? [])
+            .compactMap { $0["id"] as? String })
+        let baselineObjects = baseline["objects"] as? Int ?? 0
+
+        let author = launch(account: "sync-ui-test")
+        let publish = author.buttons["ai-video-circle-publish-circle-sourced"]
+        XCTAssertTrue(publish.waitForExistence(timeout: 40))
+        XCTAssertFalse(author.buttons["ai-video-circle-publish-circle-legacy"].exists)
+        capture(author, "circle-author-sourced-and-legacy-cards")
+        publish.tap()
+        let submit = author.buttons["video-circle-submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 10))
+        XCTAssertTrue(author.staticTexts["AI 生成"].exists)
+        capture(author, "circle-publication-confirmation")
+        submit.tap()
+        let mine = author.buttons["video-circle-mine-tab"]
+        XCTAssertTrue(mine.waitForExistence(timeout: 180))
+        mine.tap()
+        XCTAssertTrue(author.staticTexts["待审核"].waitForExistence(timeout: 15))
+        capture(author, "circle-author-pending")
+        let pendingStatus = try await fixtureStatus()
+        let pendingPosts = try XCTUnwrap(pendingStatus["posts"] as? [[String: Any]])
+        let createdPost = try XCTUnwrap(pendingPosts.first {
+            guard let id = $0["id"] as? String else { return false }
+            return !baselineIDs.contains(id)
+        })
+        XCTAssertEqual(createdPost["status"] as? String, "pending")
+        XCTAssertEqual(pendingStatus["objects"] as? Int, baselineObjects + 1)
+        let postID = try XCTUnwrap(createdPost["id"] as? String)
+        author.terminate()
+
+        // A second logged-in account must not see a pending video.
+        let viewer = launch(account: "sync-ui-viewer")
+        let circleEntry = viewer.buttons["ai-video-circle-entry"]
+        XCTAssertTrue(circleEntry.waitForExistence(timeout: 35))
+        circleEntry.tap()
+        XCTAssertTrue(viewer.staticTexts["还没有公开视频"].waitForExistence(timeout: 12))
+        capture(viewer, "circle-viewer-pending-is-private")
+        viewer.terminate()
+
+        let approvalURL = fixture.appendingPathComponent("test/video-circle/approve")
+        var approval = URLComponents(url: approvalURL, resolvingAgainstBaseURL: false)!
+        approval.queryItems = [URLQueryItem(name: "post_id", value: postID)]
+        let (_, approvalResponse) = try await URLSession.shared.data(from: try XCTUnwrap(approval.url))
+        XCTAssertEqual((approvalResponse as? HTTPURLResponse)?.statusCode, 200)
+
+        let approvedViewer = launch(account: "sync-ui-viewer")
+        XCTAssertTrue(approvedViewer.buttons["ai-video-circle-entry"].waitForExistence(timeout: 35))
+        approvedViewer.buttons["ai-video-circle-entry"].tap()
+        let play = approvedViewer.buttons["video-circle-play-\(postID)"]
+        XCTAssertTrue(play.waitForExistence(timeout: 20))
+        capture(approvedViewer, "circle-viewer-approved-feed")
+        play.tap()
+        let closePlayer = approvedViewer.buttons["ffplay-close"]
+        XCTAssertTrue(closePlayer.waitForExistence(timeout: 120))
+        capture(approvedViewer, "circle-viewer-ffplay")
+        closePlayer.tap()
+        approvedViewer.terminate()
+
+        // Exercise the same approved post from the normal, logged-in App shell.
+        let normalViewer = launch(account: "sync-ui-viewer", normalApp: true)
+        let creationCenter = normalViewer.buttons["创作中心"]
+        XCTAssertTrue(creationCenter.waitForExistence(timeout: 35))
+        normalViewer.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let normalCircle = normalViewer.buttons["ai-video-circle-entry"]
+        XCTAssertTrue(normalCircle.waitForExistence(timeout: 35))
+        capture(normalViewer, "circle-normal-app-entry")
+        normalViewer.coordinate(withNormalizedOffset: CGVector(dx: 0.82, dy: 0.10)).tap()
+        let normalPlay = normalViewer.buttons["video-circle-play-\(postID)"]
+        XCTAssertTrue(normalPlay.waitForExistence(timeout: 20))
+        capture(normalViewer, "circle-normal-app-feed")
+        normalPlay.tap()
+        let normalClosePlayer = normalViewer.buttons["ffplay-close"]
+        XCTAssertTrue(normalClosePlayer.waitForExistence(timeout: 120))
+        capture(normalViewer, "circle-normal-app-playing")
+        normalClosePlayer.tap()
+        normalViewer.buttons["video-circle-close"].tap()
+        XCTAssertTrue(normalViewer.buttons["ai-video-circle-entry"].waitForExistence(timeout: 10))
+        normalViewer.coordinate(withNormalizedOffset: CGVector(dx: 0.82, dy: 0.10)).tap()
+        XCTAssertTrue(normalViewer.buttons["video-circle-play-\(postID)"].waitForExistence(timeout: 15))
+        normalViewer.buttons["video-circle-close"].tap()
+        XCTAssertTrue(normalViewer.buttons["ai-video-circle-entry"].waitForExistence(timeout: 10))
+        capture(normalViewer, "circle-normal-app-returned")
+        normalViewer.terminate()
+
+        let returningAuthor = launch(account: "sync-ui-test")
+        XCTAssertTrue(returningAuthor.buttons["ai-video-circle-entry"].waitForExistence(timeout: 35))
+        returningAuthor.buttons["ai-video-circle-entry"].tap()
+        returningAuthor.buttons["video-circle-mine-tab"].tap()
+        XCTAssertTrue(returningAuthor.staticTexts["已公开"].waitForExistence(timeout: 15))
+        returningAuthor.buttons["管理作品"].tap()
+        returningAuthor.buttons["撤回作品"].tap()
+        returningAuthor.buttons["撤回作品"].tap()
+        XCTAssertTrue(returningAuthor.staticTexts["已撤回"].waitForExistence(timeout: 20))
+        XCTAssertFalse(returningAuthor.staticTexts["null"].exists)
+        capture(returningAuthor, "circle-author-withdrawn")
+        let withdrawnStatus = try await fixtureStatus()
+        let withdrawnPosts = try XCTUnwrap(withdrawnStatus["posts"] as? [[String: Any]])
+        XCTAssertEqual(withdrawnPosts.first { $0["id"] as? String == postID }?["status"] as? String,
+                       "withdrawn")
+        XCTAssertEqual(withdrawnStatus["objects"] as? Int, baselineObjects)
+        returningAuthor.terminate()
+        #else
+        throw XCTSkip("视频圈双账号 UI 测试只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testIMCurlAttachmentDownloadLocalTLS() async throws {
+        #if targetEnvironment(simulator)
+        let certificateURL = try XCTUnwrap(URL(string: "http://127.0.0.1:18441/cert"))
+        let (certificate, _) = try await URLSession.shared.data(from: certificateURL)
+        XCTAssertFalse(certificate.isEmpty)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-curl-download-ui-test"]
+        app.launchEnvironment["MAICHAT_MEDIA_TEST_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+        let passed = app.staticTexts["im-media-all-ok"].waitForExistence(timeout: 45)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "ios-shared-curl-image-file-account-cancel-\(passed ? "passed" : "failed")"
+        capture.lifetime = .keepAlways
+        add(capture)
+        XCTAssertTrue(passed, "iOS shared-curl transfer failed: \(app.staticTexts["im-media-result"].label)")
+        #else
+        throw XCTSkip("Local TLS attachment fixture runs in the iOS simulator")
+        #endif
+    }
+
+    @MainActor func testRealDeviceDeepSeekReasoningEfforts() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("此用例只在已登录的真机上调用真实 DeepSeek")
+        #else
+        guard ProcessInfo.processInfo.environment["MAICHAT_REAL_DEEPSEEK_EFFORT_TEST"] == "1" else {
+            throw XCTSkip("真实模型调用需显式启用")
+        }
+        executionTimeAllowance = 600
+        let app = XCUIApplication()
+        app.launch()
+        guard app.buttons["创作中心"].waitForExistence(timeout: 30) else {
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "real-deepseek-login-required"
+            capture.lifetime = .keepAlways
+            add(capture)
+            XCTFail("真机尚未登录 MaiChat")
+            return
+        }
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+        app.buttons["对话列表"].tap()
+        let create = app.buttons["ai-session-drawer"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        create.tap()
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+
+        for (title, marker) in [("简单", "LOWOK"), ("标准", "HIGHOK"), ("深度", "MAXOK")] {
+            app.buttons["更多"].tap()
+            let effort = app.buttons["思考强度"]
+            XCTAssertTrue(effort.waitForExistence(timeout: 5))
+            effort.tap()
+            app.buttons[title].tap()
+            let saved = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", title), object: effort)
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed)
+
+            // The first tap outside the actions menu dismisses its full-screen backdrop.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)).tap()
+            composer.tap()
+            composer.typeText("请只回复这个字符串：\(marker)")
+            let send = app.buttons["ai-send-draft"]
+            XCTAssertTrue(send.waitForExistence(timeout: 10))
+            send.tap()
+            let answer = app.staticTexts[marker]
+            let responded = answer.waitForExistence(timeout: 150)
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "real-deepseek-\(title)-\(responded ? "success" : "failure")"
+            capture.lifetime = .keepAlways
+            add(capture)
+            XCTAssertTrue(responded, "真实 DeepSeek 未返回预期的 \(marker)；请查看截图中的错误")
+        }
+        #endif
+    }
+
     @MainActor func testConnectedDeviceShowsProductionSessionDirectory() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("此用例只验收已连接 iPhone 的正式账号路径")
@@ -118,7 +925,7 @@ final class AIAssistantUITests: XCTestCase {
         let echoed = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "从 iPhone 请求本机假 Mac")
         ).firstMatch
-        XCTAssertTrue(echoed.waitForExistence(timeout: 30))
+        XCTAssertTrue(echoed.waitForExistence(timeout: 1), "发送端应先显示自己的消息")
 
         composer.tap()
         composer.typeText("请拒绝此操作")
@@ -130,6 +937,631 @@ final class AIAssistantUITests: XCTestCase {
         rejected.name = "normal-app-remote-rejection-restores-draft"
         rejected.lifetime = .keepAlways
         add(rejected)
+    }
+
+    @MainActor func testRemoteSessionCanBeCreatedAndDeletedOnFakeMac() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+        let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        let drawer = app.scrollViews["ai-session-drawer"]
+        let create = app.buttons["ai-remote-create-mac:localmacfixture"]
+        for _ in 0..<8 where !create.isHittable { drawer.swipeUp() }
+        XCTAssertTrue(create.waitForExistence(timeout: 30),
+                      "在线 Mac 的设备标题应提供远端新建入口")
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "remote-session-create-entry"
+        before.lifetime = .keepAlways
+        add(before)
+        create.tap()
+        let createdID = "mac:localmacfixture:ses_remote_created_1"
+        let remote = app.buttons["ai-remote-conversation-\(createdID)"]
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        XCTAssertTrue(remote.waitForExistence(timeout: 30),
+                      "Mac 已创建的对话没有同步回 iPhone 目录")
+        let remove = app.buttons["ai-remote-delete-\(createdID)"]
+        XCTAssertTrue(remove.exists)
+        remove.tap()
+        app.buttons["删除对话"].tap()
+        let alert = app.alerts["删除远端对话"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let confirmation = XCTAttachment(screenshot: app.screenshot())
+        confirmation.name = "remote-session-delete-confirmation"
+        confirmation.lifetime = .keepAlways
+        add(confirmation)
+        alert.buttons["取消"].tap()
+        XCTAssertTrue(remote.exists, "取消删除必须保留对话")
+        remove.tap()
+        app.buttons["删除对话"].tap()
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["删除"].tap()
+        let removed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: remote)
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 30), .completed)
+        let (statusData, _) = try await URLSession.shared.data(from: statusURL)
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: statusData) as? [String: Any])
+        XCTAssertFalse((status["macSessions"] as? [String] ?? [])
+            .contains("ses_remote_created_1"))
+    }
+
+    @MainActor func testRemoteCreateToolOnMac() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL"] = "1"
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertTrue(app.buttons["ai-remote-create-mac:localmacfixture"]
+            .waitForExistence(timeout: 30))
+        app.scrollViews["ai-session-drawer"].swipeLeft()
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("remote-session-create-tool")
+        app.buttons["ai-send-draft"].tap()
+        XCTAssertTrue(app.staticTexts["REMOTE_CREATE_TOOL_DONE"].waitForExistence(timeout: 30))
+        let (data, _) = try await URLSession.shared.data(from: statusURL)
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertTrue((status["modelCalls"] as? [String] ?? [])
+            .contains("remote_session_create"))
+        let requests = status["modelRequests"] as? [[String: Any]] ?? []
+        XCTAssertTrue(requests.contains(where: {
+            ($0["toolOutputText"] as? String ?? "").contains("session_id")
+        }), "Agent 工具未返回所属设备创建的 Session ID")
+        XCTAssertTrue((status["macSessions"] as? [String] ?? [])
+            .contains(where: { $0.hasPrefix("ses_remote_created_") }))
+    }
+
+    @MainActor func testRemoteDeleteToolRequiresApprovalOnIPhone() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL"] = "1"
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 20))
+        composer.tap()
+        composer.typeText("remote-session-delete-tool")
+        app.buttons["ai-send-draft"].tap()
+        let approve = app.buttons["允许一次"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 30),
+                      "远端删除工具应要求本次批准")
+        XCTAssertFalse(app.buttons["本会话允许"].exists,
+                       "删除远端对话不得整会话放行")
+        let (beforeData, _) = try await URLSession.shared.data(from: statusURL)
+        let before = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: beforeData) as? [String: Any])
+        XCTAssertTrue((before["macSessions"] as? [String] ?? [])
+            .contains("ses_mock_mac"), "批准前不得删除所属设备的对话")
+        approve.tap()
+        XCTAssertTrue(app.staticTexts["REMOTE_DELETE_TOOL_DONE"]
+            .waitForExistence(timeout: 30))
+        let (afterData, _) = try await URLSession.shared.data(from: statusURL)
+        let after = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: afterData) as? [String: Any])
+        XCTAssertFalse((after["macSessions"] as? [String] ?? [])
+            .contains("ses_mock_mac"))
+        XCTAssertTrue((after["modelCalls"] as? [String] ?? [])
+            .contains("remote_session_delete"))
+        let requests = after["modelRequests"] as? [[String: Any]] ?? []
+        XCTAssertTrue(requests.contains(where: {
+            ($0["toolOutputText"] as? String ?? "").contains("session_id")
+        }), "Agent 删除工具未返回所属设备的确认结果")
+    }
+
+    @MainActor func testRemoteWorkspaceToolOnMac() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL"] = "1"
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 20))
+        composer.tap()
+        composer.typeText("remote-session-workspace-tool")
+        app.buttons["ai-send-draft"].tap()
+        let approve = app.buttons["允许一次"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 30),
+                      "远端 Workspace 工具应要求本次批准")
+        let (beforeData, _) = try await URLSession.shared.data(from: statusURL)
+        let before = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: beforeData) as? [String: Any])
+        XCTAssertTrue((before["workspaceSwitches"] as? [[String: String]] ?? []).isEmpty,
+                      "批准前不得执行远端 Workspace 切换")
+        approve.tap()
+        XCTAssertTrue(app.staticTexts["REMOTE_WORKSPACE_TOOL_DONE"]
+            .waitForExistence(timeout: 30))
+        let (afterData, _) = try await URLSession.shared.data(from: statusURL)
+        let after = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: afterData) as? [String: Any])
+        XCTAssertTrue((after["modelCalls"] as? [String] ?? [])
+            .contains("remote_session_set_workspace"))
+        XCTAssertTrue((after["workspaceSwitches"] as? [[String: String]] ?? [])
+            .contains { $0["session_id"] == "ses_mock_mac" &&
+                $0["workspace_path"] == "/tmp" })
+        let requests = after["modelRequests"] as? [[String: Any]] ?? []
+        XCTAssertTrue(requests.contains(where: {
+            ($0["toolOutputText"] as? String ?? "").contains("workspace_path")
+        }), "Agent 工具未返回目标设备的 Workspace")
+    }
+
+    @MainActor func testRemoteMacPermissionCanBeApprovedOnIPhone() async throws {
+        let base = "http://127.0.0.1:18190"
+        let statusURL = URL(string: base + "/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: base + "/test/cert")!)
+        let (_, setupResponse) = try await URLSession.shared.data(from:
+            URL(string: base + "/test/mac-permission")!)
+        XCTAssertEqual((setupResponse as? HTTPURLResponse)?.statusCode, 200)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        let remote = app.buttons["ai-remote-conversation-mac:localmacfixture:ses_mock_mac"]
+        for _ in 0..<8 where !remote.isHittable {
+            app.scrollViews["ai-session-drawer"].swipeUp()
+        }
+        XCTAssertTrue(remote.waitForExistence(timeout: 30))
+        remote.tap()
+        let approve = app.buttons["允许一次"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 30),
+                      "Mac Agent 的审批应在远端 iPhone 会话中显示")
+        XCTAssertFalse(app.buttons["本会话允许"].exists,
+                       "删除远端 Session 只能逐次批准")
+        approve.tap()
+        var decisions: [String] = []
+        for _ in 0..<20 {
+            let (data, _) = try await URLSession.shared.data(from: statusURL)
+            let status = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data) as? [String: Any])
+            decisions = status["macPermissionDecisions"] as? [String] ?? []
+            if decisions.contains("approved") { break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertTrue(decisions.contains("approved"),
+                      "iPhone 没有以统一协议回传批准决定")
+    }
+
+    @MainActor func testLiveIPhoneCreatesAndDeletesMacSession() async throws {
+        guard ProcessInfo.processInfo.environment["MAICHAT_LIVE_SESSION_LIFECYCLE_TEST"] == "1" else {
+            throw XCTSkip("仅在用户授权真实双端验收时运行")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        let creationCenter = app.buttons["创作中心"]
+        guard creationCenter.waitForExistence(timeout: 30) else {
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "live-session-lifecycle-login-required"
+            capture.lifetime = .keepAlways
+            add(capture)
+            XCTFail("iPhone 必须已登录真实 MaiChat 账号")
+            return
+        }
+        creationCenter.tap()
+        let conversations = app.buttons["对话列表"]
+        guard conversations.waitForExistence(timeout: 20) else {
+            XCTFail("打开创作中心后未出现对话列表")
+            return
+        }
+        let drawer = app.descendants(matching: .any)
+            .matching(identifier: "ai-session-drawer").firstMatch
+        if !drawer.exists { conversations.tap() }
+        guard drawer.waitForExistence(timeout: 5) else {
+            XCTFail("会话侧栏或抽屉未打开")
+            return
+        }
+        let list = drawer.scrollViews.firstMatch
+        guard list.waitForExistence(timeout: 5) else {
+            XCTFail("会话列表未出现")
+            return
+        }
+        let create = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "ai-remote-create-mac:"
+        )).firstMatch
+        for _ in 0..<12 {
+            if create.isHittable { break }
+            list.swipeUp()
+        }
+        guard create.isHittable, create.isEnabled else {
+            XCTFail("在线 Mac 的新建对话入口未出现在会话列表")
+            return
+        }
+        let deviceID = String(create.identifier.dropFirst("ai-remote-create-".count))
+        let macHeader = app.buttons["ai-session-device-\(deviceID)"]
+        let prefix = "ai-remote-conversation-\(deviceID):"
+        let rows = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", prefix
+        ))
+        func macSessionCount() -> Int? {
+            let countLabel = macHeader.label.components(separatedBy: "，").last ?? ""
+            return Int(countLabel.components(separatedBy: " ").first ?? "")
+        }
+        guard macHeader.exists, let originalCount = macSessionCount() else {
+            XCTFail("无法读取 Mac 会话数量；停止以免误删已有对话")
+            return
+        }
+        var before = Set<String>()
+        for _ in 0..<12 {
+            before.formUnion(rows.allElementsBoundByIndex.map(\.identifier))
+            if before.count == originalCount { break }
+            list.swipeUp()
+        }
+        guard before.count == originalCount else {
+            XCTFail("没有读全 Mac 原有会话；停止以免误删已有对话")
+            return
+        }
+        for _ in 0..<12 {
+            if create.isHittable { break }
+            list.swipeDown()
+        }
+        guard create.isHittable else {
+            XCTFail("无法重新定位 Mac 新建入口")
+            return
+        }
+        create.tap()
+        // 竖屏创建成功会关闭抽屉；横屏侧栏始终可见，点标题按钮反会将其收起。
+        let wideLayout = app.frame.width >= 700 && app.frame.width > app.frame.height
+        if !wideLayout {
+            for _ in 0..<120 {
+                if !drawer.exists { break }
+                try await Task.sleep(for: .milliseconds(300))
+            }
+            guard !drawer.exists else {
+                XCTFail("远端新建未完成或抽屉未关闭；停止删除操作")
+                return
+            }
+            conversations.tap()
+        }
+        guard drawer.waitForExistence(timeout: 5) else {
+            XCTFail("创建后会话列表未出现")
+            return
+        }
+        for _ in 0..<50 {
+            if macSessionCount() == originalCount + 1 { break }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        guard macSessionCount() == originalCount + 1 else {
+            XCTFail("Mac 创建后会话数量未增加一条；停止删除操作")
+            return
+        }
+        var added = Set<String>()
+        for _ in 0..<12 {
+            added.formUnion(rows.allElementsBoundByIndex.map(\.identifier).filter {
+                !before.contains($0)
+            })
+            if added.count == 1 { break }
+            list.swipeUp()
+        }
+        guard added.count == 1, let created = added.first else {
+            XCTFail("无法唯一确定刚创建的 Mac 会话；停止删除操作")
+            return
+        }
+        let createdCapture = XCTAttachment(screenshot: app.screenshot())
+        createdCapture.name = "live-iphone-created-mac-session"
+        createdCapture.lifetime = .keepAlways
+        add(createdCapture)
+        let target = String(created.dropFirst("ai-remote-conversation-".count))
+        let remove = app.buttons["ai-remote-delete-\(target)"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.tap()
+        app.buttons["删除对话"].tap()
+        let alert = app.alerts["删除远端对话"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.buttons["删除"].tap()
+        let deleted = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.buttons[created])
+        XCTAssertEqual(XCTWaiter.wait(for: [deleted], timeout: 30), .completed,
+                       "Mac 没有删除刚才创建的测试 Session")
+    }
+
+    @MainActor func testFakeMacCreatesAndDeletesIPhoneSession() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+
+        func issue(_ action: String, target: String = "") async throws -> String {
+            var components = URLComponents(string: "http://127.0.0.1:18190/test/phone-lifecycle")!
+            components.queryItems = [URLQueryItem(name: "action", value: action)]
+            if !target.isEmpty {
+                components.queryItems?.append(URLQueryItem(name: "target", value: target))
+            }
+            var request = URLRequest(url: try XCTUnwrap(components.url))
+            request.httpMethod = "POST"
+            let (data, response) = try await URLSession.shared.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            return try XCTUnwrap(object["command_id"] as? String)
+        }
+
+        func awaitResult(_ commandID: String) async throws -> [String: Any] {
+            for _ in 0..<60 {
+                let (data, _) = try await URLSession.shared.data(from: statusURL)
+                let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let results = status["phoneLifecycleResults"] as? [[String: Any]] ?? []
+                if let result = results.first(where: { $0["command_id"] as? String == commandID }) {
+                    return try XCTUnwrap(result["result"] as? [String: Any])
+                }
+                try await Task.sleep(for: .milliseconds(500))
+            }
+            XCTFail("iPhone 没有返回 Session 操作结果")
+            return [:]
+        }
+
+        var createID = ""
+        for _ in 0..<40 {
+            let (data, _) = try await URLSession.shared.data(from: statusURL)
+            let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            if (status["slots"] as? [String] ?? []).contains("ios_phone") {
+                createID = try await issue("session_create")
+                break
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertFalse(createID.isEmpty, "iPhone 没有上线")
+        let createResult = try await awaitResult(createID)
+        XCTAssertEqual(createResult["ok"] as? Bool, true)
+        let sessionID = try XCTUnwrap(createResult["session_id"] as? String)
+        XCTAssertFalse(sessionID.isEmpty)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+            .press(forDuration: 0.05,
+                   thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5)))
+        XCTAssertTrue(app.buttons["ai-conversation-\(sessionID)"].waitForExistence(timeout: 10))
+        let temporaryIMError = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 操作失败")
+        ).firstMatch
+        if temporaryIMError.exists { temporaryIMError.tap() }
+        let created = XCTAttachment(screenshot: app.screenshot())
+        created.name = "phone-owner-session-created-remotely"
+        created.lifetime = .keepAlways
+        add(created)
+
+        var advertised = false
+        for _ in 0..<30 {
+            let (data, _) = try await URLSession.shared.data(from: statusURL)
+            let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            if (status["phoneSessions"] as? [String] ?? []).contains(sessionID) {
+                advertised = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        XCTAssertTrue(advertised, "iPhone 创建后没有更新设备目录")
+        let deleteID = try await issue("session_delete", target: sessionID)
+        let deleteResult = try await awaitResult(deleteID)
+        XCTAssertEqual(deleteResult["ok"] as? Bool, true)
+        XCTAssertEqual(deleteResult["session_id"] as? String, sessionID)
+        var removed = false
+        for _ in 0..<30 {
+            let (data, _) = try await URLSession.shared.data(from: statusURL)
+            let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            if !(status["phoneSessions"] as? [String] ?? []).contains(sessionID) {
+                removed = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        XCTAssertTrue(removed, "iPhone 删除后目录仍包含原 Session")
+    }
+
+    @MainActor func testPhoneSessionPublishesSharedRoomMessages() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机无付费 Session 同步服务")
+        }
+        let certificateURL = URL(string: "http://127.0.0.1:18190/test/cert")!
+        let (certificate, _) = try await URLSession.shared.data(from: certificateURL)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL"] = "1"
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+
+        func sendFixture(_ path: String) async throws -> Int {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:18190/test/\(path)")!)
+            request.httpMethod = "POST"
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode ?? 0
+        }
+        var subscribed = false
+        for _ in 0..<40 {
+            if try await sendFixture("phone-subscribe") == 200 {
+                subscribed = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertTrue(subscribed, "iPhone 未上报本地会话")
+        let promptStatus = try await sendFixture("phone-prompt")
+        XCTAssertEqual(promptStatus, 200)
+
+        var receivedReply = false
+        var receivedCanonicalPrompt = false
+        for _ in 0..<60 {
+            let (data, _) = try await URLSession.shared.data(from: statusURL)
+            let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let events = status["phoneEvents"] as? [[String: Any]] ?? []
+            for event in events where event["kind"] as? String == "event" {
+                let body = event["body"] as? [String: Any] ?? [:]
+                guard let messages = body["messages"] as? [[String: Any]] else { continue }
+                for message in messages {
+                    let parts = message["parts"] as? [[String: Any]] ?? []
+                    let text = parts.compactMap { $0["text"] as? String }.joined()
+                    if message["role"] as? String == "assistant", text.contains("收到") {
+                        receivedReply = true
+                    }
+                    if message["role"] as? String == "user", text == "你好" {
+                        receivedCanonicalPrompt = true
+                    }
+                }
+            }
+            if receivedReply && receivedCanonicalPrompt { break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertTrue(receivedReply, "iPhone 未通过 WebSocket 推送 AI 回复")
+        XCTAssertTrue(receivedCanonicalPrompt, "共享群消息中缺少用户的正式消息")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "phone-session-remote-prompt-and-reply"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    @MainActor func testCameraAgentCommandsReturnWithoutWaitingForShutter() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机无付费模型测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL"] = "1"
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 20))
+        let send = app.buttons["ai-send-draft"]
+        for (command, answer) in [("camera-open", "CAMERA_OPEN_DONE")] {
+            composer.tap()
+            composer.typeText(command)
+            XCTAssertTrue(send.waitForExistence(timeout: 10))
+            send.tap()
+            XCTAssertTrue(app.staticTexts[answer].waitForExistence(timeout: 15),
+                          "相机工具 \(command) 阻塞了后续 Agent 回答")
+        }
+        let cameraDismiss = app.buttons["DismissImagePickerButton"]
+        XCTAssertTrue(cameraDismiss.waitForExistence(timeout: 10), "相机预览没有保持打开")
+        let opened = XCTAttachment(screenshot: app.screenshot())
+        opened.name = "agent-camera-open-before-remote-close"
+        opened.lifetime = .keepAlways
+        add(opened)
+        var closeDelivered = false
+        for _ in 0..<20 {
+            var request = URLRequest(url: URL(string:
+                "http://127.0.0.1:18190/test/phone-prompt?text=camera-close")!)
+            request.httpMethod = "POST"
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 200 {
+                closeDelivered = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertTrue(closeDelivered, "远端设备未找到 iPhone 的 Session")
+        for _ in 0..<30 {
+            if composer.isHittable { break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertTrue(composer.isHittable, "Agent 的 close 没有关闭相机预览")
+        XCTAssertFalse(cameraDismiss.exists)
+        XCTAssertTrue(app.staticTexts["CAMERA_CLOSE_DONE"].waitForExistence(timeout: 15))
+        let closed = XCTAttachment(screenshot: app.screenshot())
+        closed.name = "agent-camera-closed-after-remote-command"
+        closed.lifetime = .keepAlways
+        add(closed)
+        composer.tap()
+        composer.typeText("camera-status")
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        send.tap()
+        XCTAssertTrue(app.staticTexts["CAMERA_STATUS_DONE"].waitForExistence(timeout: 15))
+        let (data, _) = try await URLSession.shared.data(from: statusURL)
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let calls = status["modelCalls"] as? [String] ?? []
+        XCTAssertTrue(calls.suffix(3).elementsEqual(["open", "close", "status"]))
     }
 
     @MainActor func testProductionWebSocketReadsFakeMacHistory() throws {
@@ -593,6 +2025,10 @@ final class AIAssistantUITests: XCTestCase {
         conversation.tap()
         XCTAssertTrue(app.buttons["chatMoreMenu"].waitForExistence(timeout: 15))
         XCTAssertFalse(conversation.isHittable)
+        let detail = XCTAttachment(screenshot: app.screenshot())
+        detail.name = "im-detail-status-and-header-background"
+        detail.lifetime = .keepAlways
+        add(detail)
     }
 
     func testLargeIMConversationShowsOnlyRenderedRecentPage() throws {
@@ -1084,7 +2520,7 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["测试音乐"].waitForExistence(timeout: 5))
     }
 
-    func testModelChipOffersTextAndVisionModels() throws {
+    func testThinkingEffortOffersThreeDeepSeekLevels() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test"]
         app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
@@ -1092,14 +2528,23 @@ final class AIAssistantUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["更多"].waitForExistence(timeout: 15))
         app.buttons["更多"].tap()
-        let model = app.buttons["模型"]
-        XCTAssertTrue(model.waitForExistence(timeout: 3))
-        model.tap()
+        let effort = app.buttons["思考强度"]
+        XCTAssertTrue(effort.waitForExistence(timeout: 3))
+        effort.tap()
         let menu = app.descendants(matching: .any)
-            .matching(identifier: "ai-model-menu").firstMatch
+            .matching(identifier: "ai-effort-menu").firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["glm-5.3"].isHittable)
-        XCTAssertTrue(app.buttons["glm-5.3-flash"].isHittable)
+        XCTAssertTrue(app.buttons["简单"].isHittable)
+        XCTAssertTrue(app.buttons["标准"].isHittable)
+        XCTAssertTrue(app.buttons["深度"].isHittable)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "deepseek-reasoning-effort-menu"
+        capture.lifetime = .keepAlways
+        add(capture)
+        app.buttons["深度"].tap()
+        let saved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "深度"), object: effort)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
     }
 
     func testConversationDrawerContainsNewConversationAction() throws {
@@ -1156,7 +2601,7 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertLessThan(policyMenu.frame.width, app.frame.width * 0.75)
         app.buttons["完全访问"].tap()
 
-        XCTAssertTrue(app.buttons["模型"].exists)
+        XCTAssertTrue(app.buttons["思考强度"].exists)
         XCTAssertTrue(app.buttons["清空当前对话"].exists)
         XCTAssertFalse(app.buttons["模型配置"].exists)
     }

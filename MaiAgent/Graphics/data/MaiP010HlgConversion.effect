@@ -1,0 +1,100 @@
+/******************************************************************************
+ Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 2 of the License, or
+ (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+******************************************************************************/
+
+// The P010 HLG reverse path from OBS format_conversion.effect. Keep the
+// conversion and uniforms identical while compiling only the technique used
+// by iPhone HDR camera video on its first frame.
+#include "color.effect"
+
+uniform float width;
+uniform float height;
+uniform float width_d2;
+uniform float height_d2;
+uniform float width_x2_i;
+uniform float height_x2_i;
+uniform float maximum_over_sdr_white_nits;
+uniform float hlg_exponent;
+uniform float hdr_lw;
+uniform float hdr_lmax;
+
+uniform float4 color_vec0;
+uniform float4 color_vec1;
+uniform float4 color_vec2;
+uniform float3 color_range_min = {0.0, 0.0, 0.0};
+uniform float3 color_range_max = {1.0, 1.0, 1.0};
+
+uniform texture2d image;
+uniform texture2d image1;
+
+sampler_state def_sampler {
+    Filter = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+struct VertTexPos {
+    float2 uv : TEXCOORD0;
+    float4 pos : POSITION;
+};
+
+VertTexPos VS420TopLeft_Reverse(uint id : VERTEXID)
+{
+    float idHigh = float(id >> 1);
+    float idLow = float(id & uint(1));
+
+    float x = idHigh * 4. - 1.;
+    float y = idLow * 4. - 1.;
+
+    float u = idHigh * 2. + width_x2_i;
+    float v = idLow * 2. - height_x2_i;
+    v = obs_glsl_compile ? v : (1. - v);
+
+    VertTexPos vert_out;
+    vert_out.uv = float2(u, v);
+    vert_out.pos = float4(x, y, 0., 1.);
+    return vert_out;
+}
+
+float3 YUV_to_RGB(float3 yuv)
+{
+    yuv = clamp(yuv, color_range_min, color_range_max);
+    float r = dot(color_vec0.xyz, yuv) + color_vec0.w;
+    float g = dot(color_vec1.xyz, yuv) + color_vec1.w;
+    float b = dot(color_vec2.xyz, yuv) + color_vec2.w;
+    return float3(r, g, b);
+}
+
+float4 PSP010_HLG_2020_709_Reverse(VertTexPos frag_in) : TARGET
+{
+    float y = image.Load(int3(frag_in.pos.xy, 0)).x;
+    float2 cbcr = image1.Sample(def_sampler, frag_in.uv).xy;
+    float3 yuv_65535 = floor(float3(y, cbcr) * 65535. + 0.5);
+    float3 yuv_1023 = floor(yuv_65535 * 0.015625);
+    float3 yuv = yuv_1023 / 1023.;
+    float3 hlg = YUV_to_RGB(yuv);
+    float3 hdr2020 = hlg_to_linear(hlg, hlg_exponent) * maximum_over_sdr_white_nits;
+    float3 rgb = rec2020_to_rec709(hdr2020);
+    return float4(rgb, 1.);
+}
+
+technique P010_HLG_2020_709_Reverse
+{
+    pass {
+        vertex_shader = VS420TopLeft_Reverse(id);
+        pixel_shader = PSP010_HLG_2020_709_Reverse(frag_in);
+    }
+}

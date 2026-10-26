@@ -2,6 +2,7 @@
 // 直接依赖：MaiMobileHostTools.h、MaiAgent.h、MaiAgentSendMediaTool.h、MaiAppStorageTool.h；实现与这些接口协作。
 #include "MaiMobileAgent.h"
 #include "MaiMobileHostTools.h"
+#include "MaiCloudDriveTools.h"
 
 #include "MaiAgent.h"
 #include "MaiAgentSendMediaTool.h"
@@ -25,6 +26,7 @@
 #include "MaiOpenSslTool.h"
 #include "MaiPdfTool.h"
 #include "MaiQuestionTool.h"
+#include "MaiSessionTools.h"
 #include "MaiSqliteStore.h"
 #include "MaiSshTool.h"
 #include "MaiSystemResourcesTool.h"
@@ -348,6 +350,7 @@ struct MaiMobileAgent {
     bool configured = false;
     const void* ortApiBase = nullptr;
     std::shared_ptr<MaiMobileHostDispatcher> hostTools = makeMaiMobileHostDispatcher();
+    MaiMobileAgentChangeHandler changeHandler = nullptr;
     // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
     std::unique_ptr<MaiAgent> agent;
 
@@ -393,6 +396,8 @@ struct MaiMobileAgent {
         auto tools = std::make_unique<MaiToolRegistry>();
         // 两个移动端只提供真实可用的本地文件和网络工具，不暴露桌面 shell。
         registerMaiFileTools(*tools);
+        // 移动宿主的媒体与导出工具仍使用统一的默认工作目录，不能只切换 Agent 会话路径。
+        registerMaiSessionTools(*tools, /*includeWorkspaceSwitch=*/false);
         registerMaiCurlTools(*tools, config.caBundlePath);
         tools->add(makeMaiZlibCompressTool());
         tools->add(makeMaiZlibDecompressTool());
@@ -555,9 +560,22 @@ struct MaiMobileAgent {
                                          Json{{"html", html}, {"output_path", output}}.dump());
         }));
         registerMaiChatHostTools(*tools, hostTools);
+        registerMaiCloudDriveTools(
+            *tools, [dispatcher = hostTools](const std::string& name,
+                                             const std::string& argumentsJson,
+                                             const MaiToolContext&) {
+                return callMaiMobileHostTool(dispatcher, name, argumentsJson);
+            });
+#if defined(__ANDROID__)
+        registerMobileScreenCaptureTools(*tools, hostTools);
+#endif
         registerMobilePhotoTools(*tools, hostTools);
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
+        options.reasoningEffort = request.value("reasoningEffort", std::string("high"));
+        if (options.reasoningEffort != "low" && options.reasoningEffort != "high" &&
+            options.reasoningEffort != "max")
+            throw std::runtime_error("Unsupported DeepSeek reasoning effort.");
         options.fileAccessRoot = request.value("appRoot", request.at("workspace").get<std::string>());
         options.decodeText = [dispatcher = hostTools](const std::string& bytes,
                                                       const std::string& encoding) -> MaiResult<std::string> {
@@ -591,13 +609,18 @@ struct MaiMobileAgent {
         cachedMessages.clear();
         agent->eventBus().subscribe([this](const MaiEvent& event) {
             // 网络线程只合并增量，不读数据库、不解析 Markdown、不调用 UI。
-            std::lock_guard<std::mutex> lock(mutex);
-            dirty = true;
-            if (event.type == MaiEventType::MessagePartDelta)
-                pendingDeltas[event.partId] += event.delta;
-            else
-                structureChanged = true;
-            if (event.type == MaiEventType::SessionError) errors[event.sessionId] = event.detail;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                dirty = true;
+                if (event.type == MaiEventType::MessagePartDelta)
+                    pendingDeltas[event.partId] += event.delta;
+                else
+                    structureChanged = true;
+                if (event.type == MaiEventType::SessionError) errors[event.sessionId] = event.detail;
+            }
+            if (changeHandler != nullptr && !event.sessionId.empty() &&
+                event.type != MaiEventType::SessionStatus)
+                changeHandler(event.sessionId.c_str());
         });
     }
 
@@ -727,6 +750,34 @@ struct MaiMobileAgent {
                 {"error", errorCopy[selected]}};
     }
 
+    // 远端读取不消费本机 UI 的 dirty 标记与增量缓存。否则 PC 拉一次历史，
+    // iPhone 自己的下一次刷新会误以为没有新消息。
+    Json remoteSnapshot(const std::string& sessionId, const std::string& before, int limit) {
+        MaiSession session;
+        if (!agent->getSession(sessionId, session))
+            throw std::runtime_error("Session not found.");
+        const bool busy = agent->isBusy(sessionId);
+        const auto page = agent->listMessagesPage(sessionId, before, static_cast<std::size_t>(limit));
+        Json permissions = Json::array(), questions = Json::array();
+        for (const auto& item : agent->listPendingPermissions())
+            if (item.sessionId == sessionId)
+                permissions.push_back({{"id", item.id},
+                                       {"tool", item.toolName},
+                                       {"input", item.arguments},
+                                       {"allowForSession", item.allowForSession},
+                                       {"rememberOnApproval", item.rememberOnApproval},
+                                       {"fileCount", item.approvalKeys.size()}});
+        for (const auto& item : agent->listPendingQuestions())
+            if (item.sessionId == sessionId)
+                questions.push_back({{"id", item.id}, {"question", item.question},
+                                     {"options", item.options}});
+        return {{"ok", true},
+                {"messages", serializeMessages(page, before.empty() && busy)},
+                {"permissions", permissions},
+                {"questions", questions},
+                {"busy", busy}};
+    }
+
     Json request(const Json& r) {
         const std::string op = r.at("op");
         if (op == "configure") {
@@ -739,6 +790,11 @@ struct MaiMobileAgent {
             const int limit = r.value("messageLimit", -1);
             if (limit < -1 || limit > 100) throw std::runtime_error("messageLimit must be between 0 and 100.");
             return snapshot(session, r.value("force", false), limit);
+        }
+        if (op == "remote_snapshot") {
+            const int limit = r.value("limit", 10);
+            if (limit < 1 || limit > 20) throw std::runtime_error("limit must be between 1 and 20.");
+            return remoteSnapshot(session, r.value("before", std::string{}), limit);
         }
         if (op == "messages_page") {
             const int limit = r.value("limit", 30);
@@ -870,6 +926,13 @@ int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase) {
     auto* mobile = static_cast<MaiMobileAgent*>(handle);
     if (mobile->agent != nullptr) return 0;
     mobile->ortApiBase = apiBase;
+    return 1;
+}
+int maiMobileAgentSetChangeHandler(void* handle, MaiMobileAgentChangeHandler handler) {
+    if (handle == nullptr) return 0;
+    auto* mobile = static_cast<MaiMobileAgent*>(handle);
+    if (mobile->agent != nullptr) return 0;
+    mobile->changeHandler = handler;
     return 1;
 }
 char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace, const char* modelPath,

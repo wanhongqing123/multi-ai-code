@@ -74,6 +74,12 @@ function page(db, videoCircle, message = '') {
   const circleReportRows = videoCircle?.pendingReports().map(report => `<tr>
     <td>${escapeHtml(report.title)}<br>${escapeHtml(report.reporter_id)}</td>
     <td>${escapeHtml(report.reason)}<br>${escapeHtml(report.details || '')}</td>
+    <td>${report.post_status === 'approved' ? `<a href="/video-circle/preview/${escapeHtml(report.post_id)}"
+      target="_blank" rel="noreferrer">预览视频</a>
+      <form method="post" action="/video-circle/hide">
+        <input type="hidden" name="post_id" value="${escapeHtml(report.post_id)}">
+        <input name="reason" required maxlength="80" placeholder="下架原因">
+        <button type="submit">下架</button></form>` : '作品已不可播放'}</td>
     <td><form method="post" action="/video-circle/resolve-report">
       <input type="hidden" name="report_id" value="${escapeHtml(report.id)}">
       <input name="resolution" required maxlength="80" placeholder="处理结果">
@@ -90,8 +96,8 @@ function page(db, videoCircle, message = '') {
     ${circleRows || '<tr><td colspan="4">暂无待审核视频</td></tr>'}</table>
     <h2>公开视频</h2><table><tr><th>作品</th><th>预览</th><th>操作</th></tr>
     ${circlePublishedRows || '<tr><td colspan="3">暂无公开视频</td></tr>'}</table>
-    <h2>视频举报</h2><table><tr><th>作品／举报人</th><th>原因</th><th>处理</th></tr>
-    ${circleReportRows || '<tr><td colspan="3">暂无待处理举报</td></tr>'}</table>
+    <h2>视频举报</h2><table><tr><th>作品／举报人</th><th>原因</th><th>查看／下架</th><th>处理</th></tr>
+    ${circleReportRows || '<tr><td colspan="4">暂无待处理举报</td></tr>'}</table>
     <h2>待清理视频对象</h2><table><tr><th>作品／作者</th><th>状态</th><th>操作</th></tr>
     ${circleCleanupRows || '<tr><td colspan="3">暂无待清理对象</td></tr>'}</table>` : '';
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">

@@ -1,6 +1,7 @@
 // 文件作用：桌面端跨设备 Session 的本机读取与操作入口；网络投递由外层负责。
 #include "agent/DesktopSessionSyncHost.h"
 
+#include <QDir>
 #include <QFileInfo>
 
 #include <variant>
@@ -21,9 +22,7 @@ QJsonObject serializePart(const MaiMessagePart& part) {
     QJsonObject value{{QStringLiteral("id"), text(part.id)}};
     if (const auto* body = std::get_if<MaiTextPart>(&part.body)) {
         value.insert(QStringLiteral("kind"), QStringLiteral("text"));
-        const QString content = text(body->text);
-        value.insert(QStringLiteral("text"), content.size() > 4096 ?
-            content.left(4096) + QStringLiteral("\n[后续内容请在所属设备查看]") : content);
+        value.insert(QStringLiteral("text"), text(body->text));
     } else if (std::holds_alternative<MaiReasoningPart>(part.body)) {
         value.insert(QStringLiteral("kind"), QStringLiteral("reasoning"));
     } else if (const auto* body = std::get_if<MaiToolPart>(&part.body)) {
@@ -62,6 +61,10 @@ QJsonObject serializeMessage(const MaiMessage& message, bool busy) {
 }  // namespace
 
 DesktopSessionSyncHost::DesktopSessionSyncHost(AgentController& controller) : controller_(controller) {}
+
+void DesktopSessionSyncHost::setDefaultWorkspaceDirectory(const QString& directory) {
+    defaultWorkspaceDirectory_ = directory;
+}
 
 QJsonArray DesktopSessionSyncHost::rootSessions() const {
     QJsonArray result;
@@ -112,27 +115,82 @@ QJsonObject DesktopSessionSyncHost::historyPage(const QString& sessionId, const 
 }
 
 QJsonObject DesktopSessionSyncHost::applyCommand(const QString& sessionId, const QJsonObject& payload) {
+    const QString action = payload.value(QStringLiteral("action")).toString();
+    if (sessionId == QStringLiteral("session_lifecycle")) {
+        if (action == QStringLiteral("session_create")) {
+            QString path = payload.value(QStringLiteral("workspace_path")).toString();
+            if (path.isEmpty()) {
+                path = defaultWorkspaceDirectory_;
+                if (path.isEmpty() || QDir(path).isRoot() || !QDir().mkpath(path))
+                    return failure(QStringLiteral("默认工作目录不可用"));
+            } else if (path.size() > 4096 || !QFileInfo(path).isAbsolute()) {
+                return failure(QStringLiteral("工作目录必须是已存在的绝对路径"));
+            }
+            const QFileInfo directory(path);
+            const QString canonical = directory.canonicalFilePath();
+            if (!directory.isDir() || canonical.isEmpty())
+                return failure(QStringLiteral("工作目录不存在或不可访问"));
+            const QString id = controller_.createSession(canonical);
+            if (id.isEmpty()) return failure(controller_.lastError());
+            return {{QStringLiteral("ok"), true}, {QStringLiteral("session_id"), id}};
+        }
+        if (action == QStringLiteral("session_delete")) {
+            const QString target = payload.value(QStringLiteral("target_session_id")).toString();
+            MaiSession targetSession;
+            if (target.isEmpty() || !controller_.agent().getSession(target.toStdString(), targetSession) ||
+                !targetSession.isRoot())
+                return failure(QStringLiteral("会话不存在"));
+            const auto deleted = controller_.agent().submit(MaiDeleteSession{target.toStdString()});
+            if (!deleted) return failure(text(deleted.error().message()));
+            return {{QStringLiteral("ok"), true}, {QStringLiteral("session_id"), target}};
+        }
+        if (action == QStringLiteral("session_set_workspace")) {
+            const QString target = payload.value(QStringLiteral("target_session_id")).toString();
+            const QString path = payload.value(QStringLiteral("workspace_path")).toString();
+            MaiSession targetSession;
+            if (target.isEmpty() || !controller_.agent().getSession(target.toStdString(), targetSession) ||
+                !targetSession.isRoot())
+                return failure(QStringLiteral("会话不存在"));
+            const QFileInfo directory(path);
+            const QString canonical = directory.canonicalFilePath();
+            if (path.isEmpty() || path.toUtf8().size() > 4096 || !directory.isAbsolute() ||
+                !directory.isDir() || canonical.isEmpty())
+                return failure(QStringLiteral("工作目录必须是已存在的绝对路径"));
+            if (!controller_.setSessionDirectory(target, canonical))
+                return failure(controller_.lastError());
+            return {{QStringLiteral("ok"), true},
+                    {QStringLiteral("session_id"), target},
+                    {QStringLiteral("workspace_path"), canonical}};
+        }
+        return failure(QStringLiteral("不支持的会话操作"));
+    }
     MaiSession session;
     if (!controller_.agent().getSession(sessionId.toStdString(), session) || !session.isRoot())
         return failure(QStringLiteral("会话不存在"));
-    const QString action = payload.value(QStringLiteral("action")).toString();
     if (action == QStringLiteral("prompt")) {
         const QString message = payload.value(QStringLiteral("text")).toString();
         if (message.isEmpty() || message.toUtf8().size() > 16 * 1024) return failure(QStringLiteral("消息为空或过长"));
         if (!controller_.sendPrompt(sessionId, message)) return failure(controller_.lastError());
+        const QJsonArray recent = historyPage(sessionId, {}, 2).value(QStringLiteral("messages")).toArray();
+        for (const QJsonValue& value : recent) {
+            const QJsonObject candidate = value.toObject();
+            if (candidate.value(QStringLiteral("role")).toString() == QStringLiteral("user"))
+                return {{QStringLiteral("ok"), true},
+                        {QStringLiteral("user_message_id"), candidate.value(QStringLiteral("id"))}};
+        }
     } else if (action == QStringLiteral("stop")) {
         if (!controller_.interrupt(sessionId)) return failure(controller_.lastError());
     } else if (action == QStringLiteral("permission")) {
         const QString id = payload.value(QStringLiteral("id")).toString();
         const QString decision = payload.value(QStringLiteral("decision")).toString();
         if (id.isEmpty() || id.size() > 128) return failure(QStringLiteral("权限请求无效"));
-        if (decision != QStringLiteral("deny") && decision != QStringLiteral("approve_once") &&
-            decision != QStringLiteral("approve_session"))
+        if (decision != QStringLiteral("denied") && decision != QStringLiteral("approved") &&
+            decision != QStringLiteral("approved_for_session"))
             return failure(QStringLiteral("权限决定无效"));
-        const bool ok = decision == QStringLiteral("deny")              ? controller_.denyPermission(id)
-                        : decision == QStringLiteral("approve_once")    ? controller_.approvePermission(id)
-                        : decision == QStringLiteral("approve_session") ? controller_.approvePermission(id, true)
-                                                                        : false;
+        const bool ok = decision == QStringLiteral("denied") ? controller_.denyPermission(id)
+                        : decision == QStringLiteral("approved") ? controller_.approvePermission(id)
+                        : decision == QStringLiteral("approved_for_session")
+                            ? controller_.approvePermission(id, true) : false;
         if (!ok) return failure(controller_.lastError());
     } else if (action == QStringLiteral("answer")) {
         const QString id = payload.value(QStringLiteral("id")).toString();

@@ -18,6 +18,7 @@ class DesktopSessionSyncChannel final : public QObject {
 public:
     using Completion = std::function<void(const QJsonObject&, const QString&)>;
     using CatalogHandler = std::function<void(const QJsonArray&)>;
+    using DeviceHandler = std::function<void(const QJsonArray&)>;
     using InboxHandler = std::function<void(const QJsonArray&)>;
     using StateHandler = std::function<void()>;
 
@@ -26,6 +27,7 @@ public:
     ~DesktopSessionSyncChannel() override;
 
     void setCatalogHandler(CatalogHandler handler);
+    void setDeviceHandler(DeviceHandler handler);
     void setInboxHandler(InboxHandler handler);
     void setConnectedHandler(StateHandler handler);
     void setDisconnectedHandler(StateHandler handler);
@@ -48,6 +50,7 @@ private:
     QTimer tokenTimer_;
     QHash<QString, Completion> pending_;
     CatalogHandler catalogHandler_;
+    DeviceHandler deviceHandler_;
     InboxHandler inboxHandler_;
     StateHandler connectedHandler_;
     StateHandler disconnectedHandler_;

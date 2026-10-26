@@ -18,6 +18,8 @@
 #include "MaiSpecialist.h"
 #include "MaiSpecialistTask.h"
 
+class MaiAgent;
+
 // 工具执行时能看到的环境。
 //
 // 每次调用现场构造，工具实现**不要持有它**——里面的 cancel 指针指向那一轮对话的取消标志，
@@ -56,6 +58,10 @@ struct MaiToolContext {
     // 子 Agent 的宿主。**可能为空**：宿主没接子 Agent 时就是空的，
     // 那组工具据此明说「这儿起不了」，而不是失败得莫名其妙。
     MaiSubAgentHost* subAgents = nullptr;
+
+    // 当前 Agent 的会话门面；由一轮对话的宿主提供，不由工具持有。
+    // 直接执行工具的测试或未接会话宿主时可为空；这种情况下管理工具必须拒绝操作。
+    MaiAgent* sessionAgent = nullptr;
 
     // 当前 Agent 的专用模型修订记录。直接工具测试或未接持久化的宿主中可能为空；
     // 此时工具不能声称自己记得此前的编辑。

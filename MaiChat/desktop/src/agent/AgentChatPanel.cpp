@@ -5,6 +5,7 @@
 
 #include "ui/DesktopCameraDialog.h"
 #include "ui/DesktopMusicPlayerDialog.h"
+#include "MaiVideoCircleClient.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QAction>
@@ -34,6 +35,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
+#include <QPointer>
 #include <QPolygonF>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -1011,6 +1013,11 @@ struct AgentChatPanel::Runtime {
     QLabel* modelSectionValue = nullptr;
     QLabel* policySectionValue = nullptr;
     QPushButton* moreButton = nullptr;
+    QPushButton* videoCircleButton = nullptr;
+    QList<QPointer<QPushButton>> videoCirclePublishButtons;
+    bool videoCircleAvailable = false;
+    QList<QPointer<QPushButton>> cloudDriveSaveButtons;
+    bool cloudDriveAvailable = false;
     QWidget* actionPanel = nullptr;
     QWidget* modelOptions = nullptr;
     QWidget* policyOptions = nullptr;
@@ -1052,6 +1059,7 @@ struct AgentChatPanel::Runtime {
 
     // partId -> 已经攒到的 Markdown 原文。正文没有部件了，源在这儿。
     QHash<QString, QString> answers;
+    QSet<QString> renderedUserMessages;
     // 攒着还没刷进视图的那些。
     QSet<QString> dirtyAnswers;
     // 每来一个 delta 就重排一次是 O(n^2)：一段 3000 字的回答会重排几百次。
@@ -1088,9 +1096,18 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     head->setFixedHeight(UiZoom::s(54));
     headRow->setContentsMargins(UiZoom::s(16), UiZoom::s(8), UiZoom::s(16), UiZoom::s(8));
     headRow->setSpacing(UiZoom::s(8));
-    auto* leftBalance = new QWidget(head);
-    leftBalance->setFixedSize(UiZoom::s(34), UiZoom::s(34));
-    headRow->addWidget(leftBalance);
+    auto* circle = new QPushButton(QStringLiteral("视频圈"), head);
+    runtime_->videoCircleButton = circle;
+    circle->setObjectName(QStringLiteral("agentVideoCircleOpen"));
+    circle->setAccessibleName(QStringLiteral("打开 AI 视频圈"));
+    circle->setCursor(Qt::PointingHandCursor);
+    circle->setFixedSize(UiZoom::s(76), UiZoom::s(34));
+    circle->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
+        "QPushButton{background:#eef6fd;border:0;border-radius:9px;color:#0b67b7;font-weight:600;}"
+        "QPushButton:hover{background:#dceefb;}")));
+    circle->hide();
+    connect(circle, &QPushButton::clicked, this, &AgentChatPanel::videoCircleRequested);
+    headRow->addWidget(circle);
     runtime_->title = makeLabel(QStringLiteral("创作中心"), 18, kInk, true);
     runtime_->title->setObjectName(QStringLiteral("agentHeaderTitle"));
     runtime_->title->setAlignment(Qt::AlignCenter);
@@ -1113,6 +1130,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                                         "color:%1;padding:5px 9px;}QPushButton:hover{background:#eef2f6;}")
                              .arg(kInkSoft)));
     headRow->addWidget(moreButton);
+    auto* rightBalance = new QWidget(head);
+    rightBalance->setFixedSize(UiZoom::s(34), UiZoom::s(34));
+    headRow->addWidget(rightBalance);
     root->addWidget(head);
 
     // ---- 对话流：整片就是一个 MarkdownView ----
@@ -1282,24 +1302,6 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     QFont modelFont = runtime_->modelChip->font();
     modelFont.setPixelSize(UiZoom::s(11));
     runtime_->modelChip->setFont(modelFont);
-    auto* modelMenu = new QMenu(runtime_->modelChip);
-    applyAgentMenuStyle(modelMenu);
-    for (const QString& model :
-         {QStringLiteral("glm-5.3"), QStringLiteral("glm-5.3-flash"), QStringLiteral("deepseek-flash")}) {
-        QAction* action = modelMenu->addAction(model);
-        action->setData(model);
-        action->setCheckable(true);
-    }
-    connect(modelMenu, &QMenu::aboutToShow, this, [this, modelMenu] {
-        for (QAction* action : modelMenu->actions()) {
-            action->setChecked(action->data().toString().compare(runtime_->modelChip->text(), Qt::CaseInsensitive) ==
-                               0);
-        }
-    });
-    connect(modelMenu, &QMenu::triggered, this, [this](QAction* action) {
-        emit modelChangeRequested(action->data().toString());
-    });
-    runtime_->modelChip->setMenu(modelMenu);
     runtime_->modelChip->hide();
     // 这句常驻。它是这套东西最重要的一句承诺，写在文档里没人看。
     runtime_->hint = new QPushButton(head);
@@ -1355,15 +1357,15 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     auto* actionPanel = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
     runtime_->actionPanel = actionPanel;
     actionPanel->setObjectName(QStringLiteral("agentActionPanel"));
-    actionPanel->setFixedWidth(UiZoom::s(280));
+    actionPanel->setFixedWidth(UiZoom::s(252));
     actionPanel->setStyleSheet(UiZoom::scaleQss(QStringLiteral(R"(
-        QFrame#agentActionPanel { background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; }
+        QFrame#agentActionPanel { background:#ffffff; border:0; border-radius:10px; }
         QFrame#agentActionPanel QPushButton { background:transparent; border:0; color:#24334a;
-                                             text-align:left; padding:0 10px; font-size:13px;
-                                             border-radius:7px; }
-        QFrame#agentActionPanel QPushButton:hover { background:#f2f7fc; }
+                                             text-align:left; padding:0 8px; font-size:13px;
+                                             border-radius:6px; }
+        QFrame#agentActionPanel QPushButton:hover { background:#eef5fb; }
         QFrame#agentActionPanel QPushButton#agentChooseWorkspaceButton {
-            color:#24334a; font-weight:600;
+            color:#24334a; font-weight:500;
         }
         QFrame#agentActionPanel QPushButton#agentChooseWorkspaceButton:hover {
             background:#f2f7fc;
@@ -1376,15 +1378,15 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         QPushButton:disabled { color:#98a2b3; }
     )")));
     auto* actionLayout = new QVBoxLayout(actionPanel);
-    actionLayout->setContentsMargins(UiZoom::s(8), UiZoom::s(8), UiZoom::s(8), UiZoom::s(8));
-    actionLayout->setSpacing(UiZoom::s(2));
+    actionLayout->setContentsMargins(UiZoom::s(8), UiZoom::s(6), UiZoom::s(8), UiZoom::s(6));
+    actionLayout->setSpacing(0);
     auto makeSummary = [actionPanel](const QString& name, const QString& title,
                                      const QString& initial, QLabel** currentValue) {
         auto* row = new QPushButton(actionPanel);
         row->setObjectName(name);
         row->setAccessibleName(title + QStringLiteral("：") + initial);
         row->setCursor(Qt::PointingHandCursor);
-        row->setFixedHeight(UiZoom::s(40));
+        row->setFixedHeight(UiZoom::s(36));
         auto* layout = new QHBoxLayout(row);
         layout->setContentsMargins(UiZoom::s(10), 0, UiZoom::s(10), 0);
         layout->setSpacing(UiZoom::s(8));
@@ -1408,8 +1410,8 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         *currentValue = value;
         return row;
     };
-    auto* modelSection = makeSummary(QStringLiteral("agentModelSection"),
-                                     QStringLiteral("模型"), QStringLiteral("未配置"),
+    auto* modelSection = makeSummary(QStringLiteral("agentEffortSection"),
+                                     QStringLiteral("思考强度"), QStringLiteral("标准"),
                                      &runtime_->modelSectionValue);
     runtime_->modelSection = modelSection;
     actionLayout->addWidget(modelSection);
@@ -1420,21 +1422,23 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     auto* modelOptionsLayout = new QVBoxLayout(modelOptions);
     modelOptionsLayout->setContentsMargins(0, UiZoom::s(4), 0, UiZoom::s(4));
     modelOptionsLayout->setSpacing(0);
-    for (const QString& name : {QStringLiteral("glm-5.3"),
-                                QStringLiteral("glm-5.3-flash"),
-                                QStringLiteral("deepseek-flash")}) {
-        auto* option = new QPushButton(name, modelOptions);
-        option->setObjectName(QStringLiteral("agentModelOption-") + name);
-        option->setProperty("modelName", name);
+    const QList<QPair<QString, QString>> efforts = {
+        {QStringLiteral("简单"), QStringLiteral("low")},
+        {QStringLiteral("标准"), QStringLiteral("high")},
+        {QStringLiteral("深度"), QStringLiteral("max")}};
+    for (const auto& effort : efforts) {
+        auto* option = new QPushButton(effort.first, modelOptions);
+        option->setObjectName(QStringLiteral("agentEffortOption-") + effort.second);
+        option->setProperty("reasoningEffort", effort.second);
         option->setFixedHeight(UiZoom::s(38));
         option->setStyleSheet(UiZoom::scaleQss(QStringLiteral(
             "QPushButton{padding-left:24px;text-align:left;background:#f5f8fc;}"
             "QPushButton:hover{background:#e8f2fc;}")));
         modelOptionsLayout->addWidget(option);
         runtime_->modelOptionButtons.append(option);
-        connect(option, &QPushButton::clicked, this, [this, actionPanel, name] {
+        connect(option, &QPushButton::clicked, this, [this, actionPanel, effort] {
             actionPanel->hide();
-            emit modelChangeRequested(name);
+            emit reasoningEffortChangeRequested(effort.second);
         });
     }
     actionLayout->addWidget(modelOptions);
@@ -1475,21 +1479,21 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     policyOptions->hide();
     auto* sectionDivider = new QFrame(actionPanel);
     sectionDivider->setFrameShape(QFrame::HLine);
-    sectionDivider->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
+    sectionDivider->setStyleSheet(QStringLiteral("color:#edf1f5;"));
     actionLayout->addWidget(sectionDivider);
     auto* workspaceRow = new QWidget(actionPanel);
     auto* workspaceLayout = new QHBoxLayout(workspaceRow);
     workspaceLayout->setContentsMargins(0, 0, 0, 0);
     workspaceLayout->setSpacing(UiZoom::s(2));
-    workspaceRow->setFixedHeight(UiZoom::s(42));
+    workspaceRow->setFixedHeight(UiZoom::s(39));
     actionLayout->addWidget(workspaceRow);
     auto* divider = new QFrame(actionPanel);
     divider->setFrameShape(QFrame::HLine);
-    divider->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
+    divider->setStyleSheet(QStringLiteral("color:#edf1f5;"));
     actionLayout->addWidget(divider);
     auto* clearButton = new QPushButton(QStringLiteral("清空对话"), actionPanel);
     clearButton->setObjectName(QStringLiteral("agentClearConversation"));
-    clearButton->setFixedHeight(UiZoom::s(40));
+    clearButton->setFixedHeight(UiZoom::s(36));
     actionLayout->addWidget(clearButton);
     connect(clearButton, &QPushButton::clicked, this, [this, actionPanel] {
         actionPanel->hide();
@@ -1545,12 +1549,12 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
 
     runtime_->chooseWorkspace = new QPushButton(QStringLiteral("选择工作目录"), workspaceRow);
     runtime_->chooseWorkspace->setObjectName(QStringLiteral("agentChooseWorkspaceButton"));
-    runtime_->chooseWorkspace->setAccessibleName(QStringLiteral("选择工作目录并新建对话"));
+    runtime_->chooseWorkspace->setAccessibleName(QStringLiteral("切换当前会话工作目录"));
     runtime_->chooseWorkspace->setCursor(Qt::PointingHandCursor);
     runtime_->chooseWorkspace->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
     runtime_->chooseWorkspace->setIconSize(QSize(UiZoom::s(16), UiZoom::s(16)));
     runtime_->chooseWorkspace->setFixedHeight(UiZoom::s(38));
-    runtime_->chooseWorkspace->setToolTip(QStringLiteral("选择工作目录并新建对话"));
+    runtime_->chooseWorkspace->setToolTip(QStringLiteral("切换当前会话工作目录"));
     workspaceLayout->addWidget(runtime_->chooseWorkspace, 1);
     connect(runtime_->chooseWorkspace, &QPushButton::clicked, this, [this] {
         runtime_->actionPanel->hide();
@@ -1612,6 +1616,19 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                 }
                 clearPendingThinking();
                 appendAnswerDelta(partId, delta);
+            });
+    connect(&controller, &AgentController::userMessageAdded, this,
+            [this](const QString& sessionId, const QString& messageId) {
+                if (!isCurrentSession(sessionId) || runtime_->renderedUserMessages.contains(messageId)) return;
+                MaiSession session;
+                if (!runtime_->controller->agent().getSession(toUtf8(sessionId), session)) return;
+                for (const MaiMessage& message : runtime_->controller->agent().listMessagesPage(
+                         toUtf8(sessionId), toUtf8(messageId) + "~", 1)) {
+                    if (fromUtf8(message.id) != messageId) return;
+                    appendStoredUserMessage(message, session);
+                    scrollToBottom();
+                    return;
+                }
             });
     connect(&controller, &AgentController::toolPartChanged, this,
             [this](const QString& sessionId, const QString& messageId, const QString& partId) {
@@ -1694,6 +1711,21 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
                 if (!isCurrentSession(sessionId)) return;
                 emit sessionListChanged();
             });
+    connect(&controller, &AgentController::sessionStructureChanged, this, [this] {
+        if (!runtime_->sessionId.isEmpty()) {
+            MaiSession current;
+            if (!runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), current)) {
+                for (const MaiSession& session : runtime_->controller->agent().listSessions()) {
+                    if (!session.isRoot()) continue;
+                    openSession(fromUtf8(session.id));
+                    return;
+                }
+                openSession();
+                return;
+            }
+        }
+        emit sessionListChanged();
+    });
 }
 
 AgentChatPanel::~AgentChatPanel() {
@@ -1719,12 +1751,21 @@ void AgentChatPanel::setModelLabel(const QString& model, bool configured) {
     runtime_->modelConfigured = configured &&
         model != QStringLiteral("未配置模型") && !model.trimmed().isEmpty();
     runtime_->modelChip->setEnabled(runtime_->modelConfigured && !runtime_->running);
-    if (runtime_->modelSectionValue) runtime_->modelSectionValue->setText(model);
+}
+
+void AgentChatPanel::setReasoningEffortLabel(const QString& effort) {
+    const QString normalized = effort == QStringLiteral("low") || effort == QStringLiteral("max")
+                                   ? effort : QStringLiteral("high");
+    const QString title = normalized == QStringLiteral("low") ? QStringLiteral("简单") :
+        normalized == QStringLiteral("max") ? QStringLiteral("深度") : QStringLiteral("标准");
+    if (runtime_->modelSectionValue) runtime_->modelSectionValue->setText(title);
     if (runtime_->modelSection)
-        runtime_->modelSection->setAccessibleName(QStringLiteral("模型：%1").arg(model));
+        runtime_->modelSection->setAccessibleName(QStringLiteral("思考强度：%1").arg(title));
     for (QPushButton* option : runtime_->modelOptionButtons) {
-        const QString name = option->property("modelName").toString();
-        option->setText(name + (name == model ? QStringLiteral("  ✓") : QString()));
+        const QString value = option->property("reasoningEffort").toString();
+        const QString optionTitle = value == QStringLiteral("low") ? QStringLiteral("简单") :
+            value == QStringLiteral("max") ? QStringLiteral("深度") : QStringLiteral("标准");
+        option->setText(optionTitle + (value == normalized ? QStringLiteral("  ✓") : QString()));
     }
 }
 
@@ -1772,6 +1813,33 @@ QStringList AgentChatPanel::currentVideoPaths() const {
 
 void AgentChatPanel::setForwardMediaCallback(std::function<void(const QString&, const QString&)> callback) {
     forwardMedia_ = std::move(callback);
+}
+
+void AgentChatPanel::setVideoCircleAvailable(bool available) {
+    runtime_->videoCircleAvailable = available;
+    runtime_->videoCircleButton->setVisible(available);
+    for (auto it = runtime_->videoCirclePublishButtons.begin();
+         it != runtime_->videoCirclePublishButtons.end();) {
+        if (!*it) {
+            it = runtime_->videoCirclePublishButtons.erase(it);
+        } else {
+            (*it)->setVisible(available);
+            ++it;
+        }
+    }
+}
+
+void AgentChatPanel::setCloudDriveAvailable(bool available) {
+    runtime_->cloudDriveAvailable = available;
+    for (auto it = runtime_->cloudDriveSaveButtons.begin();
+         it != runtime_->cloudDriveSaveButtons.end();) {
+        if (!*it) {
+            it = runtime_->cloudDriveSaveButtons.erase(it);
+        } else {
+            (*it)->setVisible(available);
+            ++it;
+        }
+    }
 }
 
 void AgentChatPanel::selectApprovalPolicy(MaiApprovalPolicy policy) {
@@ -1825,7 +1893,7 @@ void AgentChatPanel::openSession(const QString& sessionId) {
             appendNotice(QStringLiteral("无法创建创作中心工作目录"), true);
             return;
         }
-        openSessionInDirectory(directory);
+        createSessionInDirectory(directory);
         return;
     }
     const QString nextSession = sessionId;
@@ -1859,7 +1927,7 @@ void AgentChatPanel::openSession(const QString& sessionId) {
         runtime_->chooseWorkspace->setText(runtime_->chooseWorkspace->fontMetrics().elidedText(
             name, Qt::ElideMiddle, runtime_->actionPanel->width() - UiZoom::s(116)));
         runtime_->chooseWorkspace->setToolTip(
-            QStringLiteral("当前工作目录：%1\n点击选择目录并新建对话").arg(directory));
+            QStringLiteral("当前工作目录：%1\n点击切换当前会话工作目录").arg(directory));
     }
     reloadFromStore();
     refreshComposerMediaTray();
@@ -1871,7 +1939,44 @@ void AgentChatPanel::setDefaultWorkspaceDirectory(const QString& directory) {
     defaultWorkspaceConfigured_ = true;
 }
 
+bool AgentChatPanel::chooseDirectoryAndCreateSession() {
+    QString initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    MaiSession current;
+    if (runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), current)) {
+        initial = fromUtf8(current.directory);
+    } else if (QFileInfo(defaultWorkspaceDirectory_).isDir()) {
+        initial = defaultWorkspaceDirectory_;
+    }
+    const QString selected = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("选择新对话的工作目录"), initial, QFileDialog::ShowDirsOnly);
+    if (selected.isEmpty()) return false;
+    const QString previous = runtime_->sessionId;
+    openNewSessionInDirectory(selected);
+    return !runtime_->sessionId.isEmpty() && runtime_->sessionId != previous;
+}
+
+void AgentChatPanel::openNewSessionInDirectory(const QString& directory) {
+    createSessionInDirectory(directory);
+}
+
 void AgentChatPanel::openSessionInDirectory(const QString& directory) {
+    const QFileInfo selected(directory);
+    if (!selected.isDir()) {
+        appendNotice(QStringLiteral("工作目录不存在或不可访问：%1").arg(directory), true);
+        return;
+    }
+    if (runtime_->sessionId.isEmpty()) {
+        createSessionInDirectory(directory);
+        return;
+    }
+    if (!runtime_->controller->setSessionDirectory(runtime_->sessionId, directory)) {
+        appendNotice(runtime_->controller->lastError(), true);
+        return;
+    }
+    openSession(runtime_->sessionId);
+}
+
+void AgentChatPanel::createSessionInDirectory(const QString& directory) {
     const QFileInfo selected(directory);
     if (!selected.isDir()) {
         appendNotice(QStringLiteral("工作目录不存在或不可访问：%1").arg(directory), true);
@@ -1902,6 +2007,7 @@ void AgentChatPanel::reloadFromStore() {
     runtime_->pendingThinking = nullptr;
     runtime_->pendingThinkingItemId.clear();
     runtime_->answers.clear();
+    runtime_->renderedUserMessages.clear();
     runtime_->dirtyAnswers.clear();
     runtime_->toolCards.clear();
     runtime_->toolGroups.clear();
@@ -1916,36 +2022,7 @@ void AgentChatPanel::reloadFromStore() {
 
     for (const MaiMessage& message : runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId))) {
         if (message.role == MaiRole::User) {
-            // 历史里的气泡用消息 id：重开会话再画一遍时 id 要稳定，
-            // 不然同一条消息会被当成两条。
-            QStringList images;
-            QStringList videos;
-            for (const MaiMessagePart& part : message.parts) {
-                if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
-                    const QString stored = fromUtf8(image->path);
-                    images.push_back(QFileInfo(stored).isAbsolute()
-                                         ? stored
-                                         : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
-                } else if (const auto* video = std::get_if<MaiVideoPart>(&part.body)) {
-                    const QString stored = fromUtf8(video->path);
-                    videos.push_back(QFileInfo(stored).isAbsolute()
-                                         ? stored
-                                         : QDir(fromUtf8(selectedSession.directory)).filePath(stored));
-                }
-            }
-            const QString sourceText = fromUtf8(message.text());
-            QString userText = sourceText;
-            for (const MaiMessagePart& part : message.parts)
-                if (const auto* quote = std::get_if<MaiQuotePart>(&part.body))
-                    userText = QStringLiteral("> ↩ %1\n\n%2")
-                                   .arg(fromUtf8(quote->preview).simplified(), userText);
-            if (!images.isEmpty() && userText.trimmed() == QStringLiteral("请查看这些图片。")) userText.clear();
-            if (!userText.isEmpty())
-                runtime_->view->addItem(fromUtf8(message.id), MarkdownView::Style::Bubble, userText);
-            appendUserImages(images);
-            appendUserVideos(videos);
-            appendTextMediaCards(fromUtf8(message.id), sourceText, fromUtf8(selectedSession.directory));
-            appendQuoteAction(fromUtf8(message.id));
+            appendStoredUserMessage(message, selectedSession);
             continue;
         }
         QStringList textFragments;
@@ -2009,6 +2086,39 @@ void AgentChatPanel::reloadFromStore() {
     QTimer::singleShot(0, this, [this, selected] {
         if (runtime_->sessionId == selected) runtime_->view->scrollToBottom();
     });
+}
+
+void AgentChatPanel::appendStoredUserMessage(const MaiMessage& message, const MaiSession& session) {
+    if (message.role != MaiRole::User) return;
+    const QString messageId = fromUtf8(message.id);
+    if (runtime_->renderedUserMessages.contains(messageId)) return;
+    runtime_->renderedUserMessages.insert(messageId);
+    QStringList images;
+    QStringList videos;
+    for (const MaiMessagePart& part : message.parts) {
+        if (const auto* image = std::get_if<MaiImagePart>(&part.body)) {
+            const QString stored = fromUtf8(image->path);
+            images.push_back(QFileInfo(stored).isAbsolute()
+                                 ? stored : QDir(fromUtf8(session.directory)).filePath(stored));
+        } else if (const auto* video = std::get_if<MaiVideoPart>(&part.body)) {
+            const QString stored = fromUtf8(video->path);
+            videos.push_back(QFileInfo(stored).isAbsolute()
+                                 ? stored : QDir(fromUtf8(session.directory)).filePath(stored));
+        }
+    }
+    const QString sourceText = fromUtf8(message.text());
+    QString userText = sourceText;
+    for (const MaiMessagePart& part : message.parts)
+        if (const auto* quote = std::get_if<MaiQuotePart>(&part.body))
+            userText = QStringLiteral("> ↩ %1\n\n%2")
+                           .arg(fromUtf8(quote->preview).simplified(), userText);
+    if (!images.isEmpty() && userText.trimmed() == QStringLiteral("请查看这些图片。")) userText.clear();
+    if (!userText.isEmpty())
+        runtime_->view->addItem(messageId, MarkdownView::Style::Bubble, userText);
+    appendUserImages(images);
+    appendUserVideos(videos);
+    appendTextMediaCards(messageId, sourceText, fromUtf8(session.directory));
+    appendQuoteAction(messageId);
 }
 
 // 流式期间往某条回答后面追加。第一段到的时候先把条目建出来，
@@ -2389,6 +2499,47 @@ bool AgentChatPanel::appendAgentMediaCard(const QString& partId, const QString& 
         auto* label = new QLabel(caption, card);
         label->setWordWrap(true);
         layout->addWidget(label);
+    }
+    if (type == QStringLiteral("video")) {
+        auto* saveCloud = new QPushButton(QStringLiteral("保存到视频云盘"), card);
+        saveCloud->setObjectName(QStringLiteral("agentMediaCloudDriveSave"));
+        saveCloud->setAccessibleName(QStringLiteral("将这个视频保存到我的私人云盘"));
+        saveCloud->setCursor(Qt::PointingHandCursor);
+        saveCloud->setStyleSheet(QStringLiteral(
+            "QPushButton{background:#eef6fd;color:#0b67b7;border:0;border-radius:8px;"
+            "padding:8px 13px;text-align:left;font-weight:600;}"
+            "QPushButton:hover{background:#dceefb;}"));
+        saveCloud->setVisible(runtime_->cloudDriveAvailable);
+        runtime_->cloudDriveSaveButtons.append(saveCloud);
+        connect(saveCloud, &QPushButton::clicked, this,
+                [this, path] { emit cloudDriveSaveRequested(path); });
+        layout->addWidget(saveCloud, 0, Qt::AlignLeft);
+        const QJsonObject completedCard{
+            {QStringLiteral("tool"), QStringLiteral("agent_send_media")},
+            {QStringLiteral("state"), QStringLiteral("completed")},
+            {QStringLiteral("output"), artifact}};
+        const QByteArray cardBytes = QJsonDocument(completedCard).toJson(QJsonDocument::Compact);
+        MaiVideoCircleResult eligibility{};
+        mai_video_circle_inspect_card(cardBytes.constData(), &eligibility);
+        const bool eligible = eligibility.status == MAI_VIDEO_CIRCLE_OK;
+        mai_video_circle_result_free(&eligibility);
+        if (eligible) {
+            auto* publish = new QPushButton(QStringLiteral("发布到视频圈"), card);
+            publish->setObjectName(QStringLiteral("agentMediaVideoCirclePublish"));
+            publish->setAccessibleName(QStringLiteral("发布这个已完成的 AI 视频到视频圈"));
+            publish->setCursor(Qt::PointingHandCursor);
+            publish->setStyleSheet(QStringLiteral(
+                "QPushButton{background:#eef6fd;color:#0b67b7;border:0;border-radius:8px;"
+                "padding:8px 13px;text-align:left;font-weight:600;}"
+                "QPushButton:hover{background:#dceefb;}"));
+            publish->setVisible(runtime_->videoCircleAvailable);
+            runtime_->videoCirclePublishButtons.append(publish);
+            connect(publish, &QPushButton::clicked, this,
+                    [this, cardBytes, path] {
+                        emit videoCirclePublishRequested(QString::fromUtf8(cardBytes), path);
+                    });
+            layout->addWidget(publish, 0, Qt::AlignLeft);
+        }
     }
     card->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(card, &QWidget::customContextMenuRequested, this, [this, card, path, type](const QPoint& point) {
@@ -3012,7 +3163,6 @@ void AgentChatPanel::onSend() {
     }
 
     const QString quotedMessageId = runtime_->quotedMessageId;
-    const QString quotedPreview = runtime_->quotedPreview;
     if (!runtime_->controller->sendPrompt(runtime_->sessionId, text, imagePaths,
                                           videoPaths, quotedMessageId)) {
         appendNotice(runtime_->controller->lastError(), true);
@@ -3023,13 +3173,12 @@ void AgentChatPanel::onSend() {
     clearQuote();
     runtime_->editor->clear();
     updateComposerPlaceholder();
-    if (!text.isEmpty() || !quotedPreview.isEmpty()) appendUserBubble(text, quotedPreview);
-    appendUserImages(imagePaths);
-    appendUserVideos(videoPaths);
+    MaiSession current;
+    runtime_->controller->agent().getSession(toUtf8(runtime_->sessionId), current);
     const auto messages = runtime_->controller->agent().listMessages(toUtf8(runtime_->sessionId));
     for (auto it = messages.rbegin(); it != messages.rend(); ++it)
         if (it->role == MaiRole::User) {
-            appendQuoteAction(fromUtf8(it->id));
+            appendStoredUserMessage(*it, current);
             break;
         }
     setRunning(true);

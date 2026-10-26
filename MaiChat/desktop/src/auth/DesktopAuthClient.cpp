@@ -178,6 +178,7 @@ bool DesktopAuthClient::adoptSession(const QJsonObject& body, QString* error) {
     {
         QMutexLocker lock(&accountAccess_->mutex);
         accountAccess_->token = access;
+        accountAccess_->accountId = accountId;
         accountAccess_->expiresAt = accessExpiresAt_.toSecsSinceEpoch();
     }
     if (!loggingOut_ && useSecureStore_ && !secureStore_.write(refreshToken_)) {
@@ -218,6 +219,7 @@ void DesktopAuthClient::clearLocalSession() {
     {
         QMutexLocker lock(&accountAccess_->mutex);
         accountAccess_->token.clear();
+        accountAccess_->accountId.clear();
         accountAccess_->expiresAt = 0;
     }
     refreshToken_.clear();
@@ -272,6 +274,26 @@ DesktopAuthClient::mediaServiceAccessProvider() const {
         if (cache->expiresAt <= QDateTime::currentSecsSinceEpoch() + 30)
             return QPair<QString, QString>();
         return qMakePair(base, cache->token);
+    };
+}
+
+std::function<DesktopVideoCircleAccess()> DesktopAuthClient::videoCircleAccessProvider() const {
+    const auto bases = desktopVideoCircleEndpointBases(baseUrl_);
+    if (bases.first.isEmpty() || bases.second.isEmpty())
+        return [] { return DesktopVideoCircleAccess{}; };
+    const QString authBase = bases.first;
+    const QString mediaBase = bases.second;
+    const auto cache = accountAccess_;
+    return [authBase, mediaBase, cache] {
+        QMutexLocker lock(&cache->mutex);
+        if (cache->expiresAt <= QDateTime::currentSecsSinceEpoch() + 30)
+            return DesktopVideoCircleAccess{};
+        DesktopVideoCircleAccess access;
+        access.authBaseUrl = authBase;
+        access.mediaBaseUrl = mediaBase;
+        access.accountToken = cache->token;
+        access.accountId = cache->accountId;
+        return access;
     };
 }
 

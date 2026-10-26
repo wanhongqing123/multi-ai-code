@@ -14,7 +14,9 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
+#include <QSet>
 #include <QTimer>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #include "markdown/MarkdownView.h"
@@ -101,11 +103,12 @@ struct RemoteAgentPanel::Runtime {
     QPushButton* older = nullptr;
     QWidget* requests = nullptr;
     QVBoxLayout* requestsLayout = nullptr;
-    QTimer refresh;
     QTimer historyTimeout;
     QTimer commandTimeout;
     QMap<QString, QJsonObject> messages;
     QMap<QString, QString> rendered;
+    QSet<QString> optimisticMessages;
+    QString pendingOptimisticId;
     QHash<QString, QString> drafts;
     QString oldest;
     QString pendingDraft;
@@ -214,10 +217,6 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     connect(runtime_->older, &QPushButton::clicked, this, [this] {
         if (!runtime_->oldest.isEmpty()) requestHistory(runtime_->oldest, 20);
     });
-    runtime_->refresh.setInterval(5000);
-    connect(&runtime_->refresh, &QTimer::timeout, this, [this] {
-        if (isVisible()) refreshHistory();
-    });
     runtime_->historyTimeout.setSingleShot(true);
     runtime_->historyTimeout.setInterval(30'000);
     connect(&runtime_->historyTimeout, &QTimer::timeout, this, [this] {
@@ -225,7 +224,6 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
         runtime_->historyInFlight = false;
         runtime_->older->setEnabled(true);
         if (runtime_->messages.isEmpty()) {
-            runtime_->refresh.stop();
             showStatus(QStringLiteral("会话读取超时，可重新进入会话重试"), true);
         }
     });
@@ -236,6 +234,8 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
         runtime_->pendingCommand = false;
         runtime_->lastCommandRejected = false;
         runtime_->awaitingResponse = false;
+        removeOptimisticMessage(runtime_->pendingOptimisticId);
+        runtime_->pendingOptimisticId.clear();
         runtime_->pendingAction.clear();
         updateThinking();
         if (runtime_->editor->toPlainText().isEmpty() && !runtime_->pendingDraft.isEmpty())
@@ -265,6 +265,8 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
         runtime_->editor->setPlainText(runtime_->drafts.value(next));
         runtime_->messages.clear();
         runtime_->rendered.clear();
+        runtime_->optimisticMessages.clear();
+        runtime_->pendingOptimisticId.clear();
         runtime_->view->clear();
         runtime_->thinking = nullptr;
         runtime_->oldest.clear();
@@ -278,7 +280,6 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
         runtime_->commandTimeout.stop();
     }
     runtime_->session = remote;
-    runtime_->refresh.start();
     updateControls();
     if (previous == next && !runtime_->messages.isEmpty()) return;
     showStatus(remote.value(QStringLiteral("online")).toBool()
@@ -289,6 +290,7 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
 
 void RemoteAgentPanel::updateSession(const QJsonObject& remote) {
     if (sessionKey(remote) != sessionKey(runtime_->session)) return;
+    const bool wasOnline = runtime_->session.value(QStringLiteral("online")).toBool();
     runtime_->session = remote;
     updateControls();
     if (remote.value(QStringLiteral("busy")).toBool() && runtime_->awaitingResponse)
@@ -303,11 +305,14 @@ void RemoteAgentPanel::updateSession(const QJsonObject& remote) {
         runtime_->historyTimeout.stop();
         runtime_->older->setEnabled(true);
         showStatus(QStringLiteral("所属设备离线；输入保留为草稿"));
+    } else if (!wasOnline) {
+        // WebSocket 断线期间的消息可能没收到；重新上线后补最近一页。
+        refreshHistory();
     }
 }
 
 void RemoteAgentPanel::refreshHistory() {
-    requestHistory({}, 1);
+    requestHistory({}, 10);
 }
 
 void RemoteAgentPanel::requestHistory(const QString& before, int limit) {
@@ -339,12 +344,33 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
     runtime_->commandSentAt = QDateTime::currentMSecsSinceEpoch();
     if (runtime_->pendingAction != QStringLiteral("prompt")) runtime_->awaitingResponse = false;
     runtime_->pendingDraft = clearDraft ? runtime_->editor->toPlainText() : QString();
+    QString optimisticId;
+    if (clearDraft && runtime_->pendingAction == QStringLiteral("prompt")) {
+        optimisticId = QStringLiteral("msg_z_pending_%1").arg(
+            QUuid::createUuid().toString(QUuid::WithoutBraces));
+        const QString text = action.value(QStringLiteral("text")).toString();
+        runtime_->optimisticMessages.insert(optimisticId);
+        runtime_->pendingOptimisticId = optimisticId;
+        runtime_->messages.insert(optimisticId,
+            {{QStringLiteral("id"), optimisticId},
+             {QStringLiteral("role"), QStringLiteral("user")},
+             {QStringLiteral("created"), double(runtime_->commandSentAt)},
+             {QStringLiteral("parts"), QJsonArray{QJsonObject{
+                 {QStringLiteral("kind"), QStringLiteral("text")},
+                 {QStringLiteral("text"), text}}}}});
+        runtime_->editor->clear();
+        renderMessages();
+    }
     updateControls();
-    runtime_->command(current, action, [this, current, clearDraft](const QString& error) {
+    runtime_->command(current, action, [this, current, clearDraft, optimisticId](const QString& error) {
         if (sessionKey(current) != sessionKey(runtime_->session)) return;
         if (!error.isEmpty()) {
             runtime_->pendingCommand = false;
+            removeOptimisticMessage(optimisticId);
+            if (clearDraft && runtime_->editor->toPlainText().isEmpty())
+                runtime_->editor->setPlainText(runtime_->pendingDraft);
             runtime_->pendingDraft.clear();
+            runtime_->pendingOptimisticId.clear();
             runtime_->pendingAction.clear();
             runtime_->awaitingResponse = false;
             updateThinking();
@@ -357,6 +383,14 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
         showStatus(QStringLiteral("已送达所属设备，等待确认执行"));
         runtime_->commandTimeout.start();
     });
+}
+
+void RemoteAgentPanel::removeOptimisticMessage(const QString& id) {
+    if (id.isEmpty()) return;
+    runtime_->optimisticMessages.remove(id);
+    runtime_->messages.remove(id);
+    runtime_->rendered.remove(id);
+    runtime_->view->removeItem(id);
 }
 
 void RemoteAgentPanel::sendOrStop() {
@@ -381,6 +415,21 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
             runtime_->pendingAction == QStringLiteral("prompt");
         runtime_->observedBusy = false;
         runtime_->pendingAction.clear();
+        if (runtime_->lastCommandRejected) {
+            removeOptimisticMessage(runtime_->pendingOptimisticId);
+        } else if (runtime_->optimisticMessages.contains(runtime_->pendingOptimisticId)) {
+            const QString canonicalId = result.value(QStringLiteral("user_message_id")).toString();
+            if (!canonicalId.isEmpty()) {
+                QJsonObject message = runtime_->messages.value(runtime_->pendingOptimisticId);
+                removeOptimisticMessage(runtime_->pendingOptimisticId);
+                if (!runtime_->messages.contains(canonicalId)) {
+                    message.insert(QStringLiteral("id"), canonicalId);
+                    runtime_->messages.insert(canonicalId, message);
+                }
+                renderMessages();
+            }
+        }
+        runtime_->pendingOptimisticId.clear();
         if (!runtime_->lastCommandRejected && !runtime_->pendingDraft.isEmpty() &&
             runtime_->editor->toPlainText() == runtime_->pendingDraft)
             runtime_->editor->clear();
@@ -436,6 +485,14 @@ void RemoteAgentPanel::renderMessages() {
     const bool followedLatest = runtime_->view->isAtBottom();
     bool prepend = !runtime_->rendered.isEmpty() && !ids.isEmpty() &&
                    ids.first() < runtime_->rendered.firstKey();
+    if (!prepend && !runtime_->rendered.isEmpty()) {
+        const QString lastRendered = runtime_->rendered.lastKey();
+        for (const QString& id : ids)
+            if (id < lastRendered && !runtime_->rendered.contains(id)) {
+                prepend = true;
+                break;
+            }
+    }
     bool contentChanged = prepend;
     for (const QString& id : ids) {
         const QString content = messageText(runtime_->messages.value(id));
@@ -512,10 +569,10 @@ void RemoteAgentPanel::renderRequests(const QJsonObject& payload) {
                             {QStringLiteral("id"), id}, {QStringLiteral("decision"), decision}}, false);
             });
         };
-        addDecision(QStringLiteral("允许一次"), QStringLiteral("approve_once"));
+        addDecision(QStringLiteral("允许一次"), QStringLiteral("approved"));
         if (permission.value(QStringLiteral("allowForSession")).toBool())
-            addDecision(QStringLiteral("本次会话允许"), QStringLiteral("approve_session"));
-        addDecision(QStringLiteral("拒绝"), QStringLiteral("deny"));
+            addDecision(QStringLiteral("本次会话允许"), QStringLiteral("approved_for_session"));
+        addDecision(QStringLiteral("拒绝"), QStringLiteral("denied"));
         runtime_->requestsLayout->addWidget(row);
     }
     for (const QJsonValue& value : payload.value(QStringLiteral("questions")).toArray()) {

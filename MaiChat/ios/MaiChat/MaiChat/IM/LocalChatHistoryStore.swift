@@ -175,10 +175,6 @@ enum RemoteIMMediaStorage {
         return resolvedURL.path
     }
 
-    static func partialDownloadURL(for finalURL: URL) -> URL {
-        finalURL.appendingPathExtension("part")
-    }
-
     private static func mediaRootURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let root = appSupport
@@ -240,6 +236,20 @@ struct LocalChatHistoryPage: Sendable, Equatable {
     let hasEarlierMessages: Bool
 }
 
+struct LocalChatHistoryGroup: Sendable, Equatable {
+    let groupID: String
+    let name: String
+    let memberCount: Int
+    let pendingActivation: Bool
+
+    init(groupID: String, name: String, memberCount: Int, pendingActivation: Bool = false) {
+        self.groupID = groupID
+        self.name = name
+        self.memberCount = memberCount
+        self.pendingActivation = pendingActivation
+    }
+}
+
 struct LocalChatHistorySearchHit: Identifiable, Sendable, Equatable {
     var id: UUID { message.id }
     let peerUserID: String
@@ -249,6 +259,7 @@ struct LocalChatHistorySearchHit: Identifiable, Sendable, Equatable {
 enum LocalChatHistoryMutationOperation: Sendable {
     case upsert([RemoteIMMessage])
     case removeConversation(peerUserID: String)
+    case removeMessage(id: UUID)
 }
 
 struct LocalChatHistoryMutation: Sendable {
@@ -282,6 +293,16 @@ struct LocalChatHistoryMutation: Sendable {
             operation: .removeConversation(
                 peerUserID: peerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+        )
+    }
+
+    static func removeMessage(id: UUID, sdkAppID: Int?, ownerUserID: String) -> Self {
+        Self(
+            account: LocalChatHistoryAccount(
+                sdkAppID: sdkAppID,
+                ownerUserID: ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            operation: .removeMessage(id: id)
         )
     }
 }
@@ -369,6 +390,13 @@ final class LocalChatHistoryStore {
                 guard sqlite3_step(deletion) == SQLITE_DONE else {
                     throw databaseError(database)
                 }
+                let groupDeletion = try prepare(database,
+                    sql: "DELETE FROM groups WHERE owner_user_id=?")
+                defer { sqlite3_finalize(groupDeletion) }
+                try bindText(owner, to: groupDeletion, at: 1, database: database)
+                guard sqlite3_step(groupDeletion) == SQLITE_DONE else {
+                    throw databaseError(database)
+                }
                 try execute(database, sql: "COMMIT")
             } catch {
                 try? execute(database, sql: "ROLLBACK")
@@ -416,10 +444,10 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote, media_caption
+                       approval_request, approval_decision, caption_above, quote, media_caption, group_id
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
-                  AND peer_user_id = ?
+                  AND peer_user_id = ? AND group_id IS NULL
                   \(cursorClause)
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
@@ -485,9 +513,9 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote, media_caption
+                       approval_request, approval_decision, caption_above, quote, media_caption, group_id
                 FROM messages
-                WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ?
+                WHERE sdk_app_id = ? AND owner_user_id = ? AND peer_user_id = ? AND group_id IS NULL
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """
@@ -519,6 +547,170 @@ final class LocalChatHistoryStore {
         }
     }
 
+    func loadGroupConversationPage(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        groupID: String,
+        before cursor: LocalChatHistoryCursor?,
+        limit: Int
+    ) throws -> LocalChatHistoryPage {
+        let owner = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let group = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty, !group.isEmpty, limit > 0 else {
+            return LocalChatHistoryPage(messages: [], hasEarlierMessages: false)
+        }
+        return try withDatabase { database in
+            let cursorClause = cursor == nil
+                ? ""
+                : "AND (created_at < ? OR (created_at = ? AND id < ?))"
+            let statement = try prepare(database, sql: """
+                SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
+                       voice_attachment, image_attachment, file_attachment, video_attachment,
+                       approval_request, approval_decision, caption_above, quote, media_caption, group_id
+                FROM messages
+                WHERE sdk_app_id = ? AND owner_user_id = ? AND group_id = ?
+                  \(cursorClause)
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """)
+            defer { sqlite3_finalize(statement) }
+            try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+            try bindText(owner, to: statement, at: 2, database: database)
+            try bindText(group, to: statement, at: 3, database: database)
+            var limitIndex: Int32 = 4
+            if let cursor {
+                sqlite3_bind_double(statement, 4, cursor.createdAt.timeIntervalSince1970)
+                sqlite3_bind_double(statement, 5, cursor.createdAt.timeIntervalSince1970)
+                try bindText(cursor.messageID.uuidString, to: statement, at: 6, database: database)
+                limitIndex = 7
+            }
+            sqlite3_bind_int64(statement, limitIndex, Int64(limit + 1))
+            var descending: [RemoteIMMessage] = []
+            while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    if let message = decodeMessage(from: statement) { descending.append(message) }
+                case SQLITE_DONE:
+                    return LocalChatHistoryPage(
+                        messages: Array(descending.prefix(limit).reversed()),
+                        hasEarlierMessages: descending.count > limit
+                    )
+                default:
+                    throw databaseError(database)
+                }
+            }
+        }
+    }
+
+    func loadGroupConversationSummaries(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        groupIDs: [String]
+    ) throws -> [RemoteIMMessage] {
+        let owner = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let groups = Array(Set(groupIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }))
+            .filter { !$0.isEmpty }
+        guard !owner.isEmpty, !groups.isEmpty else { return [] }
+        return try withDatabase { database in
+            let statement = try prepare(database, sql: """
+                SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
+                       voice_attachment, image_attachment, file_attachment, video_attachment,
+                       approval_request, approval_decision, caption_above, quote, media_caption, group_id
+                FROM messages
+                WHERE sdk_app_id = ? AND owner_user_id = ? AND group_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """)
+            defer { sqlite3_finalize(statement) }
+            var messages: [RemoteIMMessage] = []
+            for group in groups {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+                try bindText(owner, to: statement, at: 2, database: database)
+                try bindText(group, to: statement, at: 3, database: database)
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    if let message = decodeMessage(from: statement) { messages.append(message) }
+                case SQLITE_DONE:
+                    continue
+                default:
+                    throw databaseError(database)
+                }
+            }
+            return messages.sorted { $0.createdAt > $1.createdAt }
+        }
+    }
+
+    func loadGroups(sdkAppID: Int?, ownerUserID: String) throws -> [LocalChatHistoryGroup] {
+        let owner = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else { return [] }
+        return try withDatabase { database in
+            let statement = try prepare(database, sql: """
+                SELECT group_id, name, member_count, pending_activation
+                FROM groups WHERE sdk_app_id = ? AND owner_user_id = ?
+                ORDER BY updated_at DESC, group_id ASC
+                """)
+            defer { sqlite3_finalize(statement) }
+            try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+            try bindText(owner, to: statement, at: 2, database: database)
+            var result: [LocalChatHistoryGroup] = []
+            while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    result.append(LocalChatHistoryGroup(
+                        groupID: textColumn(statement, at: 0),
+                        name: textColumn(statement, at: 1),
+                        memberCount: Int(sqlite3_column_int(statement, 2)),
+                        pendingActivation: sqlite3_column_int(statement, 3) != 0
+                    ))
+                case SQLITE_DONE:
+                    return result
+                default:
+                    throw databaseError(database)
+                }
+            }
+        }
+    }
+
+    func replaceGroups(_ groups: [LocalChatHistoryGroup], sdkAppID: Int?, ownerUserID: String) throws {
+        let owner = ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else { return }
+        try withDatabase { database in
+            try execute(database, sql: "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let deletion = try prepare(database,
+                    sql: "DELETE FROM groups WHERE sdk_app_id = ? AND owner_user_id = ?")
+                defer { sqlite3_finalize(deletion) }
+                try bindText(accountKey(for: sdkAppID), to: deletion, at: 1, database: database)
+                try bindText(owner, to: deletion, at: 2, database: database)
+                guard sqlite3_step(deletion) == SQLITE_DONE else { throw databaseError(database) }
+                let insertion = try prepare(database, sql: """
+                    INSERT INTO groups(sdk_app_id, owner_user_id, group_id, name,
+                                       member_count, updated_at, pending_activation)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """)
+                defer { sqlite3_finalize(insertion) }
+                for group in groups where !group.groupID.isEmpty {
+                    sqlite3_reset(insertion)
+                    sqlite3_clear_bindings(insertion)
+                    try bindText(accountKey(for: sdkAppID), to: insertion, at: 1, database: database)
+                    try bindText(owner, to: insertion, at: 2, database: database)
+                    try bindText(group.groupID, to: insertion, at: 3, database: database)
+                    try bindText(group.name, to: insertion, at: 4, database: database)
+                    sqlite3_bind_int(insertion, 5, Int32(max(0, group.memberCount)))
+                    sqlite3_bind_double(insertion, 6, Date().timeIntervalSince1970)
+                    sqlite3_bind_int(insertion, 7, group.pendingActivation ? 1 : 0)
+                    guard sqlite3_step(insertion) == SQLITE_DONE else { throw databaseError(database) }
+                }
+                try execute(database, sql: "COMMIT")
+            } catch {
+                try? execute(database, sql: "ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     /// 搜索该账号的完整持久化历史，而非只搜索当前已经打开的消息页。
     /// 使用 SQLite instr 将百分号和下划线视为普通文本，避免 LIKE 通配符误匹配；
     /// 返回数量受上限约束，搜索结果通过稳定消息标识供界面定位。
@@ -543,7 +735,7 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote, media_caption,
+                       approval_request, approval_decision, caption_above, quote, media_caption, group_id,
                        CASE
                            WHEN peer_user_id IS NULL OR peer_user_id = '' THEN
                                CASE WHEN from_user = owner_user_id THEN to_user ELSE from_user END
@@ -551,6 +743,7 @@ final class LocalChatHistoryStore {
                        END
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
+                  AND group_id IS NULL
                   AND text <> ''
                   AND instr(lower(text), lower(?)) > 0
                 ORDER BY created_at DESC, id DESC
@@ -568,7 +761,7 @@ final class LocalChatHistoryStore {
             while true {
                 switch sqlite3_step(statement) {
                 case SQLITE_ROW:
-                    let peerUserID = textColumn(statement, at: 17)
+                    let peerUserID = textColumn(statement, at: 18)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if !peerUserID.isEmpty, let message = decodeMessage(from: statement) {
                         hits.append(LocalChatHistorySearchHit(
@@ -640,10 +833,10 @@ final class LocalChatHistoryStore {
                 sql: """
                 SELECT id, remote_id, from_user, to_user, text, direction, status, created_at,
                        voice_attachment, image_attachment, file_attachment, video_attachment,
-                       approval_request, approval_decision, caption_above, quote, media_caption
+                       approval_request, approval_decision, caption_above, quote, media_caption, group_id
                 FROM messages
                 WHERE sdk_app_id = ? AND owner_user_id = ?
-                  AND peer_user_id = ? AND remote_id = ?
+                  AND peer_user_id = ? AND remote_id = ? AND group_id IS NULL
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """
@@ -697,7 +890,8 @@ final class LocalChatHistoryStore {
                     switch mutation.operation {
                     case .upsert(let messages):
                         let validMessages = Self.deduplicatedMessages(messages).filter {
-                            $0.fromUserID == ownerUserID || $0.toUserID == ownerUserID
+                            ($0.groupID != nil && $0.toUserID == $0.groupID) ||
+                                $0.fromUserID == ownerUserID || $0.toUserID == ownerUserID
                         }
                         try insertMessages(
                             validMessages,
@@ -709,6 +903,13 @@ final class LocalChatHistoryStore {
                     case .removeConversation(let peerUserID):
                         removedCount += try removeConversationMessages(
                             peerUserID: peerUserID,
+                            from: database,
+                            sdkAppID: mutation.account.sdkAppID,
+                            ownerUserID: ownerUserID
+                        )
+                    case .removeMessage(let id):
+                        removedCount += try removeMessage(
+                            id: id,
                             from: database,
                             sdkAppID: mutation.account.sdkAppID,
                             ownerUserID: ownerUserID
@@ -754,7 +955,7 @@ final class LocalChatHistoryStore {
             sql: """
             DELETE FROM messages
             WHERE sdk_app_id = ? AND owner_user_id = ?
-              AND peer_user_id = ?
+              AND peer_user_id = ? AND group_id IS NULL
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -764,6 +965,24 @@ final class LocalChatHistoryStore {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError(database)
         }
+        return Int(sqlite3_changes(database))
+    }
+
+    private func removeMessage(
+        id: UUID,
+        from database: OpaquePointer,
+        sdkAppID: Int?,
+        ownerUserID: String
+    ) throws -> Int {
+        let statement = try prepare(database, sql: """
+            DELETE FROM messages
+            WHERE sdk_app_id = ? AND owner_user_id = ? AND id = ?
+            """)
+        defer { sqlite3_finalize(statement) }
+        try bindText(accountKey(for: sdkAppID), to: statement, at: 1, database: database)
+        try bindText(ownerUserID, to: statement, at: 2, database: database)
+        try bindText(id.uuidString, to: statement, at: 3, database: database)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
         return Int(sqlite3_changes(database))
     }
 
@@ -795,7 +1014,8 @@ final class LocalChatHistoryStore {
                   caption_above = excluded.caption_above,
                   quote = excluded.quote,
                   media_caption = excluded.media_caption,
-                  peer_user_id = excluded.peer_user_id
+                  peer_user_id = excluded.peer_user_id,
+                  group_id = excluded.group_id
               """
             : "DO NOTHING"
         let statement = try prepare(
@@ -806,8 +1026,8 @@ final class LocalChatHistoryStore {
                 direction, status, created_at,
                 voice_attachment, image_attachment, file_attachment, video_attachment,
                 approval_request, approval_decision, caption_above, quote,
-                media_caption, peer_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                media_caption, peer_user_id, group_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(sdk_app_id, owner_user_id, id) \(conflictClause)
             """
         )
@@ -890,10 +1110,16 @@ final class LocalChatHistoryStore {
             sqlite3_bind_int(statement, 17, message.captionAbove ? 1 : 0)
             try bindOptionalJSON(message.quote, to: statement, at: 18, database: database)
             try bindOptionalText(message.mediaCaption, to: statement, at: 19, database: database)
-            let peerUserID = message.fromUserID == ownerUserID
-                ? message.toUserID
-                : message.fromUserID
-            try bindText(peerUserID, to: statement, at: 20, database: database)
+            if let groupID = message.groupID, !groupID.isEmpty {
+                sqlite3_bind_null(statement, 20)
+                try bindText(groupID, to: statement, at: 21, database: database)
+            } else {
+                let peerUserID = message.fromUserID == ownerUserID
+                    ? message.toUserID
+                    : message.fromUserID
+                try bindText(peerUserID, to: statement, at: 20, database: database)
+                sqlite3_bind_null(statement, 21)
+            }
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw databaseError(database)
             }
@@ -989,6 +1215,7 @@ final class LocalChatHistoryStore {
             remoteID: optionalTextColumn(statement, at: 1),
             fromUserID: textColumn(statement, at: 2),
             toUserID: textColumn(statement, at: 3),
+            groupID: optionalTextColumn(statement, at: 17),
             text: textColumn(statement, at: 4),
             mediaCaption: optionalTextColumn(statement, at: 16),
             captionAbove: sqlite3_column_int(statement, 14) != 0,
@@ -1064,15 +1291,34 @@ final class LocalChatHistoryStore {
                 quote TEXT,
                 media_caption TEXT,
                 peer_user_id TEXT,
+                group_id TEXT,
                 PRIMARY KEY (sdk_app_id, owner_user_id, id)
             )
             """
         )
+        try execute(database, sql: """
+            CREATE TABLE IF NOT EXISTS groups (
+                sdk_app_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                member_count INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL,
+                pending_activation INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (sdk_app_id, owner_user_id, group_id)
+            )
+            """)
+        if try !columnExists("pending_activation", in: "groups", database: database) {
+            try execute(database, sql: "ALTER TABLE groups ADD COLUMN pending_activation INTEGER NOT NULL DEFAULT 0")
+        }
         if try !columnExists("remote_id", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN remote_id TEXT")
         }
         if try !columnExists("peer_user_id", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN peer_user_id TEXT")
+        }
+        if try !columnExists("group_id", in: "messages", database: database) {
+            try execute(database, sql: "ALTER TABLE messages ADD COLUMN group_id TEXT")
         }
         if try !columnExists("video_attachment", in: "messages", database: database) {
             try execute(database, sql: "ALTER TABLE messages ADD COLUMN video_attachment TEXT")
@@ -1129,8 +1375,15 @@ final class LocalChatHistoryStore {
             ON messages(sdk_app_id, owner_user_id, peer_user_id, created_at DESC, id DESC)
             """
         )
-        if previousSchemaVersion < 8 {
-            try execute(database, sql: "PRAGMA user_version = 8")
+        try execute(
+            database,
+            sql: """
+            CREATE INDEX IF NOT EXISTS idx_messages_account_group_time
+            ON messages(sdk_app_id, owner_user_id, group_id, created_at DESC, id DESC)
+            """
+        )
+        if previousSchemaVersion < 10 {
+            try execute(database, sql: "PRAGMA user_version = 10")
         }
     }
 
@@ -1360,6 +1613,14 @@ actor LocalChatHistoryPersistence {
         try store.purgeAccount(ownerUserID: ownerUserID, sdkAppID: sdkAppID)
     }
 
+    func loadGroups(sdkAppID: Int?, ownerUserID: String) throws -> [LocalChatHistoryGroup] {
+        try store.loadGroups(sdkAppID: sdkAppID, ownerUserID: ownerUserID)
+    }
+
+    func replaceGroups(_ groups: [LocalChatHistoryGroup], sdkAppID: Int?, ownerUserID: String) throws {
+        try store.replaceGroups(groups, sdkAppID: sdkAppID, ownerUserID: ownerUserID)
+    }
+
     func loadConversationPage(
         sdkAppID: Int?,
         ownerUserID: String,
@@ -1373,6 +1634,34 @@ actor LocalChatHistoryPersistence {
             peerUserID: peerUserID,
             before: cursor,
             limit: limit
+        )
+    }
+
+    func loadGroupConversationPage(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        groupID: String,
+        before cursor: LocalChatHistoryCursor?,
+        limit: Int
+    ) throws -> LocalChatHistoryPage {
+        try store.loadGroupConversationPage(
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID,
+            groupID: groupID,
+            before: cursor,
+            limit: limit
+        )
+    }
+
+    func loadGroupConversationSummaries(
+        sdkAppID: Int?,
+        ownerUserID: String,
+        groupIDs: [String]
+    ) throws -> [RemoteIMMessage] {
+        try store.loadGroupConversationSummaries(
+            sdkAppID: sdkAppID,
+            ownerUserID: ownerUserID,
+            groupIDs: groupIDs
         )
     }
 

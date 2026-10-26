@@ -15,6 +15,12 @@ void maiMobileAgentFree(char* response);
 // Android 和桌面端改用打包的动态库路径。指针借用到宿主进程结束，只能在 Agent 工作线程设置。
 int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase);
 
+// 本地会话内容变化时的轻量通知。只允许在 configure 前设置；回调可能在 Agent
+// 工作线程触发，sessionId 仅在本次回调内有效。宿主只能复制 ID 并异步投递，
+// 不得在回调里读数据库、发网络请求或等待主线程。传空 handler 可禁用。
+typedef void (*MaiMobileAgentChangeHandler)(const char* sessionId);
+int maiMobileAgentSetChangeHandler(void* handle, MaiMobileAgentChangeHandler handler);
+
 // 视频抠像的宿主直接入口与 cv_video_matting 工具共用参数 Schema 和处理器。
 // 路径使用 UTF-8；argumentsJson 中的 output_path 仍相对于 workspace。
 // 返回由调用方持有的 {ok,output|error} JSON 字符串，必须用 maiMobileAgentFree 释放。

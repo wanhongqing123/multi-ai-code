@@ -146,16 +146,47 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
 
     @Published var sdkAppIDText = ""
     @Published var masterUserID = ""
-    @Published var maiChatAccountID = ""
+    @Published var maiChatAccountID = "" {
+        didSet {
+            if oldValue != maiChatAccountID,
+               MaiCloudDriveAgentPlaybackCache.shared.accountChanged(to: maiChatAccountID) {
+                agentVideoPresentation = nil
+                if let path = AIAssistantModel.shared.previewImage?.filePath,
+                   MaiCloudDriveAgentPlaybackCache.shared.ownsAgentImage(path: path) {
+                    AIAssistantModel.shared.previewImage = nil
+                }
+            }
+        }
+    }
     @Published var maiChatNickname = ""
     @Published var newContactUserID = ""
     @Published var newContactRelation: RemoteIMContactRelation = .friend
     @Published var errorMessage: String?
-    @Published var agentVideoPresentation: MaiFfplayPresentation?
+    @Published var agentVideoPresentation: MaiFfplayPresentation? {
+        didSet {
+            MaiCloudDriveAgentPlaybackCache.shared.presentationChanged(
+                to: agentVideoPresentation?.path)
+        }
+    }
     @Published var connectionState: ConnectionState = .disconnected
     // 仅本机用户主动发送入队时发布；历史回灌和投递状态变化不触发此标识。
     @Published private(set) var locallyQueuedMessageID: UUID?
     @Published var chatState: MasterChatState
+    @Published private(set) var groups: [RemoteIMGroup] = []
+    @Published private(set) var groupCreationRecovery: RemoteIMGroup? {
+        didSet {
+            if oldValue?.groupID != groupCreationRecovery?.groupID {
+                groupRecoveryGeneration &+= 1
+            }
+        }
+    }
+    @Published private(set) var unreadCountByGroupID: [String: Int] = [:] {
+        didSet {
+            client.updateApplicationBadgeCount(
+                RemoteIMNewMessageNotificationPolicy.systemBadgeCount(totalUnreadCount: totalUnreadCount)
+            )
+        }
+    }
     @Published var hasCompletedInitialLogin = false
     @Published private(set) var hasUnifiedAccount = false
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
@@ -206,6 +237,17 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     private var connectionAttemptGate = RemoteIMConnectionAttemptGate()
     private var didHandleLaunchAutoConnect = false
     private var visibleConversationUserID: String?
+    private var visibleGroupID: String?
+    private var groupRecoveryGeneration: UInt64 = 0
+#if targetEnvironment(simulator)
+    private var groupUIFixtureMode = false
+    private var groupUIFixtureActivationFailure = false
+    private var groupUIFixtureGeneration: UInt64 = 0
+#endif
+    private var groupHistoryStateByID: [String: ConversationHistoryState] = [:]
+    private var visibleGroupMessageLimitByID: [String: Int] = [:]
+    private var oldestRemoteGroupMessageIDByID: [String: String] = [:]
+    private var groupHasEarlierRemoteMessagesByID: [String: Bool] = [:]
     private var conversationHistoryStateByUserID: [String: ConversationHistoryState] = [:]
     // 内存中的完整历史供搜索和引用使用；界面只接收已开放的最近消息页。
     private var visibleMessageLimitByUserID: [String: Int] = [:]
@@ -313,6 +355,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 await self?.receive(event)
             }
         }
+        self.client.onIncomingGroupText = { [weak self] event in
+            Task { @MainActor in await self?.receive(event) }
+        }
+        self.client.onGroupMembershipChanged = { [weak self] in
+            Task { @MainActor in await self?.refreshJoinedGroups() }
+        }
         self.client.onIncomingActivity = { [weak self] event in
             self?.receive(event)
         }
@@ -373,6 +421,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         Task { [weak self] in
             await self?.loadConversationSummariesForCurrentAccount()
         }
+        Task { [weak self] in
+            await self?.loadStoredGroupsForCurrentAccount()
+        }
     }
 
     var selectedContact: RemoteIMContact? {
@@ -381,8 +432,85 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     var totalUnreadCount: Int {
-        unreadCountByUserID.values.reduce(0, +)
+        unreadCountByUserID.values.reduce(0, +) + unreadCountByGroupID.values.reduce(0, +)
     }
+
+    var selectedGroupID: String? { chatState.selectedGroupID }
+
+#if targetEnvironment(simulator)
+    func configureGroupUITestFixture() {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("--im-group-ui-test") ||
+              arguments.contains("--im-group-activation-fail-ui-test") else { return }
+        groupUIFixtureMode = true
+        groupUIFixtureGeneration &+= 1
+        groupUIFixtureActivationFailure = arguments.contains("--im-group-activation-fail-ui-test")
+        historyAccountGeneration &+= 1
+        chatHistorySDKAppID = nil
+        masterUserID = "sim-group-owner"
+        maiChatAccountID = "sim-group-owner"
+        maiChatNickname = "模拟器测试账号"
+        hasUnifiedAccount = true
+        hasCompletedInitialLogin = true
+        connectionState = .connected
+        let contacts = [
+            RemoteIMContact(userID: "sim-friend-a", displayName: "测试好友 A", relation: .friend),
+            RemoteIMContact(userID: "sim-friend-b", displayName: "测试好友 B", relation: .friend),
+        ]
+        chatState = MasterChatState(ownerUserID: masterUserID, contacts: contacts, messages: [])
+        acceptedFriendIMIDs = Set(contacts.map(\.userID))
+        friendDisplayByIMID = Dictionary(uniqueKeysWithValues: contacts.map { ($0.userID, $0.displayName) })
+        userProfileByUserID = Dictionary(uniqueKeysWithValues: contacts.map {
+            ($0.userID, RemoteIMUserProfile(userID: $0.userID, displayName: $0.displayName, avatarURL: nil))
+        })
+        groups = []
+        groupCreationRecovery = nil
+        unreadCountByGroupID = [:]
+    }
+
+    func dropGroupForUITest(groupID: String) {
+        guard groupUIFixtureMode, groups.contains(where: { $0.groupID == groupID }) else { return }
+        groupUIFixtureGeneration &+= 1
+        groups.removeAll { $0.groupID == groupID }
+        if chatState.selectedGroupID == groupID { chatState.clearSelectedGroup() }
+        if groupCreationRecovery?.groupID == groupID { groupCreationRecovery = nil }
+        if visibleGroupID == groupID { visibleGroupID = nil }
+        unreadCountByGroupID[groupID] = nil
+        groupHistoryStateByID[groupID] = nil
+        visibleGroupMessageLimitByID[groupID] = nil
+        oldestRemoteGroupMessageIDByID[groupID] = nil
+        groupHasEarlierRemoteMessagesByID[groupID] = nil
+    }
+
+    func switchOwnerForUITest() {
+        guard groupUIFixtureMode else { return }
+        groupUIFixtureGeneration &+= 1
+        historyAccountGeneration &+= 1
+        accountRebuildRequestGeneration &+= 1
+        masterUserID = "sim-group-owner-switched"
+        maiChatAccountID = masterUserID
+        maiChatNickname = "切换后的测试账号"
+        chatState = MasterChatState(ownerUserID: masterUserID)
+        groups = []
+        groupCreationRecovery = nil
+        unreadCountByGroupID = [:]
+        unreadCountByUserID = [:]
+        acceptedFriendIMIDs = []
+        friendDisplayByIMID = [:]
+        userProfileByUserID = [:]
+        visibleConversationUserID = nil
+        visibleGroupID = nil
+        conversationHistoryStateByUserID = [:]
+        visibleMessageLimitByUserID = [:]
+        focusedMessageIDByUserID = [:]
+        conversationHistoryLoadGenerationByUserID = [:]
+        pendingIncomingRemoteIDs = []
+        groupHistoryStateByID = [:]
+        visibleGroupMessageLimitByID = [:]
+        oldestRemoteGroupMessageIDByID = [:]
+        groupHasEarlierRemoteMessagesByID = [:]
+    }
+#endif
 
     func showTransientError(_ message: String, duration: Duration = .seconds(3)) {
         transientErrorTask?.cancel()
@@ -615,6 +743,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func validateCurrentAccountSession() async {
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode { return }
+#endif
         guard hasUnifiedAccount, hasCompletedInitialLogin,
               !masterUserID.isEmpty else { return }
         let expectedUserID = masterUserID
@@ -869,6 +1000,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         pendingIncomingRemoteIDs = []
         downloadingVideoKeys = []
         presenceStatusByUserID = [:]
+        groups = []
+        groupCreationRecovery = nil
+        unreadCountByGroupID = [:]
+        visibleGroupID = nil
+        groupHistoryStateByID = [:]
+        visibleGroupMessageLimitByID = [:]
+        oldestRemoteGroupMessageIDByID = [:]
+        groupHasEarlierRemoteMessagesByID = [:]
         let contacts = saved.map(Self.contacts(from:)) ?? []
         chatState = MasterChatState(
             ownerUserID: userID, contacts: contacts,
@@ -977,6 +1116,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             )
             await refreshProfilesForCurrentUsers()
             await refreshAcceptedFriends()
+            Task { @MainActor [weak self] in
+                await self?.refreshJoinedGroups()
+            }
             RemoteIMAvatarImageStore.shared.prefetch(
                 userProfileByUserID.values.compactMap(\.avatarURL)
                     + chatState.contacts.compactMap(\.avatarURL)
@@ -1009,6 +1151,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func connectOnLaunchIfNeeded() async {
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode { return }
+#endif
         guard shouldConnectOnLaunch, !didHandleLaunchAutoConnect else { return }
         didHandleLaunchAutoConnect = true
         await connect()
@@ -1211,6 +1356,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     func refreshAcceptedFriends() async {
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode { return }
+#endif
         guard hasUnifiedAccount else { return }
         let identity = remoteDiagnosticsIdentity
         do {
@@ -1405,11 +1553,12 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             focusedMessageIDByUserID[contact.userID] = nil
             visibleMessageLimitByUserID[contact.userID] = messagePageSize
         }
-        if chatState.selectedPeerID != contact.userID {
+        if chatState.selectedPeerID != contact.userID || chatState.selectedGroupID != nil {
             replyPreparationTask?.cancel()
             replyPreparationTask = nil
             draft.selectConversation(ownerUserID: chatState.ownerUserID, peerUserID: contact.userID)
             chatState.selectPeer(userID: contact.userID)
+            visibleGroupID = nil
         } else {
             draft.selectConversation(ownerUserID: chatState.ownerUserID, peerUserID: contact.userID)
         }
@@ -1417,6 +1566,391 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             settingsStore.save(currentStoredSettings())
         }
         clearSystemNotification(for: contact.userID)
+    }
+
+    @discardableResult
+    func createGroup(name: String, memberUserIDs: [String]) async -> RemoteIMGroup? {
+        guard groupCreationRecovery == nil else {
+            showTransientError("上次创建的群尚未通知成员，请先打开该群并发送消息")
+            return nil
+        }
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode {
+            let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let members = Array(Set(memberUserIDs))
+            guard !cleanName.isEmpty, !members.isEmpty,
+                  members.allSatisfy(acceptedFriendIMIDs.contains) else { return nil }
+            let group = RemoteIMGroup(
+                groupID: "sim-group-\(UUID().uuidString)", name: cleanName,
+                memberCount: members.count + 1
+            )
+            groups.insert(group, at: 0)
+            if groupUIFixtureActivationFailure {
+                groupUIFixtureActivationFailure = false
+                groupCreationRecovery = group
+                showTransientError("群已创建，但成员通知未送达。请打开群聊并发送一条消息")
+                return nil
+            }
+            selectGroup(groupID: group.groupID)
+            return group
+        }
+#endif
+        guard connectionState == .connected else {
+            showTransientError("请先连接 IM")
+            return nil
+        }
+        let identity = remoteDiagnosticsIdentity
+        do {
+            let stored = try await historyPersistence.loadGroups(
+                sdkAppID: chatHistorySDKAppID, ownerUserID: chatState.ownerUserID
+            )
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            if let pending = stored.first(where: \.pendingActivation) {
+                let group = RemoteIMGroup(
+                    groupID: pending.groupID, name: pending.name, memberCount: pending.memberCount
+                )
+                if !groups.contains(where: { $0.groupID == group.groupID }) {
+                    groups.insert(group, at: 0)
+                }
+                groupCreationRecovery = group
+                showTransientError("已有创建成功但尚未通知成员的群，请先打开它并发送消息")
+                return nil
+            }
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            showTransientError("无法检查上次建群状态，请稍后重试")
+            return nil
+        }
+        do {
+            let group = try await client.createGroup(name: name, memberUserIDs: memberUserIDs)
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            if !groups.contains(where: { $0.groupID == group.groupID }) {
+                groups.insert(group, at: 0)
+            }
+            groupCreationRecovery = nil
+            try? await persistGroupMetadata()
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            selectGroup(groupID: group.groupID)
+            return group
+        } catch RemoteIMClientError.groupActivationFailed(let groupID, _, _) {
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            let partial = RemoteIMGroup(
+                groupID: groupID,
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                memberCount: Set(memberUserIDs).count + 1
+            )
+            if !groups.contains(where: { $0.groupID == groupID }) {
+                groups.insert(partial, at: 0)
+            }
+            groupCreationRecovery = partial
+            do {
+                try await persistGroupMetadata()
+            } catch {
+                guard remoteDiagnosticsIdentity == identity else { return nil }
+                showTransientError("群已创建（ID：\(groupID)），但本地恢复状态保存失败，请勿重复建群")
+                return nil
+            }
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            showTransientError("群已创建，但成员通知未送达。请打开群聊并发送一条消息")
+            return nil
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return nil }
+            showTransientError(error.localizedDescription)
+            return nil
+        }
+    }
+
+    func refreshJoinedGroups() async {
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode { return }
+#endif
+        guard connectionState == .connected else { return }
+        let identity = remoteDiagnosticsIdentity
+        let recoveryGeneration = groupRecoveryGeneration
+        do {
+            let saved = try await historyPersistence.loadGroups(
+                sdkAppID: chatHistorySDKAppID, ownerUserID: chatState.ownerUserID
+            )
+            guard remoteDiagnosticsIdentity == identity,
+                  groupRecoveryGeneration == recoveryGeneration else { return }
+            let pending = groupCreationRecovery ?? saved.first(where: \.pendingActivation).map {
+                RemoteIMGroup(groupID: $0.groupID, name: $0.name, memberCount: $0.memberCount)
+            }
+            let joined = try await client.joinedGroups()
+            guard remoteDiagnosticsIdentity == identity,
+                  groupRecoveryGeneration == recoveryGeneration else { return }
+            var merged = joined
+            if let pending, !merged.contains(where: { $0.groupID == pending.groupID }) {
+                merged.insert(pending, at: 0)
+            }
+            groups = merged
+            groupCreationRecovery = pending
+            let appliedRecoveryGeneration = groupRecoveryGeneration
+            try? await persistGroupMetadata()
+            guard remoteDiagnosticsIdentity == identity,
+                  groupRecoveryGeneration == appliedRecoveryGeneration else { return }
+            let joinedIDs = Set(merged.map(\.groupID))
+            if let selectedGroupID, !joinedIDs.contains(selectedGroupID) {
+                chatState.clearSelectedGroup()
+                visibleGroupID = nil
+            }
+            unreadCountByGroupID = unreadCountByGroupID.filter { joinedIDs.contains($0.key) }
+            let summaries = try await historyPersistence.loadGroupConversationSummaries(
+                sdkAppID: chatHistorySDKAppID,
+                ownerUserID: chatState.ownerUserID,
+                groupIDs: merged.map(\.groupID)
+            )
+            guard remoteDiagnosticsIdentity == identity else { return }
+            chatState.mergeMessages(summaries)
+            for group in joined.prefix(20) {
+                await synchronizeRecentGroupHistory(groupID: group.groupID, identity: identity)
+            }
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
+            showTransientError(error.localizedDescription)
+        }
+    }
+
+    func selectGroup(groupID: String) {
+        let cleanGroupID = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard groups.contains(where: { $0.groupID == cleanGroupID }) else { return }
+        chatState.selectGroup(groupID: cleanGroupID)
+        visibleGroupMessageLimitByID[cleanGroupID] = messagePageSize
+        unreadCountByGroupID[cleanGroupID] = nil
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode { return }
+#endif
+        Task { @MainActor [weak self] in
+            await self?.loadInitialGroupMessages(groupID: cleanGroupID)
+        }
+    }
+
+    func setGroupConversationVisible(groupID: String, visible: Bool) {
+        if visible {
+            visibleGroupID = groupID
+            unreadCountByGroupID[groupID] = nil
+        } else if visibleGroupID == groupID {
+            visibleGroupID = nil
+        }
+    }
+
+    func groupMessages(groupID: String) -> [RemoteIMMessage] {
+        guard groups.contains(where: { $0.groupID == groupID }) else { return [] }
+        let limit = visibleGroupMessageLimitByID[groupID] ?? messagePageSize
+        return Array(chatState.messages(inGroup: groupID).suffix(limit))
+    }
+
+    func hasEarlierGroupMessages(groupID: String) -> Bool {
+        guard groups.contains(where: { $0.groupID == groupID }) else { return false }
+        return groupHistoryStateByID[groupID]?.hasEarlierMessages == true ||
+            groupHasEarlierRemoteMessagesByID[groupID] == true
+    }
+
+    @discardableResult
+    func sendGroupText(_ text: String, to groupID: String) async -> Bool {
+#if targetEnvironment(simulator)
+        if groupUIFixtureMode {
+            guard groups.contains(where: { $0.groupID == groupID }) else { return false }
+            do {
+                let queued = try chatState.queueOutgoingGroupText(to: groupID, text: text)
+                try chatState.updateMessageDelivery(
+                    id: queued.id, remoteID: "sim-msg-\(UUID().uuidString)", createdAt: Date()
+                )
+                if groupCreationRecovery?.groupID == groupID {
+                    groupCreationRecovery = nil
+                }
+                let fixtureGeneration = groupUIFixtureGeneration
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard let self, self.groupUIFixtureMode,
+                          self.groupUIFixtureGeneration == fixtureGeneration,
+                          self.groups.contains(where: { $0.groupID == groupID }) else { return }
+                    let event = IncomingRemoteIMGroupText(
+                        groupID: groupID, fromUserID: "sim-friend-a",
+                        text: "已收到群消息", remoteID: "sim-reply-\(UUID().uuidString)",
+                        createdAt: Date()
+                    )
+                    await self.receive(event)
+                }
+                return true
+            } catch {
+                showTransientError(error.localizedDescription)
+                return false
+            }
+        }
+#endif
+        guard connectionState == .connected,
+              groups.contains(where: { $0.groupID == groupID }) else {
+            showTransientError("群聊不可用，请检查连接")
+            return false
+        }
+        let identity = remoteDiagnosticsIdentity
+        var messageID: UUID?
+        do {
+            let queued = try chatState.queueOutgoingGroupText(to: groupID, text: text)
+            messageID = queued.id
+            enqueueHistoryUpsert(queued)
+            let receipt = try await client.sendGroupText(to: groupID, text: queued.text)
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            try chatState.reconcileOutgoingGroupDelivery(
+                id: queued.id, remoteID: receipt.remoteID, createdAt: receipt.createdAt
+            )
+            if let current = chatState.message(id: queued.id) {
+                enqueueHistoryUpsert(current)
+            } else {
+                enqueueHistoryMutation(.removeMessage(
+                    id: queued.id, sdkAppID: chatHistorySDKAppID,
+                    ownerUserID: chatState.ownerUserID
+                ))
+            }
+            if groupCreationRecovery?.groupID == groupID {
+                groupCreationRecovery = nil
+                do {
+                    try await persistGroupMetadata()
+                } catch {
+                    guard remoteDiagnosticsIdentity == identity else { return false }
+                    showTransientError("消息已发送，但群状态保存失败；重启后可能仍提示继续通知成员")
+                }
+            }
+            return true
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return false }
+            if let messageID {
+                try? chatState.updateMessageStatus(id: messageID, status: .failed)
+                enqueueCurrentMessage(id: messageID)
+            }
+            showTransientError(error.localizedDescription)
+            return false
+        }
+    }
+
+    private func loadInitialGroupMessages(groupID: String) async {
+        guard groupHistoryStateByID[groupID]?.hasLoadedInitialPage != true,
+              groupHistoryStateByID[groupID]?.isLoading != true else { return }
+        var state = ConversationHistoryState()
+        state.isLoading = true
+        groupHistoryStateByID[groupID] = state
+        let identity = remoteDiagnosticsIdentity
+        do {
+            let page = try await historyPersistence.loadGroupConversationPage(
+                sdkAppID: chatHistorySDKAppID,
+                ownerUserID: chatState.ownerUserID,
+                groupID: groupID,
+                before: nil,
+                limit: messagePageSize
+            )
+            guard remoteDiagnosticsIdentity == identity,
+                  groups.contains(where: { $0.groupID == groupID }) else { return }
+            chatState.mergeMessages(page.messages)
+            state.hasLoadedInitialPage = true
+            state.isLoading = false
+            state.hasEarlierMessages = page.hasEarlierMessages
+            state.oldestLoadedCursor = page.messages.first.map {
+                LocalChatHistoryCursor(createdAt: $0.createdAt, messageID: $0.id)
+            }
+            groupHistoryStateByID[groupID] = state
+            objectWillChange.send()
+            if connectionState == .connected {
+                await synchronizeRecentGroupHistory(groupID: groupID, identity: identity, reportError: true)
+            }
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
+            state.isLoading = false
+            groupHistoryStateByID[groupID] = state
+            showTransientError(error.localizedDescription)
+        }
+    }
+
+    func loadEarlierGroupMessages(groupID: String) async {
+        guard groupHistoryStateByID[groupID]?.isLoading != true else { return }
+        let identity = remoteDiagnosticsIdentity
+        var state = groupHistoryStateByID[groupID] ?? ConversationHistoryState()
+        state.isLoading = true
+        groupHistoryStateByID[groupID] = state
+        defer {
+            if remoteDiagnosticsIdentity == identity {
+                state.isLoading = false
+                groupHistoryStateByID[groupID] = state
+            }
+        }
+        do {
+            if state.hasEarlierMessages, let cursor = state.oldestLoadedCursor {
+                let page = try await historyPersistence.loadGroupConversationPage(
+                    sdkAppID: chatHistorySDKAppID,
+                    ownerUserID: chatState.ownerUserID,
+                    groupID: groupID,
+                    before: cursor,
+                    limit: messagePageSize
+                )
+                guard remoteDiagnosticsIdentity == identity else { return }
+                chatState.mergeMessages(page.messages)
+                state.hasEarlierMessages = page.hasEarlierMessages
+                state.oldestLoadedCursor = page.messages.first.map {
+                    LocalChatHistoryCursor(createdAt: $0.createdAt, messageID: $0.id)
+                } ?? cursor
+                visibleGroupMessageLimitByID[groupID, default: messagePageSize] += page.messages.count
+                objectWillChange.send()
+                return
+            }
+            guard groupHasEarlierRemoteMessagesByID[groupID] == true,
+                  let remoteCursor = oldestRemoteGroupMessageIDByID[groupID] else { return }
+            let page = try await client.groupHistory(
+                groupID: groupID, count: messagePageSize, beforeRemoteID: remoteCursor
+            )
+            guard remoteDiagnosticsIdentity == identity else { return }
+            ingestGroupHistory(page.messages)
+            let nextCursor = page.nextCursor
+            groupHasEarlierRemoteMessagesByID[groupID] = page.hasMore &&
+                nextCursor != nil && nextCursor != remoteCursor
+            if let nextCursor { oldestRemoteGroupMessageIDByID[groupID] = nextCursor }
+            visibleGroupMessageLimitByID[groupID, default: messagePageSize] += page.messages.count
+            objectWillChange.send()
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
+            showTransientError(error.localizedDescription)
+        }
+    }
+
+    private func synchronizeRecentGroupHistory(
+        groupID: String,
+        identity: String,
+        reportError: Bool = false
+    ) async {
+        do {
+            let page = try await client.groupHistory(
+                groupID: groupID, count: messagePageSize, beforeRemoteID: nil
+            )
+            guard remoteDiagnosticsIdentity == identity else { return }
+            ingestGroupHistory(page.messages)
+            if oldestRemoteGroupMessageIDByID[groupID] == nil {
+                oldestRemoteGroupMessageIDByID[groupID] = page.nextCursor
+                groupHasEarlierRemoteMessagesByID[groupID] = page.hasMore && page.nextCursor != nil
+            }
+            objectWillChange.send()
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
+            if reportError { showTransientError(error.localizedDescription) }
+        }
+    }
+
+    private func ingestGroupHistory(_ page: [IncomingRemoteIMGroupText]) {
+        var senderIDs = Set<String>()
+        for event in page {
+            if event.fromUserID != chatState.ownerUserID { senderIDs.insert(event.fromUserID) }
+            if let remoteID = event.remoteID,
+               chatState.message(remoteID: remoteID) != nil { continue }
+            let previousCount = chatState.messages.count
+            guard let message = chatState.receiveGroupText(
+                event.text, groupID: event.groupID, fromUserID: event.fromUserID,
+                remoteID: event.remoteID, now: event.createdAt
+            ), chatState.messages.count > previousCount else { continue }
+            enqueueHistoryUpsert(message)
+        }
+        if !senderIDs.isEmpty {
+            Task { @MainActor [weak self] in
+                await self?.refreshProfiles(userIDs: Array(senderIDs))
+            }
+        }
     }
 
     func clearSystemNotification(for userID: String) {
@@ -2422,6 +2956,34 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    private func receive(_ event: IncomingRemoteIMGroupText) async {
+        let identity = remoteDiagnosticsIdentity
+        guard connectionState == .connected,
+              !event.groupID.isEmpty,
+              !event.fromUserID.isEmpty,
+              await shouldAcceptIncomingMessage(remoteID: event.remoteID),
+              remoteDiagnosticsIdentity == identity else { return }
+        do { try await MarkdownPreparation.prepare([event.text]) }
+        catch { return }
+        guard remoteDiagnosticsIdentity == identity else { return }
+        let previousCount = chatState.messages.count
+        guard let message = chatState.receiveGroupText(
+            event.text, groupID: event.groupID, fromUserID: event.fromUserID,
+            remoteID: event.remoteID, now: event.createdAt
+        ), chatState.messages.count > previousCount else { return }
+        enqueueHistoryUpsert(message)
+        if event.fromUserID != chatState.ownerUserID {
+            refreshProfileIfNeeded(userID: event.fromUserID)
+        }
+        if !groups.contains(where: { $0.groupID == event.groupID }) {
+            Task { @MainActor [weak self] in await self?.refreshJoinedGroups() }
+        }
+        if event.fromUserID != chatState.ownerUserID,
+           visibleGroupID != event.groupID {
+            unreadCountByGroupID[event.groupID, default: 0] += 1
+        }
+    }
+
     private func receive(_ event: IncomingRemoteIMVoice) async {
         guard shouldAcceptIncomingSender(event.fromUserID, kind: "voice") else { return }
         guard await shouldAcceptIncomingMessage(remoteID: event.remoteID) else { return }
@@ -2831,6 +3393,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
         presenceStatusByUserID = [:]
         downloadingVideoKeys = []
+        groups = []
+        groupCreationRecovery = nil
+        unreadCountByGroupID = [:]
+        visibleGroupID = nil
+        groupHistoryStateByID = [:]
+        visibleGroupMessageLimitByID = [:]
+        oldestRemoteGroupMessageIDByID = [:]
+        groupHasEarlierRemoteMessagesByID = [:]
         historyAccountGeneration &+= 1
         chatHistorySDKAppID = nextSDKAppID
         conversationHistoryStateByUserID = [:]
@@ -2843,10 +3413,14 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             contacts: chatState.contacts,
             contactGroups: chatState.contactGroups,
             messages: currentSummaries,
-            selectedPeerID: chatState.selectedPeerID
+            selectedPeerID: chatState.selectedPeerID,
+            selectedGroupID: nil
         )
         chatState = nextState
         AppDiagnosticLog.shared.setPerformanceAccount(remoteDiagnosticsAccountTag)
+        Task { @MainActor [weak self] in
+            await self?.loadStoredGroupsForCurrentAccount()
+        }
         Task {
             await refreshPresenceForCurrentContacts()
         }
@@ -2897,6 +3471,48 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             else { return }
             recordHistoryLoadFailure(error, operation: "conversation-summaries")
         }
+    }
+
+    private func loadStoredGroupsForCurrentAccount() async {
+        let identity = remoteDiagnosticsIdentity
+        let recoveryGeneration = groupRecoveryGeneration
+        guard !chatState.ownerUserID.isEmpty else { return }
+        do {
+            let saved = try await historyPersistence.loadGroups(
+                sdkAppID: chatHistorySDKAppID, ownerUserID: chatState.ownerUserID
+            )
+            guard remoteDiagnosticsIdentity == identity,
+                  connectionState != .connected,
+                  groupRecoveryGeneration == recoveryGeneration else { return }
+            groups = saved.map {
+                RemoteIMGroup(groupID: $0.groupID, name: $0.name, memberCount: $0.memberCount)
+            }
+            groupCreationRecovery = saved.first(where: \.pendingActivation).map {
+                RemoteIMGroup(groupID: $0.groupID, name: $0.name, memberCount: $0.memberCount)
+            }
+            let summaries = try await historyPersistence.loadGroupConversationSummaries(
+                sdkAppID: chatHistorySDKAppID, ownerUserID: chatState.ownerUserID,
+                groupIDs: saved.map(\.groupID)
+            )
+            guard remoteDiagnosticsIdentity == identity else { return }
+            chatState.mergeMessages(summaries)
+        } catch {
+            guard remoteDiagnosticsIdentity == identity else { return }
+            recordHistoryLoadFailure(error, operation: "group-summaries")
+        }
+    }
+
+    private func persistGroupMetadata() async throws {
+        let pendingID = groupCreationRecovery?.groupID
+        let records = groups.map {
+            LocalChatHistoryGroup(
+                groupID: $0.groupID, name: $0.name, memberCount: $0.memberCount,
+                pendingActivation: $0.groupID == pendingID
+            )
+        }
+        try await historyPersistence.replaceGroups(
+            records, sdkAppID: chatHistorySDKAppID, ownerUserID: chatState.ownerUserID
+        )
     }
 
     private func enqueueHistoryUpsert(_ message: RemoteIMMessage) {

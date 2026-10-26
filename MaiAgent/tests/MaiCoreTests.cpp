@@ -11,12 +11,16 @@
 #include <variant>
 #include <vector>
 
+#include <json.hpp>
+
 #include "MaiBlockingCheck.h"
 #include "MaiIdGenerator.h"
 #include "MaiThread.h"
 #include "MaiAgent.h"
 #include "MaiMemoryStore.h"
 #include "MaiFakeModelClient.h"
+#include "MaiFileSystem.h"
+#include "MaiSessionTools.h"
 
 static int failures = 0;
 #define CHECK(cond)                                                     \
@@ -87,6 +91,170 @@ static void test_session_crud_and_events() {
     // 删不存在的不该发事件
     agent.submit(MaiDeleteSession{"ses_nope"});
     CHECK(deleted == 1);
+}
+
+static void test_model_session_tools_use_the_existing_session_operations() {
+    MaiFakeModelClient::Turn create;
+    create.invocations.push_back(
+        MaiToolInvocation{"call_create", "session_create", R"({"title":"Another topic"})"});
+    MaiFakeModelClient::Turn answer;
+    answer.textChunks = {"Created."};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{create, answer});
+    auto tools = std::make_unique<MaiToolRegistry>();
+    registerMaiSessionTools(*tools);
+    MaiTool* listTool = tools->find("session_list");
+    MaiTool* createTool = tools->find("session_create");
+    MaiTool* deleteTool = tools->find("session_delete");
+    MaiTool* workspaceTool = tools->find("session_set_workspace");
+    CHECK(listTool != nullptr);
+    CHECK(createTool != nullptr);
+    CHECK(deleteTool != nullptr);
+    CHECK(workspaceTool != nullptr);
+    if (listTool == nullptr || createTool == nullptr || deleteTool == nullptr ||
+        workspaceTool == nullptr)
+        return;
+    CHECK(deleteTool->requiresApproval(R"({"session_id":"ses_target"})"));
+    CHECK(deleteTool->requiresPerCallApproval(R"({"session_id":"ses_target"})"));
+    CHECK(workspaceTool->requiresApproval("{}"));
+    CHECK(workspaceTool->requiresPerCallApproval("{}"));
+
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools));
+    const std::string current =
+        agent.submit(MaiCreateSession{"/tmp/workspace", "Current", "test-model"}).value();
+    CHECK(agent.submit(MaiSendPrompt{current, "Create another conversation"}));
+    agent.waitIdle();
+    const auto sessions = agent.listSessions();
+    CHECK(sessions.size() == 2);
+    std::string created;
+    for (const MaiSession& session : sessions) {
+        if (session.id == current) continue;
+        created = session.id;
+        CHECK(session.title == "Another topic");
+        CHECK(session.directory == "/tmp/workspace");
+        CHECK(session.model == "test-model");
+    }
+    CHECK(!created.empty());
+    if (created.empty()) return;
+
+    MaiToolContext context;
+    context.sessionAgent = &agent;
+    context.sessionId = current;
+    const std::string chosenDirectory = MaiFileSystem::temporaryDirectory().toUtf8();
+    const std::string switchArguments =
+        nlohmann::json{{"session_id", current}, {"workspace_path", chosenDirectory}}.dump();
+    const std::size_t sessionCountBeforeSwitch = agent.listSessions().size();
+    const MaiToolResult relativeWorkspace = workspaceTool->execute(
+        nlohmann::json{{"session_id", current}, {"workspace_path", "."}}.dump(), context);
+    CHECK(relativeWorkspace.hasError());
+    const MaiToolResult switched = workspaceTool->execute(switchArguments, context);
+    CHECK(!switched.hasError());
+    MaiSession switchedSession;
+    CHECK(agent.getSession(current, switchedSession));
+    CHECK(switchedSession.directory ==
+          MaiFileSystem::resolve(MaiFilePath::fromUtf8(chosenDirectory)).toUtf8());
+    CHECK(agent.listSessions().size() == sessionCountBeforeSwitch);
+    if (!switched.hasError()) {
+        const auto result = nlohmann::json::parse(switched.output());
+        CHECK(result.at("session_id") == current);
+        CHECK(result.at("changed") == true);
+    }
+    const MaiToolResult unchanged = workspaceTool->execute(switchArguments, context);
+    CHECK(!unchanged.hasError());
+    if (!unchanged.hasError())
+        CHECK(nlohmann::json::parse(unchanged.output()).at("changed") == false);
+    auto desktopCreate =
+        makeMaiCreateSessionTool(MaiSessionCreateMode::DefaultOrExplicitDirectory, chosenDirectory);
+    CHECK(!desktopCreate->requiresApproval("{}"));
+    const MaiToolResult missingDirectory =
+        desktopCreate->execute(R"({"title":"Needs a chosen folder"})", context);
+    CHECK(!missingDirectory.hasError());
+    if (!missingDirectory.hasError()) {
+        const std::string id =
+            nlohmann::json::parse(missingDirectory.output()).at("session_id").get<std::string>();
+        MaiSession defaultSession;
+        CHECK(agent.getSession(id, defaultSession));
+        CHECK(defaultSession.directory ==
+              MaiFileSystem::resolve(MaiFilePath::fromUtf8(chosenDirectory)).toUtf8());
+        CHECK(agent.submit(MaiDeleteSession{id}));
+    }
+    CHECK(agent.listSessions().size() == 2);
+    const MaiToolResult relativeDirectory = desktopCreate->execute(R"({"directory":"."})", context);
+    CHECK(relativeDirectory.hasError());
+    const std::string desktopArguments =
+        nlohmann::json{{"directory", chosenDirectory}, {"title", "Chosen folder"}}.dump();
+    CHECK(desktopCreate->requiresApproval(desktopArguments));
+    CHECK(desktopCreate->requiresPerCallApproval(desktopArguments));
+    const MaiToolResult desktopCreated = desktopCreate->execute(desktopArguments, context);
+    CHECK(!desktopCreated.hasError());
+    if (!desktopCreated.hasError()) {
+        const std::string id =
+            nlohmann::json::parse(desktopCreated.output()).at("session_id").get<std::string>();
+        MaiSession desktopSession;
+        CHECK(agent.getSession(id, desktopSession));
+        CHECK(desktopSession.directory ==
+              MaiFileSystem::resolve(MaiFilePath::fromUtf8(chosenDirectory)).toUtf8());
+        CHECK(agent.submit(MaiDeleteSession{id}));
+    }
+    const MaiToolResult invalidTitle = createTool->execute(R"({"title":"bad\nname"})", context);
+    CHECK(invalidTitle.hasError());
+    const MaiToolResult listed = listTool->execute("{}", context);
+    CHECK(!listed.hasError());
+    if (!listed.hasError()) {
+        const auto parsed = nlohmann::json::parse(listed.output());
+        CHECK(parsed.at("sessions").size() == 2);
+    }
+    const MaiToolResult selfDelete =
+        deleteTool->execute(nlohmann::json{{"session_id", current}}.dump(), context);
+    CHECK(selfDelete.hasError());
+    CHECK(selfDelete.error().code() == MaiErrorCode::Busy);
+    const MaiToolResult deleted =
+        deleteTool->execute(nlohmann::json{{"session_id", created}}.dump(), context);
+    CHECK(!deleted.hasError());
+    MaiSession removed;
+    CHECK(!agent.getSession(created, removed));
+    CHECK(agent.listSessions().size() == 1);
+}
+
+static void test_session_workspace_tool_effective_next_turn() {
+    MaiFakeModelClient::Turn first;
+    first.textChunks = {"working"};
+    first.chunkDelayMilliseconds = 1000;
+    MaiFakeModelClient::Turn second;
+    second.textChunks = {"done"};
+    auto model =
+        std::make_unique<MaiFakeModelClient>(std::vector<MaiFakeModelClient::Turn>{first, second});
+    MaiFakeModelClient* observed = model.get();
+    auto tools = std::make_unique<MaiToolRegistry>();
+    registerMaiSessionTools(*tools);
+    MaiTool* workspaceTool = tools->find("session_set_workspace");
+    CHECK(workspaceTool != nullptr);
+    if (workspaceTool == nullptr) return;
+    MaiAgent agent(makeMaiMemoryStore(), std::move(model), std::move(tools));
+    const std::string current = agent.submit(MaiCreateSession{"/tmp", "Current", ""}).value();
+    MaiToolContext context;
+    context.sessionAgent = &agent;
+    context.sessionId = current;
+    const std::string target = MaiFileSystem::temporaryDirectory().toUtf8();
+    CHECK(agent.submit(MaiSendPrompt{current, "Start"}));
+    CHECK(agent.isBusy(current));
+    const MaiToolResult switched = workspaceTool->execute(
+        nlohmann::json{{"session_id", current}, {"workspace_path", target}}.dump(), context);
+    CHECK(!switched.hasError());
+    if (!switched.hasError()) {
+        const auto output = nlohmann::json::parse(switched.output());
+        CHECK(output.at("effective_next_turn") == true);
+        CHECK(output.at("session_id") == current);
+    }
+    agent.waitIdle();
+    CHECK(observed->requestCount() == 1);
+    CHECK(observed->request(0).workingDirectory == "/tmp");
+    CHECK(agent.submit(MaiSendPrompt{current, "Continue"}));
+    agent.waitIdle();
+    CHECK(observed->requestCount() == 2);
+    CHECK(observed->request(1).workingDirectory ==
+          MaiFileSystem::resolve(MaiFilePath::fromUtf8(target)).toUtf8());
+    CHECK(agent.listSessions().size() == 1);
 }
 
 static void test_media_only_prompt_has_no_placeholder_text() {
@@ -294,6 +462,8 @@ static void test_unsubscribe() {
 int main() {
     test_id_prefix_and_monotonic();
     test_session_crud_and_events();
+    test_model_session_tools_use_the_existing_session_operations();
+    test_session_workspace_tool_effective_next_turn();
     test_media_only_prompt_has_no_placeholder_text();
     test_mixed_media_prompt_is_one_message();
     test_quoted_message_is_scoped_and_persisted();

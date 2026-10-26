@@ -20,6 +20,16 @@ private struct PreparedSDKMessage: @unchecked Sendable {
 
 private struct SDKCallbackValue<Value>: @unchecked Sendable { let value: Value }
 
+/// Mutable scan state is accessed only on sdkQueue, including SDK callback delivery.
+private final class SDKGroupHistoryScan: @unchecked Sendable {
+    var messages: [IncomingRemoteIMGroupText] = []
+    var nextCursor: String?
+    var seenCursors = Set<String>()
+    var seenMessageIDs = Set<String>()
+    var pageCount = 0
+    var rawMessageCount = 0
+}
+
 private final class ApplicationBadgeSnapshot: @unchecked Sendable {
     private let lock = NSLock()
     private var value: UInt32 = 0
@@ -59,6 +69,7 @@ final class TencentIMClient:
     V2TIMSimpleMsgListener,
     V2TIMAdvancedMsgListener,
     V2TIMSDKListener,
+    V2TIMGroupListener,
     V2TIMAPNSListener
 {
     var onIncomingText: ((IncomingRemoteIMText) -> Void)?
@@ -67,9 +78,12 @@ final class TencentIMClient:
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
     var onIncomingVideo: ((IncomingRemoteIMVideo) -> Void)?
+    var onIncomingGroupText: ((IncomingRemoteIMGroupText) -> Void)?
+    var onGroupMembershipChanged: (() -> Void)?
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
     private nonisolated let lifecycleState = IMSDKLifecycleState()
     private nonisolated let applicationBadgeSnapshot = ApplicationBadgeSnapshot()
+    private nonisolated let attachmentDownloads = MaiChatAttachmentDownloader()
     private nonisolated static let diagnosticAccountSnapshot = DiagnosticAccountSnapshot()
     private nonisolated static let sdkQueue = DispatchQueue(label: "MaiChat.IMSDKWork", qos: .userInitiated)
     private nonisolated static let incomingQueue = DispatchQueue(label: "MaiChat.IMIncoming", qos: .userInitiated)
@@ -77,6 +91,7 @@ final class TencentIMClient:
     /// 使用服务端签发的 IM 凭证连接腾讯 IM SDK。
     /// 连接阶段分别处理初始化、登录和回调注册，失败向上层返回可定位错误。
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
+        attachmentDownloads.cancelAll()
         let diagnosticAccount = RemoteDiagnosticsProtocol.accountTag(sdkAppID: sdkAppID, ownerUserID: userID)
         Self.diagnosticAccountSnapshot.store(diagnosticAccount)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -102,6 +117,7 @@ final class TencentIMClient:
                 V2TIMManager.sharedInstance().setAPNSListener(apnsListener: self)
                 V2TIMManager.sharedInstance().addSimpleMsgListener(listener: self)
                 V2TIMManager.sharedInstance().addAdvancedMsgListener(listener: self)
+                V2TIMManager.sharedInstance().addGroupListener(listener: self)
                 Self.logSDK(level: .info, event: "login-start", fields: ["peer": Self.peerTag(userID)])
                 V2TIMManager.sharedInstance().login(
                     userID: userID,
@@ -161,6 +177,7 @@ final class TencentIMClient:
     }
 
     func disconnect() async {
+        attachmentDownloads.cancelAll()
         Self.diagnosticAccountSnapshot.store(nil)
         await withCheckedContinuation { continuation in
             let state = lifecycleState
@@ -171,6 +188,7 @@ final class TencentIMClient:
                 }
                 V2TIMManager.sharedInstance().removeSimpleMsgListener(listener: self)
                 V2TIMManager.sharedInstance().removeAdvancedMsgListener(listener: self)
+                V2TIMManager.sharedInstance().removeGroupListener(listener: self)
                 V2TIMManager.sharedInstance().logout(
                     succ: {
                         continuation.resume()
@@ -333,6 +351,265 @@ final class TencentIMClient:
             metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))],
             failureDescription: "send text failed"
         )
+    }
+
+    func createGroup(name: String, memberUserIDs: [String]) async throws -> RemoteIMGroup {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let members = Self.cleanUserIDs(memberUserIDs)
+        guard !cleanName.isEmpty, cleanName.lengthOfBytes(using: .utf8) <= 100,
+              !members.isEmpty, members.count <= 19 else {
+            throw RemoteIMClientError.operationFailed(
+                code: -1, description: "群名称需在 100 字节内，且须选择 1 至 19 位成员"
+            )
+        }
+        let account = Self.diagnosticAccountSnapshot.load()
+        return try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                guard account == Self.diagnosticAccountSnapshot.load() else {
+                    continuation.resume(throwing: CancellationError()); return
+                }
+                let ownerID = V2TIMManager.sharedInstance().getLoginUser() ?? ""
+                guard !ownerID.isEmpty, !members.contains(ownerID) else {
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: -1, description: "群成员不能包含当前账号"
+                    ))
+                    return
+                }
+                let info = V2TIMGroupInfo()
+                info.groupType = GroupType_Work
+                info.groupName = cleanName
+                let sdkMembers = members.map { userID in
+                    let member = V2TIMCreateGroupMemberInfo()
+                    member.userID = userID
+                    return member
+                }
+                V2TIMManager.sharedInstance().createGroup(
+                    info: info, memberList: sdkMembers,
+                    succ: { groupID in
+                        guard account == Self.diagnosticAccountSnapshot.load() else {
+                            continuation.resume(throwing: CancellationError()); return
+                        }
+                        guard let groupID = Self.nonEmpty(groupID) else {
+                            continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                code: -1, description: "createGroup returned no group ID"
+                            ))
+                            return
+                        }
+                        Self.sdkQueue.async {
+                            guard account == Self.diagnosticAccountSnapshot.load() else {
+                                continuation.resume(throwing: CancellationError()); return
+                            }
+                            guard let activation = V2TIMManager.sharedInstance().createCustomMessage(
+                                data: RemoteIMGroupActivationCodec.encode()
+                            ) else {
+                                continuation.resume(throwing: RemoteIMClientError.groupActivationFailed(
+                                    groupID: groupID, code: -1,
+                                    description: "无法创建群激活消息"
+                                ))
+                                return
+                            }
+                            activation.isExcludedFromUnreadCount = true
+                            activation.isExcludedFromLastMessage = true
+                            V2TIMManager.sharedInstance().sendMessage(
+                                message: activation,
+                                receiver: nil,
+                                groupID: groupID,
+                                priority: V2TIMMessagePriority(rawValue: 0)!,
+                                onlineUserOnly: false,
+                                offlinePushInfo: nil,
+                                progress: nil,
+                                succ: {
+                                    guard account == Self.diagnosticAccountSnapshot.load() else {
+                                        continuation.resume(throwing: CancellationError()); return
+                                    }
+                                    continuation.resume(returning: RemoteIMGroup(
+                                        groupID: groupID,
+                                        name: cleanName,
+                                        memberCount: members.count + 1
+                                    ))
+                                },
+                                fail: { code, description in
+                                    continuation.resume(throwing: RemoteIMClientError.groupActivationFailed(
+                                        groupID: groupID, code: code,
+                                        description: description ?? "群激活消息发送失败"
+                                    ))
+                                }
+                            )
+                        }
+                    },
+                    fail: { code, description in
+                        continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                            code: code, description: description ?? "createGroup failed"
+                        ))
+                    }
+                )
+            }
+        }
+    }
+
+    func joinedGroups() async throws -> [RemoteIMGroup] {
+        let account = Self.diagnosticAccountSnapshot.load()
+        return try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                guard account == Self.diagnosticAccountSnapshot.load() else {
+                    continuation.resume(throwing: CancellationError()); return
+                }
+                V2TIMManager.sharedInstance().getJoinedGroupList(succ: { groups in
+                    guard account == Self.diagnosticAccountSnapshot.load() else {
+                        continuation.resume(throwing: CancellationError()); return
+                    }
+                    continuation.resume(returning: (groups ?? []).compactMap { info in
+                        guard let groupID = Self.nonEmpty(info.groupID),
+                              info.groupType == GroupType_Work else { return nil }
+                        return RemoteIMGroup(
+                            groupID: groupID,
+                            name: Self.nonEmpty(info.groupName) ?? groupID,
+                            memberCount: Int(info.memberCount)
+                        )
+                    })
+                }, fail: { code, description in
+                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                        code: code, description: description ?? "getJoinedGroupList failed"
+                    ))
+                })
+            }
+        }
+    }
+
+    func sendGroupText(to groupID: String, text: String) async throws -> RemoteIMSendReceipt {
+        guard let cleanGroupID = Self.nonEmpty(groupID),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "群 ID 或消息不能为空")
+        }
+        guard let message = try await Self.makeMessage({
+            V2TIMManager.sharedInstance().createTextMessage(text: text)
+        }) else {
+            Self.logMessageCreateFailure(kind: "group-text", peerUserID: cleanGroupID)
+            throw RemoteIMClientError.operationFailed(code: -1, description: "create group text failed")
+        }
+        return try await send(
+            message: message, to: cleanGroupID, groupID: cleanGroupID,
+            kind: "group-text", origin: .human,
+            metadata: ["content_bytes": String(text.lengthOfBytes(using: .utf8))],
+            failureDescription: "send group text failed"
+        )
+    }
+
+    func groupHistory(groupID: String, count: Int, beforeRemoteID: String?) async throws
+        -> RemoteIMGroupHistoryPage {
+        guard let cleanGroupID = Self.nonEmpty(groupID) else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "群 ID 不能为空")
+        }
+        guard count > 0 else {
+            return RemoteIMGroupHistoryPage(messages: [], nextCursor: nil, hasMore: false)
+        }
+        let requestedCount = min(count, 20)
+        guard let account = Self.diagnosticAccountSnapshot.load() else {
+            throw RemoteIMClientError.operationFailed(code: -1, description: "IM 尚未登录")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            Self.sdkQueue.async {
+                guard account == Self.diagnosticAccountSnapshot.load() else {
+                    continuation.resume(throwing: CancellationError()); return
+                }
+                let scan = SDKGroupHistoryScan()
+                if let beforeRemoteID = Self.nonEmpty(beforeRemoteID) {
+                    scan.seenCursors.insert(beforeRemoteID)
+                }
+
+                func finish(hasMore: Bool) {
+                    continuation.resume(returning: RemoteIMGroupHistoryPage(
+                        messages: Array(scan.messages.reversed()),
+                        nextCursor: hasMore ? scan.nextCursor : nil,
+                        hasMore: hasMore
+                    ))
+                }
+
+                func fetch(before cursor: V2TIMMessage?) {
+                    let remaining = requestedCount - scan.messages.count
+                    guard remaining > 0, scan.pageCount < 10, scan.rawMessageCount < 200 else {
+                        finish(hasMore: true)
+                        return
+                    }
+                    let pageSize = min(20, remaining, 200 - scan.rawMessageCount)
+                    scan.pageCount += 1
+                    V2TIMManager.sharedInstance().getGroupHistoryMessageList(
+                        groupID: cleanGroupID, count: Int32(pageSize), lastMsg: cursor,
+                        succ: { messages in
+                            let callback = SDKCallbackValue(value: messages ?? [])
+                            Self.sdkQueue.async {
+                                guard account == Self.diagnosticAccountSnapshot.load() else {
+                                    continuation.resume(throwing: CancellationError()); return
+                                }
+                                let rawMessages = callback.value
+                                guard !rawMessages.isEmpty else {
+                                    finish(hasMore: false)
+                                    return
+                                }
+                                guard let oldest = rawMessages.last,
+                                      let oldestID = Self.nonEmpty(oldest.msgID),
+                                      scan.seenCursors.insert(oldestID).inserted else {
+                                    continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                        code: -1, description: "群历史分页没有向前推进"
+                                    ))
+                                    return
+                                }
+                                scan.nextCursor = oldestID
+                                scan.rawMessageCount += rawMessages.count
+                                for raw in rawMessages {
+                                    guard let incoming = Self.groupText(from: raw, groupID: cleanGroupID) else {
+                                        continue
+                                    }
+                                    if let remoteID = incoming.remoteID,
+                                       !scan.seenMessageIDs.insert(remoteID).inserted { continue }
+                                    scan.messages.append(incoming)
+                                }
+                                if scan.messages.count >= requestedCount || scan.pageCount >= 10 ||
+                                    scan.rawMessageCount >= 200 {
+                                    finish(hasMore: true)
+                                } else {
+                                    fetch(before: oldest)
+                                }
+                            }
+                        },
+                        fail: { code, description in
+                            Self.sdkQueue.async {
+                                continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                    code: code, description: description ?? "getGroupHistoryMessageList failed"
+                                ))
+                            }
+                        }
+                    )
+                }
+                guard let beforeRemoteID = Self.nonEmpty(beforeRemoteID) else {
+                    fetch(before: nil)
+                    return
+                }
+                V2TIMManager.sharedInstance().findMessages(messageIDList: [beforeRemoteID],
+                    succ: { messages in
+                        let callback = SDKCallbackValue(value: messages ?? [])
+                        Self.sdkQueue.async {
+                            guard account == Self.diagnosticAccountSnapshot.load() else {
+                                continuation.resume(throwing: CancellationError()); return
+                            }
+                            guard let cursor = callback.value.first,
+                                  cursor.groupID == cleanGroupID else {
+                                continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                    code: -1, description: "群历史游标已失效"
+                                ))
+                                return
+                            }
+                            fetch(before: cursor)
+                        }
+                    }, fail: { code, description in
+                        Self.sdkQueue.async {
+                            continuation.resume(throwing: RemoteIMClientError.operationFailed(
+                                code: code, description: description ?? "find group history cursor failed"
+                            ))
+                        }
+                    })
+            }
+        }
     }
 
     func sendActivity(to userID: String, signal: RemoteIMActivitySignal) async throws {
@@ -794,6 +1071,7 @@ final class TencentIMClient:
     private func send(
         message: PreparedSDKMessage,
         to userID: String,
+        groupID: String? = nil,
         kind: String,
         origin: RemoteIMMessageOrigin,
         cloudMetadata: RemoteIMCloudMetadata? = nil,
@@ -820,8 +1098,8 @@ final class TencentIMClient:
                         cloudMetadata ?? RemoteIMCloudMetadata(origin: origin))
                     V2TIMManager.sharedInstance().sendMessage(
                     message: message.value,
-                    receiver: userID,
-                    groupID: nil,
+                    receiver: groupID == nil ? userID : nil,
+                    groupID: groupID,
                     priority: V2TIMMessagePriority(rawValue: 0)!,
                     onlineUserOnly: false,
                     offlinePushInfo: nil,
@@ -855,6 +1133,22 @@ final class TencentIMClient:
 
     private nonisolated static func receipt(for message: V2TIMMessage) -> RemoteIMSendReceipt {
         RemoteIMSendReceipt(remoteID: message.msgID, createdAt: message.timestamp)
+    }
+
+    private nonisolated static func groupText(
+        from message: V2TIMMessage, groupID: String
+    ) -> IncomingRemoteIMGroupText? {
+        guard message.elemType.rawValue == 1,
+              let fromUserID = nonEmpty(message.sender),
+              let text = message.textElem?.text,
+              !text.isEmpty else { return nil }
+        return IncomingRemoteIMGroupText(
+            groupID: groupID,
+            fromUserID: fromUserID,
+            text: text,
+            remoteID: message.msgID,
+            createdAt: message.timestamp ?? Date()
+        )
     }
 
     private nonisolated static func messageMetadata(for message: V2TIMMessage) -> RemoteIMCloudMetadata? {
@@ -1063,6 +1357,27 @@ final class TencentIMClient:
     /// 分派前确认消息身份和方向，防止重复回执形成重复气泡。
     private nonisolated func processIncomingMessage(_ msg: V2TIMMessage) {
         dispatchPrecondition(condition: .onQueue(Self.incomingQueue))
+        if let groupID = Self.nonEmpty(msg.groupID) {
+            if let activationData = msg.customElem?.data,
+               RemoteIMGroupActivationCodec.isActivation(activationData) {
+                notifyGroupMembershipChanged()
+                return
+            }
+            if let incoming = Self.groupText(from: msg, groupID: groupID) {
+                guard let account = Self.diagnosticAccountSnapshot.load() else { return }
+                Task { @MainActor [weak self] in
+                    guard account == Self.diagnosticAccountSnapshot.load() else { return }
+                    self?.onIncomingGroupText?(incoming)
+                }
+            } else {
+                Self.logSDK(level: .warning, event: "group-message-unhandled", fields: [
+                    "group": Self.peerTag(groupID),
+                    "message": Self.messageTag(msg.msgID),
+                    "elem_type": String(msg.elemType.rawValue)
+                ])
+            }
+            return
+        }
         guard !msg.isSelf else { return }
         let fromUserID = msg.sender ?? msg.userID ?? ""
         guard !fromUserID.isEmpty else {
@@ -1163,6 +1478,7 @@ final class TencentIMClient:
         let origin = metadata?.origin
         let quote = metadata?.quote
         let targetURL = Self.voiceCacheURL(remoteID: mediaID, messageID: msg.msgID)
+        let transferGeneration = attachmentDownloads.generation
         let startedAt = ProcessInfo.processInfo.systemUptime
         let diagnosticFields = Self.messageDiagnosticFields(
             kind: "voice",
@@ -1173,21 +1489,30 @@ final class TencentIMClient:
         Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
         Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
 
-        soundElem.downloadSound(
-            path: targetURL.path,
-            progress: nil,
-            succ: {
+        soundElem.getUrl { [weak self] signedURL in
+            self?.downloadAttachment(
+                signedURL: signedURL, targetURL: targetURL,
+                maximumBytes: 64 * 1024 * 1024,
+                generation: transferGeneration, expectedAccount: diagnosticFields["account"]
+            ) { result in
                 Self.incomingQueue.async {
                     guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                     var fields = diagnosticFields
-                    fields["result"] = "ok"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                    guard result.succeeded else {
+                        fields["result"] = "failed"
+                        fields["code"] = String(result.curlCode)
+                        fields["download_status"] = String(result.status)
+                        Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                        return
+                    }
+                    fields["result"] = "ok"
                     Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                        Task {
-                            @MainActor [
-                                weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, quote, createdAt
-                            ] in
-                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                    Task {
+                        @MainActor [
+                            weak self, fromUserID, targetURL, durationSeconds, remoteID, origin, quote, createdAt
+                        ] in
+                        guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                         let event = IncomingRemoteIMVoice(
                             fromUserID: fromUserID,
                             fileURL: targetURL,
@@ -1200,22 +1525,8 @@ final class TencentIMClient:
                         self?.onIncomingVoice?(event)
                     }
                 }
-            },
-            fail: { code, _ in
-                Self.incomingQueue.async {
-                    guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
-                    var fields = diagnosticFields
-                    fields["result"] = "failed"
-                    fields["code"] = String(code)
-                    fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
-                    Self.logSDK(
-                        level: .warning,
-                        event: "media-download-finished",
-                        fields: fields
-                    )
-                }
             }
-        )
+        }
     }
 
     /// 处理入站文件的名称、大小与本地下载状态。
@@ -1235,6 +1546,7 @@ final class TencentIMClient:
         let origin = metadata?.origin
         let quote = metadata?.quote
         let targetURL = Self.fileCacheURL(remoteID: mediaID, messageID: msg.msgID, fileName: fileName)
+        let transferGeneration = attachmentDownloads.generation
         let mimeType = Self.mimeType(for: fileName)
         let sizeBytes = fileElem.fileSize > 0 ? Int(fileElem.fileSize) : nil
         let startedAt = ProcessInfo.processInfo.systemUptime
@@ -1254,22 +1566,31 @@ final class TencentIMClient:
         Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
         Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
 
-        fileElem.downloadFile(
-            path: targetURL.path,
-            progress: nil,
-            succ: {
+        fileElem.getUrl { [weak self] signedURL in
+            self?.downloadAttachment(
+                signedURL: signedURL, targetURL: targetURL,
+                maximumBytes: 512 * 1024 * 1024,
+                generation: transferGeneration, expectedAccount: diagnosticFields["account"]
+            ) { result in
                 Self.incomingQueue.async {
                     guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                     var fields = diagnosticFields
-                    fields["result"] = "ok"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                    guard result.succeeded else {
+                        fields["result"] = "failed"
+                        fields["code"] = String(result.curlCode)
+                        fields["download_status"] = String(result.status)
+                        Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                        return
+                    }
+                    fields["result"] = "ok"
                     Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                        Task {
-                            @MainActor [
-                                weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin,
-                                quote, createdAt, caption, captionAbove
-                            ] in
-                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                    Task {
+                        @MainActor [
+                            weak self, fromUserID, targetURL, fileName, mimeType, remoteID, sizeBytes, origin,
+                            quote, createdAt, caption, captionAbove
+                        ] in
+                        guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                         let event = IncomingRemoteIMFile(
                             accountTag: diagnosticFields["account"] ?? "unbound",
                             fromUserID: fromUserID,
@@ -1287,22 +1608,8 @@ final class TencentIMClient:
                         self?.onIncomingFile?(event)
                     }
                 }
-            },
-            fail: { code, _ in
-                Self.incomingQueue.async {
-                    guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
-                    var fields = diagnosticFields
-                    fields["result"] = "failed"
-                    fields["code"] = String(code)
-                    fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
-                    Self.logSDK(
-                        level: .warning,
-                        event: "media-download-finished",
-                        fields: fields
-                    )
-                }
             }
-        )
+        }
     }
 
     /// 处理入站图片缩略图、原图和尺寸信息。
@@ -1322,6 +1629,7 @@ final class TencentIMClient:
         let origin = metadata?.origin
         let quote = metadata?.quote
         let targetURL = Self.imageCacheURL(remoteID: mediaID, messageID: msg.msgID, imageURL: image.url)
+        let transferGeneration = attachmentDownloads.generation
         let width = image.width > 0 ? Int(image.width) : nil
         let height = image.height > 0 ? Int(image.height) : nil
         let sizeBytes = image.size > 0 ? Int(image.size) : nil
@@ -1338,22 +1646,30 @@ final class TencentIMClient:
         )
         Self.logSDK(level: .info, event: "message-receive-callback", fields: diagnosticFields)
         Self.logSDK(level: .info, event: "media-download-start", fields: diagnosticFields)
-        image.downloadImage(
-            path: targetURL.path,
-            progress: nil,
-            succ: {
+        downloadAttachment(
+            signedURL: image.url, targetURL: targetURL,
+            maximumBytes: 32 * 1024 * 1024,
+            generation: transferGeneration, expectedAccount: diagnosticFields["account"]
+        ) { result in
                 Self.incomingQueue.async {
                     guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                     var fields = diagnosticFields
-                    fields["result"] = "ok"
                     fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
+                    guard result.succeeded else {
+                        fields["result"] = "failed"
+                        fields["code"] = String(result.curlCode)
+                        fields["download_status"] = String(result.status)
+                        Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
+                        return
+                    }
+                    fields["result"] = "ok"
                     Self.logSDK(level: .info, event: "media-download-finished", fields: fields)
-                        Task {
-                            @MainActor [
-                                weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, quote,
-                                createdAt, caption, captionAbove
-                            ] in
-                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
+                    Task {
+                        @MainActor [
+                            weak self, fromUserID, targetURL, remoteID, width, height, sizeBytes, origin, quote,
+                            createdAt, caption, captionAbove
+                        ] in
+                        guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                         let event = IncomingRemoteIMImage(
                             fromUserID: fromUserID,
                             fileURL: targetURL,
@@ -1370,22 +1686,7 @@ final class TencentIMClient:
                         self?.onIncomingImage?(event)
                     }
                 }
-            },
-            fail: { code, _ in
-                Self.incomingQueue.async {
-                    guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
-                    var fields = diagnosticFields
-                    fields["result"] = "failed"
-                    fields["code"] = String(code)
-                    fields["duration_ms"] = Self.elapsedMilliseconds(since: startedAt)
-                    Self.logSDK(
-                        level: .warning,
-                        event: "media-download-finished",
-                        fields: fields
-                    )
-                }
             }
-        )
     }
 
     /// 处理入站视频封面、媒体文件与下载进度。
@@ -1411,6 +1712,7 @@ final class TencentIMClient:
             remoteID: mediaID,
             videoType: videoElem.videoType
         )
+        let transferGeneration = attachmentDownloads.generation
         let hasSnapshot = Self.nonEmpty(videoElem.snapshotUUID) != nil ||
             videoElem.snapshotSize > 0 || width > 0 || height > 0
         let coverURL = hasSnapshot
@@ -1467,22 +1769,23 @@ final class TencentIMClient:
                     stage: .coverReady
                 )
             } else {
-                let coverPartURL = Self.partialDownloadURL(for: coverURL)
-                try? FileManager.default.removeItem(at: coverPartURL)
                 var coverFields = diagnosticFields
                 coverFields["asset"] = "cover"
                 let coverStartedAt = ProcessInfo.processInfo.systemUptime
                 Self.logSDK(level: .info, event: "media-download-start", fields: coverFields)
-                videoElem.downloadSnapshot(
-                    path: coverPartURL.path,
-                    progress: nil,
-                    succ: { [weak self] in
+                videoElem.getSnapshotUrl { [weak self] signedURL in
+                    self?.downloadAttachment(
+                        signedURL: signedURL, targetURL: coverURL,
+                        maximumBytes: 16 * 1024 * 1024,
+                        generation: transferGeneration, expectedAccount: diagnosticFields["account"]
+                    ) { [weak self] result in
                         Self.incomingQueue.async {
                             guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                             var fields = coverFields
-                            guard Self.promoteDownloadedFile(from: coverPartURL, to: coverURL) else {
+                            guard result.succeeded else {
                                 fields["result"] = "failed"
-                                fields["reason"] = "file-promote-failed"
+                                fields["code"] = String(result.curlCode)
+                                fields["download_status"] = String(result.status)
                                 fields["duration_ms"] = Self.elapsedMilliseconds(since: coverStartedAt)
                                 Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
                                 return
@@ -1507,19 +1810,8 @@ final class TencentIMClient:
                                 stage: .coverReady
                             )
                         }
-                    },
-                    fail: { code, _ in
-                        Self.incomingQueue.async {
-                            guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
-                            try? FileManager.default.removeItem(at: coverPartURL)
-                            var fields = coverFields
-                            fields["result"] = "failed"
-                            fields["code"] = String(code)
-                            fields["duration_ms"] = Self.elapsedMilliseconds(since: coverStartedAt)
-                            Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
-                        }
                     }
-                )
+                }
             }
         }
 
@@ -1547,20 +1839,21 @@ final class TencentIMClient:
         var videoFields = diagnosticFields
         videoFields["asset"] = "video"
         let videoStartedAt = ProcessInfo.processInfo.systemUptime
-        let videoPartURL = Self.partialDownloadURL(for: videoURL)
-        try? FileManager.default.removeItem(at: videoPartURL)
         Self.logSDK(level: .info, event: "media-download-start", fields: videoFields)
         // 下载回调在独立队列核对账号快照；失败只更新附件状态，不能删掉消息本体。
-        videoElem.downloadVideo(
-            path: videoPartURL.path,
-            progress: nil,
-            succ: { [weak self] in
+        videoElem.getVideoUrl { [weak self] signedURL in
+            self?.downloadAttachment(
+                signedURL: signedURL, targetURL: videoURL,
+                maximumBytes: 1024 * 1024 * 1024,
+                generation: transferGeneration, expectedAccount: diagnosticFields["account"]
+            ) { [weak self] result in
                 Self.incomingQueue.async {
                     guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
                     var fields = videoFields
-                    guard Self.promoteDownloadedFile(from: videoPartURL, to: videoURL) else {
+                    guard result.succeeded else {
                         fields["result"] = "failed"
-                        fields["reason"] = "file-promote-failed"
+                        fields["code"] = String(result.curlCode)
+                        fields["download_status"] = String(result.status)
                         fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
                         Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
                         self?.emitIncomingVideo(
@@ -1601,34 +1894,27 @@ final class TencentIMClient:
                         stage: .videoReady
                     )
                 }
-            },
-            fail: { [weak self] code, _ in
-                Self.incomingQueue.async {
-                    guard diagnosticFields["account"] == Self.diagnosticAccountSnapshot.load() else { return }
-                    try? FileManager.default.removeItem(at: videoPartURL)
-                    var fields = videoFields
-                    fields["result"] = "failed"
-                    fields["code"] = String(code)
-                    fields["duration_ms"] = Self.elapsedMilliseconds(since: videoStartedAt)
-                    Self.logSDK(level: .warning, event: "media-download-finished", fields: fields)
-                    self?.emitIncomingVideo(
-                        fromUserID: fromUserID,
-                        videoFileURL: videoURL,
-                        coverFileURL: coverURL,
-                        durationSeconds: durationSeconds,
-                        width: width,
-                        height: height,
-                        sizeBytes: sizeBytes,
-                        remoteID: remoteID,
-                        caption: caption,
-                        captionAbove: captionAbove,
-                        origin: origin,
-                        quote: quote,
-                        createdAt: createdAt,
-                        stage: .videoFailed
-                    )
-                }
             }
+        }
+    }
+
+    private nonisolated func downloadAttachment(
+        signedURL: String?, targetURL: URL, maximumBytes: UInt64,
+        generation: UInt64, expectedAccount: String?,
+        completion: @escaping @Sendable (MaiChatAttachmentDownloadResult) -> Void
+    ) {
+        guard expectedAccount != nil, expectedAccount == Self.diagnosticAccountSnapshot.load() else { return }
+        guard let signedURL = Self.nonEmpty(signedURL) else {
+            completion(MaiChatAttachmentDownloadResult(
+                status: Int32(MAI_DOWNLOAD_INVALID_ARGUMENT.rawValue),
+                httpStatus: 0, curlCode: 0, bytes: 0
+            ))
+            return
+        }
+        attachmentDownloads.download(
+            signedURL: signedURL, targetURL: targetURL,
+            maximumBytes: maximumBytes, generation: generation,
+            completion: completion
         )
     }
 
@@ -1736,27 +2022,6 @@ final class TencentIMClient:
         return values.isRegularFile == true && (values.fileSize ?? 0) > 0
     }
 
-    private nonisolated static func partialDownloadURL(for finalURL: URL) -> URL {
-        RemoteIMMediaStorage.partialDownloadURL(for: finalURL)
-    }
-
-    private nonisolated static func promoteDownloadedFile(from partialURL: URL, to finalURL: URL) -> Bool {
-        guard isUsableCachedFile(partialURL) else {
-            try? FileManager.default.removeItem(at: partialURL)
-            return false
-        }
-        do {
-            if FileManager.default.fileExists(atPath: finalURL.path) {
-                try FileManager.default.removeItem(at: finalURL)
-            }
-            try FileManager.default.moveItem(at: partialURL, to: finalURL)
-            return isUsableCachedFile(finalURL)
-        } catch {
-            try? FileManager.default.removeItem(at: partialURL)
-            return false
-        }
-    }
-
     private nonisolated static func nonEmpty(_ value: String?) -> String? {
         let cleanValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return cleanValue.isEmpty ? nil : cleanValue
@@ -1819,6 +2084,50 @@ final class TencentIMClient:
         Task { @MainActor [weak self, updates] in
             self?.onPresenceStatusChanged?(updates)
         }
+    }
+
+    private nonisolated func notifyGroupMembershipChanged() {
+        guard let account = Self.diagnosticAccountSnapshot.load() else { return }
+        Task { @MainActor [weak self] in
+            guard account == Self.diagnosticAccountSnapshot.load() else { return }
+            self?.onGroupMembershipChanged?()
+        }
+    }
+
+    @objc nonisolated func onGroupCreated(groupID: String?) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onMemberEnter(groupID: String?, memberList: [V2TIMGroupMemberInfo]) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onMemberLeave(groupID: String?, member: V2TIMGroupMemberInfo) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onMemberInvited(
+        groupID: String?, opUser: V2TIMGroupMemberInfo, memberList: [V2TIMGroupMemberInfo]
+    ) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onMemberKicked(
+        groupID: String?, opUser: V2TIMGroupMemberInfo, memberList: [V2TIMGroupMemberInfo]
+    ) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onGroupDismissed(groupID: String?, opUser: V2TIMGroupMemberInfo) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onGroupRecycled(groupID: String?, opUser: V2TIMGroupMemberInfo) {
+        notifyGroupMembershipChanged()
+    }
+
+    @objc nonisolated func onQuitFromGroup(groupID: String?) {
+        notifyGroupMembershipChanged()
     }
 
     private nonisolated static func cleanUserIDs(_ userIDs: [String]) -> [String] {
@@ -1943,6 +2252,8 @@ final class TencentIMClient: RemoteIMClient {
     var onIncomingImage: ((IncomingRemoteIMImage) -> Void)?
     var onIncomingFile: ((IncomingRemoteIMFile) -> Void)?
     var onIncomingVideo: ((IncomingRemoteIMVideo) -> Void)?
+    var onIncomingGroupText: ((IncomingRemoteIMGroupText) -> Void)?
+    var onGroupMembershipChanged: (() -> Void)?
     var onPresenceStatusChanged: (([String: RemoteIMPresenceStatus]) -> Void)?
 
     func connect(sdkAppID: Int, userID: String, userSig: String) async throws {
@@ -1957,6 +2268,23 @@ final class TencentIMClient: RemoteIMClient {
         origin: RemoteIMMessageOrigin,
         quote: RemoteIMQuote?
     ) async throws -> RemoteIMSendReceipt {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func createGroup(name: String, memberUserIDs: [String]) async throws -> RemoteIMGroup {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func joinedGroups() async throws -> [RemoteIMGroup] {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func sendGroupText(to groupID: String, text: String) async throws -> RemoteIMSendReceipt {
+        throw RemoteIMClientError.sdkNotIntegrated
+    }
+
+    func groupHistory(groupID: String, count: Int, beforeRemoteID: String?) async throws
+        -> RemoteIMGroupHistoryPage {
         throw RemoteIMClientError.sdkNotIntegrated
     }
 

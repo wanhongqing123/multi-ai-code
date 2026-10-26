@@ -131,6 +131,22 @@ test('password-only test account can request deletion without a phone', async ()
   const setup = fixture();
   assert.equal((await setup.service.createTestAccount('review_account',
     'review-password-123456789')).statusCode, 201);
+  const owner = setup.db.prepare('SELECT id FROM users WHERE account_id=?')
+    .get('review_account').id;
+  setup.db.prepare(`INSERT INTO cloud_drive_videos
+    (id,owner_user_id,name,object_key,size_bytes,content_type,status,
+      created_at,upload_expires_at,ready_at)
+    VALUES(?,?,?,?,?,'video/mp4','ready',?,?,?)`).run(
+    'a0000000-0000-4000-8000-000000000001', owner, 'saved.mp4',
+    'cloud-drive/review_account/2026-10-24/saved.mp4', 1024,
+    1_780_000_000_000, 1_780_604_800_000, 1_780_000_000_000);
+  setup.db.prepare(`INSERT INTO video_circle_posts
+    (id,author_user_id,title,object_key,source_tool,source_task_id,
+      size_bytes,content_type,duration_ms,status,created_at,published_at)
+    VALUES(?,?,?,?,?,?,?,'video/mp4',1000,'approved',?,?)`).run(
+    'b0000000-0000-4000-8000-000000000001', owner, 'Shared clip',
+    'video-circle/review_account/2026-10-24/shared.mp4', 'wan_video',
+    'task-1', 1024, 1_780_000_000_000, 1_780_000_000_000);
   const login = await setup.call('POST', '/v1/auth/password/login', {
     account_id: 'review_account', password: 'review-password-123456789',
     device_slot: 'ios_phone'
@@ -161,6 +177,19 @@ test('password-only test account can request deletion without a phone', async ()
   assert.throws(() => completeAccountDeletion(setup.db, deletion.body.request_id,
     { ...evidence, session_sync_deleted: false },
     'test-only-auth-hmac-key-keep-on-server-123456'));
+  assert.throws(() => completeAccountDeletion(setup.db, deletion.body.request_id,
+    evidence, 'test-only-auth-hmac-key-keep-on-server-123456'),
+    /media cleanup is not complete/);
+  setup.db.prepare('UPDATE cloud_drive_videos SET cleanup_pending=0 WHERE owner_user_id=?')
+    .run(owner);
+  assert.throws(() => completeAccountDeletion(setup.db, deletion.body.request_id,
+    evidence, 'test-only-auth-hmac-key-keep-on-server-123456'),
+    /media cleanup is not complete/);
+  // A completed request may no longer keep even a legacy deleted metadata row.
+  setup.db.prepare('DELETE FROM cloud_drive_videos WHERE owner_user_id=?')
+    .run(owner);
+  setup.db.prepare('UPDATE video_circle_posts SET cleanup_pending=0 WHERE author_user_id=?')
+    .run(owner);
   const completed = completeAccountDeletion(setup.db, deletion.body.request_id,
     evidence, 'test-only-auth-hmac-key-keep-on-server-123456');
   assert.equal(completed.status, 'completed');
@@ -170,11 +199,61 @@ test('password-only test account can request deletion without a phone', async ()
   assert.equal(completionStatus.body.status, 'completed');
   assert.equal(completionStatus.body.completed_at, completed.completed_at);
   assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM users').get().count, 0);
+  assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM cloud_drive_videos')
+    .get().count, 0);
+  assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM video_circle_posts')
+    .get().count, 0);
   const receipt = setup.db.prepare('SELECT * FROM account_deletion_requests').get();
   assert.equal(receipt.account_id, null);
   assert.equal(receipt.im_user_id, null);
   assert.equal(receipt.status, 'completed');
   assert.equal(setup.db.pragma('foreign_key_check').length, 0);
+  setup.db.close();
+});
+
+test('account deletion route retains a completing cloud video tombstone', async () => {
+  const setup = fixture({ cloudDrive: {
+    allowedAccountIds:new Set(['canary_account']),
+    abortUpload:async () => {}, deleteObject:async () => {},
+    listUploads:async () => [],
+    verifyObject:async () => ({ exists:false })
+  } });
+  assert.equal((await setup.service.createTestAccount('completion_account',
+    'completion-account-password-123456')).statusCode,201);
+  const userId = setup.db.prepare('SELECT id FROM users WHERE account_id=?')
+    .get('completion_account').id;
+  const videoId = 'a0000000-0000-4000-8000-000000000002';
+  setup.db.prepare(`INSERT INTO cloud_drive_videos
+    (id,owner_user_id,name,object_key,upload_id,size_bytes,content_type,status,
+    created_at,upload_expires_at,completion_started_at)
+    VALUES(?,?,?,?,?,?,?,'completing',?,?,?)`).run(videoId,userId,'clip.mp4',
+    `cloud-drive/completion_account/2026-10-24/${videoId}.mp4`,'upload_race',
+    1000,'video/mp4',1_780_000_000_000,1_780_604_800_000,1_780_000_000_000);
+  const login = await setup.call('POST','/v1/auth/password/login',{
+    account_id:'completion_account',password:'completion-account-password-123456',
+    device_slot:'ios_phone' });
+  assert.equal(login.statusCode,200);
+  assert.equal((await setup.call('GET','/v1/cloud-drive/videos',{},
+    login.body.access_token)).statusCode,404);
+  const deleted = await setup.call('POST','/v1/auth/account/deletion',{
+    confirm_account_id:'completion_account',
+    password:'completion-account-password-123456'
+  },login.body.access_token);
+  assert.equal(deleted.statusCode,202);
+  const row = setup.db.prepare(`SELECT status,cleanup_pending,deleted_at,
+    cleanup_hold_until FROM cloud_drive_videos WHERE id=?`).get(videoId);
+  assert.equal(row.status,'deleted');
+  assert.equal(row.cleanup_pending,1);
+  assert.equal(row.cleanup_hold_until-row.deleted_at,24*60*60_000);
+  const evidence = { operator:'test_operator',records:{} };
+  for (const key of ['tencent_im_deleted','session_sync_deleted',
+    'oss_and_ark_assets_reviewed','shared_content_reviewed']) {
+    evidence[key] = true;
+    evidence.records[key] = `verified-${key}`;
+  }
+  assert.throws(() => completeAccountDeletion(setup.db,deleted.body.request_id,
+    evidence,'test-only-auth-hmac-key-keep-on-server-123456'),
+  /Account media cleanup is not complete/);
   setup.db.close();
 });
 

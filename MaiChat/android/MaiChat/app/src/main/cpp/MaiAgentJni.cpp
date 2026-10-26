@@ -21,6 +21,28 @@ namespace {
 JavaVM* sFileJavaVm = nullptr;
 jclass sFileOperationsClass = nullptr;
 jmethodID sPublishNewFileMethod = nullptr;
+jclass sAssistantClass = nullptr;
+jmethodID sAssistantChangedMethod = nullptr;
+
+void publishAgentChangeToJava(const char* sessionId) {
+    if (sessionId == nullptr || sAssistantClass == nullptr || sAssistantChangedMethod == nullptr)
+        return;
+    JNIEnv* env = nullptr;
+    bool detachAfter = false;
+    if (sFileJavaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+        if (sFileJavaVm->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+        detachAfter = true;
+    }
+    if (env != nullptr) {
+        jstring value = env->NewStringUTF(sessionId);
+        if (value != nullptr) {
+            env->CallStaticVoidMethod(sAssistantClass, sAssistantChangedMethod, value);
+            env->DeleteLocalRef(value);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    if (detachAfter) sFileJavaVm->DetachCurrentThread();
+}
 
 int publishNewFileInJava(const char* source, const char* destination) {
     JNIEnv* env = nullptr;
@@ -163,9 +185,16 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_kongshang_maichat_AIAssistantController_nativeCreate(JNIEnv *,
-                                                              jclass) {
-  return reinterpret_cast<jlong>(maiMobileAgentCreate());
+Java_com_kongshang_maichat_AIAssistantController_nativeCreate(JNIEnv *env,
+                                                              jclass ownerClass) {
+  if (sAssistantClass == nullptr) {
+    sAssistantClass = reinterpret_cast<jclass>(env->NewGlobalRef(ownerClass));
+    sAssistantChangedMethod = env->GetStaticMethodID(ownerClass,
+        "onNativeSessionChanged", "(Ljava/lang/String;)V");
+  }
+  void* agent = maiMobileAgentCreate();
+  if (agent != nullptr) maiMobileAgentSetChangeHandler(agent, publishAgentChangeToJava);
+  return reinterpret_cast<jlong>(agent);
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_kongshang_maichat_AIAssistantController_nativeDestroy(JNIEnv *, jclass,

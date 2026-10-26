@@ -1,0 +1,566 @@
+// Private cloud-drive transport. The portable C++ core owns HTTP, multipart
+// upload, checkpoints and file download; this file supplies iOS account access.
+import Foundation
+
+struct MaiCloudDriveVideo: Decodable, Identifiable, Sendable {
+    let id: String
+    let name: String
+    let sizeBytes: UInt64
+    let contentType: String
+    let mediaType: String?
+    let createdAt: Int64
+
+    var isImage: Bool { mediaType == "image" || contentType.hasPrefix("image/") }
+}
+
+struct MaiCloudDriveQuota: Decodable, Sendable {
+    let usedBytes: UInt64
+    let reservedBytes: UInt64
+    let limitBytes: UInt64
+}
+
+struct MaiCloudDrivePage: Decodable, Sendable {
+    let videos: [MaiCloudDriveVideo]
+    let nextCursor: String?
+    let quota: MaiCloudDriveQuota
+}
+
+private struct MaiCloudDrivePlayLink: Decodable, Sendable {
+    let readUrl: String
+    let sizeBytes: UInt64?
+    let contentType: String?
+    let mediaType: String?
+}
+
+private struct MaiCloudDriveThumbnailLink: Decodable, Sendable {
+    let thumbnailUrl: String
+}
+
+struct MaiCloudDriveError: LocalizedError, Sendable {
+    let status: Int32
+    let httpStatus: Int
+    let detail: String
+
+    var errorDescription: String? {
+        if status == Int32(MAI_CLOUD_DRIVE_CANCELED.rawValue) { return "已暂停，可稍后继续上传" }
+        if status == Int32(MAI_CLOUD_DRIVE_CHECKPOINT_MISMATCH.rawValue) ||
+            status == Int32(MAI_CLOUD_DRIVE_PART_MISMATCH.rawValue) {
+            return "源文件或已上传分片发生变化，请保留文件并重新选择"
+        }
+        if status == Int32(MAI_CLOUD_DRIVE_INSUFFICIENT_SPACE.rawValue) {
+            return "设备空间不足，无法准备此文件"
+        }
+        if httpStatus == 401 { return "登录已过期，请重新登录 MaiChat" }
+        if httpStatus == 413 { return "云盘空间不足，或文件超过大小限制" }
+        if httpStatus == 404 { return "文件已删除，或云盘暂未开放" }
+        if !detail.isEmpty { return detail }
+        return "云盘暂时不可用，请稍后重试"
+    }
+}
+
+final class MaiCloudDriveCancelToken: @unchecked Sendable {
+    let pointer: OpaquePointer
+    init?() {
+        guard let pointer = mai_cloud_drive_cancel_create() else { return nil }
+        self.pointer = pointer
+    }
+    deinit { mai_cloud_drive_cancel_destroy(pointer) }
+    func cancel() { mai_cloud_drive_cancel_request(pointer) }
+}
+
+private final class MaiCloudDriveDownloadCancelToken: @unchecked Sendable {
+    let pointer: OpaquePointer
+    init?() {
+        guard let pointer = mai_download_cancel_create() else { return nil }
+        self.pointer = pointer
+    }
+    deinit { mai_download_cancel_destroy(pointer) }
+    func cancel() { mai_download_cancel_request(pointer) }
+}
+
+private final class MaiCloudDriveReadContext {
+    let file: FileHandle
+    let url: URL
+    let scoped: Bool
+
+    init(url: URL) throws {
+        self.url = url
+        scoped = url.startAccessingSecurityScopedResource()
+        do { file = try FileHandle(forReadingFrom: url) }
+        catch {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            throw error
+        }
+    }
+
+    deinit {
+        try? file.close()
+        if scoped { url.stopAccessingSecurityScopedResource() }
+    }
+
+    func read(at offset: UInt64, output: UnsafeMutablePointer<UInt8>, count: Int) -> Int32 {
+        do {
+            try file.seek(toOffset: offset)
+            var filled = 0
+            while filled < count {
+                guard let data = try file.read(upToCount: count - filled), !data.isEmpty
+                else { return 0 }
+                data.withUnsafeBytes { bytes in
+                    guard let base = bytes.baseAddress else { return }
+                    output.advanced(by: filled).withMemoryRebound(to: UInt8.self,
+                                                                   capacity: data.count) {
+                        $0.update(from: base.assumingMemoryBound(to: UInt8.self),
+                                  count: data.count)
+                    }
+                }
+                filled += data.count
+            }
+            return 1
+        } catch { return 0 }
+    }
+}
+
+private let maiCloudDriveReadAt: MaiCloudDriveReadAt = { context, offset, output, count in
+    guard let context, let output else { return 0 }
+    return Unmanaged<MaiCloudDriveReadContext>.fromOpaque(context)
+        .takeUnretainedValue().read(at: offset, output: output, count: count)
+}
+
+private final class MaiCloudDriveProgressContext {
+    let callback: @Sendable (UInt64, UInt64) -> Void
+    init(_ callback: @escaping @Sendable (UInt64, UInt64) -> Void) { self.callback = callback }
+}
+
+private let maiCloudDriveProgress: MaiCloudDriveProgress = { uploaded, total, context in
+    guard let context else { return 0 }
+    Unmanaged<MaiCloudDriveProgressContext>.fromOpaque(context)
+        .takeUnretainedValue().callback(uploaded, total)
+    return 0
+}
+
+struct MaiCloudDriveClient: Sendable {
+    static let shared = MaiCloudDriveClient()
+
+    private static func contentInfo(_ contentType: String)
+        -> (extensionName: String, isImage: Bool, maxBytes: UInt64)? {
+        switch contentType {
+        case "video/mp4": return ("mp4", false, 2_000_000_000)
+        case "video/quicktime": return ("mov", false, 2_000_000_000)
+        case "image/jpeg": return ("jpg", true, 20_000_000)
+        case "image/png": return ("png", true, 20_000_000)
+        case "image/webp": return ("webp", true, 20_000_000)
+        case "image/heic": return ("heic", true, 20_000_000)
+        default: return nil
+        }
+    }
+
+    static func discardStalePreviews() {
+        let files = FileManager.default
+        for folderName in ["mai-cloud-drive-playback", "mai-cloud-drive-thumbnails"] {
+            let folder = files.temporaryDirectory.appendingPathComponent(
+                folderName, isDirectory: true)
+            guard let entries = try? files.contentsOfDirectory(at: folder,
+                includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
+            for entry in entries {
+                guard UUID(uuidString: entry.deletingPathExtension().lastPathComponent) != nil,
+                      (try? entry.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile
+                        == true else { continue }
+                try? files.removeItem(at: entry)
+            }
+        }
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(type, from: data)
+    }
+
+    func list(before: String? = nil) async throws -> MaiCloudDrivePage {
+        let payload = before.map { ["before": $0] } ?? [:]
+        return try decode(MaiCloudDrivePage.self,
+                          from: await request(action: MAI_CLOUD_DRIVE_LIST_VIDEOS,
+                                              payload: payload))
+    }
+
+    func delete(videoID: String) async throws {
+        _ = try await request(action: MAI_CLOUD_DRIVE_DELETE_VIDEO,
+                              payload: ["video_id": videoID])
+    }
+
+    func abort(checkpointURL: URL) async throws {
+        guard FileManager.default.fileExists(atPath: checkpointURL.path) else { return }
+        guard let access = try await MaiChatAuthClient.shared.cloudDriveAccessIfAvailable(),
+              let cancel = MaiCloudDriveCancelToken() else {
+            throw MaiChatAuthError.sessionExpired
+        }
+        let certificate = try Self.certificate()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, Error>) in
+                DispatchQueue.global(qos: .utility).async {
+                    let proxy = MaiChatAttachmentProxyContext()
+                    var native = MaiCloudDriveResult()
+                    access.authBaseURL.withCString { auth in
+                        access.accountToken.withCString { token in
+                            certificate.path.withCString { ca in
+                                checkpointURL.path.withCString { checkpoint in
+                                    var options = MaiCloudDriveOptions()
+                                    options.auth_base_url_utf8 = auth
+                                    options.account_token_utf8 = token
+                                    options.ca_path_utf8 = ca
+                                    options.proxy_resolver = maiChatAttachmentProxyResolver
+                                    options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                    let invoke = { mai_cloud_drive_abort_resumable(
+                                        &options, checkpoint, cancel.pointer, &native) }
+                                    if let pem = certificate.pem {
+                                        pem.withUnsafeBytes { bytes in
+                                            options.ca_pem = bytes.baseAddress?
+                                                .assumingMemoryBound(to: CChar.self)
+                                            options.ca_pem_length = bytes.count
+                                            options.ca_path_utf8 = nil
+                                            invoke()
+                                        }
+                                    } else { invoke() }
+                                }
+                            }
+                        }
+                    }
+                    let data = native.response_json_utf8.map {
+                        Data(bytes: $0, count: native.response_bytes)
+                    } ?? Data("{}".utf8)
+                    let error = Self.nativeError(native, response: data)
+                    mai_cloud_drive_result_free(&native)
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                }
+            }
+        } onCancel: { cancel.cancel() }
+    }
+
+    func playLink(videoID: String) async throws -> String {
+        try decode(MaiCloudDrivePlayLink.self,
+                   from: await request(action: MAI_CLOUD_DRIVE_PLAY_LINK,
+                                       payload: ["video_id": videoID])).readUrl
+    }
+
+    func thumbnailData(videoID: String) async throws -> Data {
+        let link = try decode(MaiCloudDriveThumbnailLink.self,
+                              from: await request(action: MAI_CLOUD_DRIVE_THUMBNAIL_LINK,
+                                                  payload: ["video_id": videoID]))
+        let file = try await download(signedURL: link.thumbnailUrl,
+                                      fileExtension: "jpg", maxBytes: 2_000_000,
+                                      folderName: "mai-cloud-drive-thumbnails",
+                                      timeoutMilliseconds: 60_000)
+        defer { try? FileManager.default.removeItem(at: file) }
+        return try Data(contentsOf: file)
+    }
+
+    func downloadForPreview(_ media: MaiCloudDriveVideo) async throws -> URL {
+        let signedURL = try await playLink(videoID: media.id)
+        guard let info = Self.contentInfo(media.contentType),
+              media.isImage == info.isImage else {
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "云盘文件格式无效")
+        }
+        return try await download(signedURL: signedURL,
+                                  fileExtension: info.extensionName,
+                                  maxBytes: info.maxBytes,
+                                  folderName: "mai-cloud-drive-playback",
+                                  timeoutMilliseconds: 600_000)
+    }
+
+    func downloadForAgentPreview(mediaID: String) async throws ->
+        (url: URL, isImage: Bool) {
+        let link = try decode(MaiCloudDrivePlayLink.self,
+                              from: await request(action: MAI_CLOUD_DRIVE_PLAY_LINK,
+                                                  payload: ["video_id": mediaID]))
+        guard let contentType = link.contentType,
+              let info = Self.contentInfo(contentType),
+              let size = link.sizeBytes, size > 0, size <= info.maxBytes,
+              link.mediaType == (info.isImage ? "image" : "video") else {
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "云盘文件格式或大小无效")
+        }
+        let url = try await download(signedURL: link.readUrl,
+                                     fileExtension: info.extensionName,
+                                     maxBytes: info.maxBytes,
+                                     folderName: "mai-cloud-drive-agent-playback",
+                                     timeoutMilliseconds: 600_000)
+        return (url, info.isImage)
+    }
+
+    func downloadForPlayback(videoID: String,
+                             agentScoped: Bool = false) async throws -> URL {
+        let signedURL = try await playLink(videoID: videoID)
+        return try await download(signedURL: signedURL, fileExtension: "mp4",
+                                  maxBytes: 2_000_000_000,
+                                  folderName: agentScoped ? "mai-cloud-drive-agent-playback"
+                                                          : "mai-cloud-drive-playback",
+                                  timeoutMilliseconds: 600_000)
+    }
+
+    private func download(signedURL: String, fileExtension: String,
+                          maxBytes: UInt64, folderName: String,
+                          timeoutMilliseconds: Int32) async throws -> URL {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(folderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let target = folder.appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(fileExtension)
+        let certificate = try Self.certificate()
+        guard let cancel = MaiCloudDriveDownloadCancelToken() else {
+            throw Self.error(status: MAI_CLOUD_DRIVE_NETWORK_ERROR)
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation {
+                    (continuation: CheckedContinuation<Void, Error>) in
+                    DispatchQueue.global(qos: .utility).async {
+                        let proxy = MaiChatAttachmentProxyContext()
+                        var result = MaiDownloadResult()
+                        signedURL.withCString { url in
+                            target.path.withCString { path in
+                                certificate.path.withCString { ca in
+                                    var options = MaiDownloadOptions()
+                                    options.url_utf8 = url
+                                    options.target_path_utf8 = path
+                                    options.max_bytes = maxBytes
+                                    options.ca_path_utf8 = ca
+                                    options.proxy_resolver = maiChatAttachmentProxyResolver
+                                    options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                    options.transfer_timeout_ms = timeoutMilliseconds
+                                    if let pem = certificate.pem {
+                                        pem.withUnsafeBytes { bytes in
+                                            options.ca_pem = bytes.baseAddress?
+                                                .assumingMemoryBound(to: CChar.self)
+                                            options.ca_pem_length = bytes.count
+                                            options.ca_path_utf8 = nil
+                                            mai_download_file(&options, cancel.pointer, &result)
+                                        }
+                                    } else { mai_download_file(&options, cancel.pointer, &result) }
+                                }
+                            }
+                        }
+                        if result.status == MAI_DOWNLOAD_OK { continuation.resume() }
+                        else { continuation.resume(throwing: MaiCloudDriveError(
+                            status: Int32(result.status.rawValue),
+                            httpStatus: Int(result.http_status), detail: "云盘文件下载失败")) }
+                    }
+                }
+            } onCancel: { cancel.cancel() }
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            throw error
+        }
+    }
+
+    // The stable ID is recorded by the C++ checkpoint. The host record owns
+    // its bookmark or private file path and can reopen it after process death.
+    func upload(source: MaiCloudDriveLocalTask,
+                checkpointURL: URL,
+                cancel: MaiCloudDriveCancelToken,
+                progress: @escaping @Sendable (UInt64, UInt64) -> Void) async throws -> Data {
+        guard let access = try await MaiChatAuthClient.shared.cloudDriveAccessIfAvailable()
+        else { throw MaiChatAuthError.sessionExpired }
+        let certificate = try Self.certificate()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Data, Error>) in
+                DispatchQueue.global(qos: .utility).async {
+                    let response = Self.performUpload(source: source,
+                                                      checkpoint: checkpointURL,
+                                                      access: access,
+                                                      certificate: certificate,
+                                                      cancel: cancel,
+                                                      progress: progress)
+                    continuation.resume(with: response)
+                }
+            }
+        } onCancel: { cancel.cancel() }
+    }
+
+    private static func performUpload(source: MaiCloudDriveLocalTask,
+                                      checkpoint: URL,
+                                      access: MaiChatCloudDriveAccess,
+                                      certificate: (path: String, pem: Data?),
+                                      cancel: MaiCloudDriveCancelToken,
+                                      progress: @escaping @Sendable (UInt64, UInt64) -> Void)
+        -> Result<Data, Error> {
+        let proxy = MaiChatAttachmentProxyContext()
+        let progressContext = MaiCloudDriveProgressContext(progress)
+        let signedHost = access.authBaseURL.contains("localhost") ||
+            access.authBaseURL.contains("127.0.0.1") ? "localhost" : "aliyuncs.com"
+        let opened: MaiCloudDriveReadContext?
+        if let bookmark = source.bookmark {
+            do {
+                var stale = false
+                let url = try URL(resolvingBookmarkData: bookmark, options: [],
+                                  relativeTo: nil, bookmarkDataIsStale: &stale)
+                opened = try MaiCloudDriveReadContext(url: url)
+            } catch {
+                return .failure(MaiCloudDriveError(
+                    status: Int32(MAI_CLOUD_DRIVE_FILE_ERROR.rawValue), httpStatus: 0,
+                    detail: "源视频已无法访问，请重新选择该文件"))
+            }
+        } else { opened = nil }
+        var native = MaiCloudDriveResult()
+        access.authBaseURL.withCString { auth in
+            access.accountToken.withCString { token in
+                certificate.path.withCString { ca in
+                    signedHost.withCString { host in
+                        checkpoint.path.withCString { checkpointPath in
+                            source.name.withCString { name in
+                                source.contentType.withCString { contentType in
+                                    var options = MaiCloudDriveOptions()
+                                    options.auth_base_url_utf8 = auth
+                                    options.account_token_utf8 = token
+                                    options.ca_path_utf8 = ca
+                                    options.proxy_resolver = maiChatAttachmentProxyResolver
+                                    options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                    options.signed_upload_host_suffix_utf8 = host
+                                    options.retain_completed_checkpoint = 1
+                                    let invoke = {
+                                        if let opened {
+                                            source.sourceID.withCString { stableID in
+                                                var sourceInfo = MaiCloudDriveSource()
+                                                sourceInfo.stable_id_utf8 = stableID
+                                                sourceInfo.size_bytes = source.sizeBytes
+                                                sourceInfo.read_at = maiCloudDriveReadAt
+                                                sourceInfo.context = Unmanaged
+                                                    .passUnretained(opened).toOpaque()
+                                                mai_cloud_drive_upload_resumable_source(
+                                                    &options, &sourceInfo, checkpointPath,
+                                                    name, contentType, cancel.pointer,
+                                                    maiCloudDriveProgress,
+                                                    Unmanaged.passUnretained(progressContext)
+                                                        .toOpaque(), &native)
+                                            }
+                                        } else if let path = source.sourcePath {
+                                            path.withCString { filePath in
+                                                mai_cloud_drive_upload_resumable(
+                                                    &options, filePath, checkpointPath,
+                                                    name, contentType, cancel.pointer,
+                                                    maiCloudDriveProgress,
+                                                    Unmanaged.passUnretained(progressContext)
+                                                        .toOpaque(), &native)
+                                            }
+                                        }
+                                    }
+                                    if let pem = certificate.pem {
+                                        pem.withUnsafeBytes { bytes in
+                                            options.ca_pem = bytes.baseAddress?
+                                                .assumingMemoryBound(to: CChar.self)
+                                            options.ca_pem_length = bytes.count
+                                            options.ca_path_utf8 = nil
+                                            invoke()
+                                        }
+                                    } else { invoke() }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let response = native.response_json_utf8.map { Data(bytes: $0, count: native.response_bytes) }
+            ?? Data("{}".utf8)
+        let error = Self.nativeError(native, response: response)
+        mai_cloud_drive_result_free(&native)
+        if let error { return .failure(error) }
+        return .success(response)
+    }
+
+    private func request(action: MaiCloudDriveAction,
+                         payload: [String: String]) async throws -> Data {
+        guard let access = try await MaiChatAuthClient.shared.cloudDriveAccessIfAvailable()
+        else { throw MaiChatAuthError.sessionExpired }
+        let certificate = try Self.certificate()
+        let payload = try JSONSerialization.data(withJSONObject: payload)
+        guard let json = String(data: payload, encoding: .utf8),
+              let cancel = MaiCloudDriveCancelToken() else {
+            throw Self.error(status: MAI_CLOUD_DRIVE_INVALID_ARGUMENT)
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Data, Error>) in
+                DispatchQueue.global(qos: .utility).async {
+                    continuation.resume(with: Self.performRequest(
+                        action: action, payload: json, access: access,
+                        certificate: certificate, cancel: cancel))
+                }
+            }
+        } onCancel: { cancel.cancel() }
+    }
+
+    private static func performRequest(action: MaiCloudDriveAction, payload: String,
+                                       access: MaiChatCloudDriveAccess,
+                                       certificate: (path: String, pem: Data?),
+                                       cancel: MaiCloudDriveCancelToken)
+        -> Result<Data, Error> {
+        let proxy = MaiChatAttachmentProxyContext()
+        let signedHost = access.authBaseURL.contains("localhost") ||
+            access.authBaseURL.contains("127.0.0.1") ? "localhost" : "aliyuncs.com"
+        var native = MaiCloudDriveResult()
+        access.authBaseURL.withCString { auth in
+            access.accountToken.withCString { token in
+                certificate.path.withCString { ca in
+                    signedHost.withCString { host in
+                        payload.withCString { json in
+                            var options = MaiCloudDriveOptions()
+                            options.auth_base_url_utf8 = auth
+                            options.account_token_utf8 = token
+                            options.ca_path_utf8 = ca
+                            options.signed_upload_host_suffix_utf8 = host
+                            options.proxy_resolver = maiChatAttachmentProxyResolver
+                            options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                            let invoke = { mai_cloud_drive_request(
+                                &options, action, json, cancel.pointer, &native) }
+                            if let pem = certificate.pem {
+                                pem.withUnsafeBytes { bytes in
+                                    options.ca_pem = bytes.baseAddress?
+                                        .assumingMemoryBound(to: CChar.self)
+                                    options.ca_pem_length = bytes.count
+                                    options.ca_path_utf8 = nil
+                                    invoke()
+                                }
+                            } else { invoke() }
+                        }
+                    }
+                }
+            }
+        }
+        let response = native.response_json_utf8.map { Data(bytes: $0, count: native.response_bytes) }
+            ?? Data("{}".utf8)
+        let error = nativeError(native, response: response)
+        mai_cloud_drive_result_free(&native)
+        if let error { return .failure(error) }
+        return .success(response)
+    }
+
+    private static func nativeError(_ result: MaiCloudDriveResult, response: Data) -> Error? {
+        guard result.status != MAI_CLOUD_DRIVE_OK else { return nil }
+        let body = (try? JSONSerialization.jsonObject(with: response)) as? [String: Any]
+        return MaiCloudDriveError(status: Int32(result.status.rawValue),
+                                  httpStatus: Int(result.http_status),
+                                  detail: body?["error"] as? String ?? "")
+    }
+
+    private static func error(status: MaiCloudDriveStatus) -> MaiCloudDriveError {
+        MaiCloudDriveError(status: Int32(status.rawValue), httpStatus: 0, detail: "")
+    }
+
+    private static func certificate() throws -> (path: String, pem: Data?) {
+        #if DEBUG && targetEnvironment(simulator)
+        if let encoded = ProcessInfo.processInfo.environment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"],
+           let pem = Data(base64Encoded: encoded), !pem.isEmpty { return ("", pem) }
+        #endif
+        guard let certificate = Bundle.main.url(forResource: "cacert", withExtension: "pem",
+                                                subdirectory: "MaiAgentCertificates") else {
+            throw MaiCloudDriveError(status: Int32(MAI_CLOUD_DRIVE_NETWORK_ERROR.rawValue),
+                                     httpStatus: 0, detail: "服务证书不可用")
+        }
+        return (certificate.path, nil)
+    }
+}

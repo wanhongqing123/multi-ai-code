@@ -68,6 +68,27 @@ function openSessionSyncStore(filename) {
     );
     CREATE INDEX IF NOT EXISTS sync_message_receipts_age
       ON sync_message_receipts(created_at);
+    CREATE TABLE IF NOT EXISTS sync_room_messages (
+      account_id TEXT NOT NULL,
+      owner_slot TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(account_id, owner_slot, session_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS sync_room_messages_page
+      ON sync_room_messages(account_id, owner_slot, session_id, message_id DESC);
+    CREATE TABLE IF NOT EXISTS sync_room_state (
+      account_id TEXT NOT NULL,
+      owner_slot TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      permissions TEXT NOT NULL,
+      questions TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(account_id, owner_slot, session_id)
+    );
   `);
   const envelopeColumns = new Set(db.pragma('table_info(sync_envelopes)').map(row => row.name));
   if (!envelopeColumns.has('delivered_at'))
@@ -77,6 +98,9 @@ function openSessionSyncStore(filename) {
     db.exec('ALTER TABLE sync_sessions ADD COLUMN busy INTEGER NOT NULL DEFAULT 0');
   // 进程重启后，旧心跳不能证明设备仍连着新进程；等待它重新上报。
   db.prepare('UPDATE sync_devices SET last_seen=0').run();
+  // 未确认的事件可在新连接上立即重发；命令仍保持首次投递语义。
+  db.prepare(`UPDATE sync_envelopes SET delivered_at=NULL
+    WHERE kind='event' AND acked_at IS NULL`).run();
   return db;
 }
 

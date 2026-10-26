@@ -1,10 +1,10 @@
-// 文件作用：扫描电脑登录二维码，在手机或平板上核对并批准一次性登录请求。
+// 文件作用：核对并批准从统一扫一扫入口识别的一次性电脑登录请求。
 // 二维码只包含请求编号；登录凭据始终由账号服务签发，不在二维码中传递。
 import AVFoundation
 import SwiftUI
 import UIKit
 
-private enum DesktopLoginQRCode {
+enum MaiChatDesktopLoginQRCode {
     static func requestID(from text: String) -> String? {
         guard let url = URLComponents(string: text),
               url.scheme?.lowercased() == "maichat",
@@ -19,16 +19,8 @@ private enum DesktopLoginQRCode {
     }
 }
 
-private enum DesktopLoginCameraAccess {
-    case checking
-    case authorized
-    case denied
-    case unavailable
-}
-
 private enum DesktopLoginStage {
-    case scanning
-    case loading(String)
+    case loading
     case confirming(String, MaiChatDesktopLoginRequestInfo, Date)
     case deciding(String, MaiChatDesktopLoginRequestInfo, Date, Bool)
     case approved
@@ -37,24 +29,24 @@ private enum DesktopLoginStage {
     case failed(String)
 }
 
-struct DesktopLoginScanView: View {
+struct DesktopLoginApprovalView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @State private var cameraAccess: DesktopLoginCameraAccess = .checking
-    @State private var stage: DesktopLoginStage = .scanning
+    @State private var stage: DesktopLoginStage = .loading
     @State private var now = Date()
     @State private var generation = 0
+    @State private var hasLoadedRequest = false
+    let requestID: String
+    let onRescan: () -> Void
 
-    /// 扫码、核对、请求中和结果状态都留在同一导航页，避免转场时丢失请求上下文。
+    /// 登录核对、请求中和结果状态都留在同一导航页，避免丢失请求上下文。
     var body: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
             ScrollView {
                 VStack(spacing: 24) {
                     switch stage {
-                    case .scanning:
-                        scanContent(height: min(max(geometry.size.height * 0.5, 260), 460))
                     case .loading:
                         statusContent(
                             symbol: "qrcode.viewfinder", title: "正在检查登录请求",
@@ -70,12 +62,12 @@ struct DesktopLoginScanView: View {
                     case .approved:
                         statusContent(
                             symbol: "checkmark.circle.fill", title: "已允许电脑登录",
-                            message: "电脑会继续完成登录。", actionTitle: "返回设置"
+                            message: "电脑会继续完成登录。", actionTitle: "返回消息"
                         )
                     case .denied:
                         statusContent(
                             symbol: "xmark.circle.fill", title: "已取消本次登录",
-                            message: "这张二维码不能再用于登录。", actionTitle: "返回设置"
+                            message: "这张二维码不能再用于登录。", actionTitle: "返回消息"
                         )
                     case .expired:
                         statusContent(
@@ -107,23 +99,16 @@ struct DesktopLoginScanView: View {
             }
         }
         .onAppear {
-            updateCameraAccess()
-            #if DEBUG && targetEnvironment(simulator)
-            // 本机账号模拟服务的 UI 验收入口；真机与发布包没有此路径。
-            let environment = ProcessInfo.processInfo.environment
-            if environment["MAICHAT_LOCAL_UI_PHONE"] != nil,
-               let testURI = environment["MAICHAT_LOCAL_UI_DESKTOP_QR"],
-               !testURI.isEmpty {
-                receiveQRCode(testURI)
+            if !hasLoadedRequest {
+                hasLoadedRequest = true
+                loadRequest()
             }
-            #endif
         }
         .onDisappear { generation &+= 1 }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
                 now = Date()
                 expireIfNeeded()
-                if case .scanning = stage { updateCameraAccess() }
             }
         }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { date in
@@ -137,79 +122,11 @@ struct DesktopLoginScanView: View {
         return false
     }
 
-    private var isScanning: Bool {
-        if case .scanning = stage { return true }
-        return false
-    }
-
     private var isConfirming: Bool {
         switch stage {
         case .confirming, .deciding: return true
         default: return false
         }
-    }
-
-    /// 相机授权、无摄像头和扫描取景共用同一尺寸，状态切换时不改变页面结构。
-    @ViewBuilder
-    private func scanContent(height: CGFloat) -> some View {
-        VStack(spacing: 22) {
-            VStack(spacing: 8) {
-                Text("扫描电脑上的二维码")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(RemoteIMStyle.textPrimary)
-                Text("打开电脑端 MaiChat 的扫码登录页面")
-                    .font(.subheadline)
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
-            }
-            ZStack {
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(Color(red: 0.08, green: 0.12, blue: 0.19))
-                switch cameraAccess {
-                case .authorized:
-                    MaiChatQRCodeCameraView(
-                        isActive: isScanning && scenePhase == .active,
-                        onCode: { receiveQRCode($0) },
-                        onUnavailable: { cameraAccess = .unavailable }
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 24))
-                    RoundedRectangle(cornerRadius: 18)
-                        .strokeBorder(.white.opacity(0.85), lineWidth: 3)
-                        .frame(width: min(height * 0.65, 280),
-                               height: min(height * 0.65, 280))
-                        .allowsHitTesting(false)
-                case .checking:
-                    ProgressView("正在打开相机")
-                        .tint(.white)
-                        .foregroundStyle(.white)
-                case .denied:
-                    cameraMessage(symbol: "camera.fill", title: "相机权限未开启",
-                                  detail: "请在系统设置中允许 MaiChat 使用相机。")
-                case .unavailable:
-                    cameraMessage(symbol: "camera.fill", title: "相机不可用",
-                                  detail: "请在有摄像头的手机或平板上扫描。")
-                }
-            }
-            .frame(height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 24))
-            if case .denied = cameraAccess {
-                Link("打开系统设置", destination: URL(string: UIApplication.openSettingsURLString)!)
-                    .font(.body.weight(.semibold))
-            }
-            Text("扫描后请核对电脑类型和 6 位核对码，再确认登录。")
-                .font(.footnote)
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-                .multilineTextAlignment(.center)
-        }
-    }
-
-    private func cameraMessage(symbol: String, title: String, detail: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 42))
-            Text(title).font(.headline)
-            Text(detail).font(.subheadline).multilineTextAlignment(.center)
-        }
-        .foregroundStyle(.white)
-        .padding(24)
     }
 
     /// 横屏并排显示设备信息、核对码和操作，保持关键按钮在可见区域内。
@@ -339,8 +256,7 @@ struct DesktopLoginScanView: View {
                 Button(actionTitle) {
                     if actionTitle == "重新扫码" {
                         generation &+= 1
-                        stage = .scanning
-                        updateCameraAccess()
+                        onRescan()
                     } else {
                         dismiss()
                     }
@@ -356,40 +272,12 @@ struct DesktopLoginScanView: View {
         .background(.white, in: RoundedRectangle(cornerRadius: 20))
     }
 
-    private func updateCameraAccess() {
-        guard AVCaptureDevice.default(for: .video) != nil else {
-            cameraAccess = .unavailable
-            return
-        }
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized:
-            cameraAccess = .authorized
-        case .denied, .restricted:
-            cameraAccess = .denied
-        case .notDetermined:
-            cameraAccess = .checking
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                Task { @MainActor in
-                    cameraAccess = granted ? .authorized : .denied
-                }
-            }
-        @unknown default:
-            cameraAccess = .unavailable
-        }
-    }
-
-    /// 只接受含请求编号的 MaiChat URI，再从服务端读取平台、核对码和剩余时间。
-    private func receiveQRCode(_ text: String) {
-        guard isScanning else { return }
-        guard let id = DesktopLoginQRCode.requestID(from: text) else {
-            stage = .failed("这不是 MaiChat 的电脑登录二维码，请重新扫描。")
-            return
-        }
-        stage = .loading(id)
+    /// 扫码页已验证 URI 格式，这里仍向服务端查询真实平台和六位核对码。
+    private func loadRequest() {
         let currentGeneration = generation
         Task { @MainActor in
             do {
-                let info = try await appState.desktopLoginRequestInfo(id: id, code: "")
+                let info = try await appState.desktopLoginRequestInfo(id: requestID, code: "")
                 guard generation == currentGeneration else { return }
                 guard info.canDecide, info.expiresIn > 0,
                       ["mac", "windows"].contains(info.platform),
@@ -398,7 +286,7 @@ struct DesktopLoginScanView: View {
                     stage = .failed("登录请求数据无效或已处理，请刷新电脑上的二维码。")
                     return
                 }
-                stage = .confirming(id, info,
+                stage = .confirming(requestID, info,
                                     Date().addingTimeInterval(TimeInterval(info.expiresIn)))
             } catch {
                 guard generation == currentGeneration else { return }

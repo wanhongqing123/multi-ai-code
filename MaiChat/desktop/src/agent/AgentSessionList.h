@@ -35,6 +35,7 @@ public:
     // 从存储重新拉一遍并重画。轮次结束、标题变了、新建会话之后都要调。
     void refresh();
     void setRemoteSessions(const QJsonArray& sessions);
+    void setRemoteDevices(const QJsonArray& devices);
 
     // 高亮某一项（不发 selected 信号，避免和调用方来回打架）。
     void setCurrent(const QString& sessionId);
@@ -44,11 +45,18 @@ signals:
     // 用户挑了一个会话。
     void selected(const QString& sessionId);
     void remoteSelected(const QJsonObject& session);
+    void deleteSessionRequested(const QString& sessionId);
+    void remoteCreateRequested(const QJsonObject& device);
+    void remoteDeleteRequested(const QJsonObject& session);
     // 用户按了"新对话"。**这里不建会话**——建在哪个目录是面板的事，
     // 列表只负责说"用户想开一个新的"。
     void newSessionRequested();
 
 private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void showLocalSessionMenu(const QString& sessionId, const QPoint& position);
+    void showRemoteSessionMenu(const QJsonObject& session, const QPoint& position);
+    void showRemoteDeviceMenu(const QJsonObject& device, const QPoint& position);
     struct Runtime;
     std::unique_ptr<Runtime> runtime_;
 };

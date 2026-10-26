@@ -76,7 +76,7 @@ void AppMessageDialog::buildUi(const Options& options) {
 
     auto* buttonRow = new QHBoxLayout();
     buttonRow->setContentsMargins(0, 0, 0, 0);
-    buttonRow->setSpacing(UiZoom::s(10));
+    buttonRow->setSpacing(0);
     buttonRow->addStretch(1);
 
     if (options.kind == Kind::Confirm) {
@@ -85,6 +85,9 @@ void AppMessageDialog::buildUi(const Options& options) {
         cancel->setCursor(Qt::PointingHandCursor);
         connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
         buttonRow->addWidget(cancel);
+        // macOS 默认按钮的布局边界会吃掉行布局的自动间距；显式留白，
+        // 避免「取消」和危险动作按钮挤在一起。
+        buttonRow->addSpacing(UiZoom::s(24));
 
         auto* confirm = new QPushButton(options.confirmText, panel);
         confirm->setObjectName(options.destructive ? QStringLiteral("appMessageDanger")

@@ -115,7 +115,11 @@ public:
     }
     void sendCatalog(int connection) {
         sendJson(connection, {{QStringLiteral("type"), QStringLiteral("catalog")},
-                              {QStringLiteral("sessions"), QJsonArray{}}});
+                              {QStringLiteral("sessions"), QJsonArray{}},
+                              {QStringLiteral("devices"), QJsonArray{QJsonObject{
+                                  {QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
+                                  {QStringLiteral("device_id"), QStringLiteral("phone-install")},
+                                  {QStringLiteral("online"), true}}}}});
     }
 
 private:
@@ -303,10 +307,15 @@ void DesktopSessionSyncChannelTest::reauthenticatesWithoutRepeatingAnInFlightCom
     QVERIFY(!blockedError.isEmpty());
     QCOMPARE(server.operationCount(QStringLiteral("send")), 1);
     int catalogs = 0;
+    QJsonArray devices;
     channel.setCatalogHandler([&](const QJsonArray&) { ++catalogs; });
+    channel.setDeviceHandler([&](const QJsonArray& value) { devices = value; });
     server.respond(0, reauth.value(QStringLiteral("id")).toString(), 200);
     server.sendCatalog(0);
     QTRY_COMPARE_WITH_TIMEOUT(catalogs, 1, 5000);
+    QCOMPARE(devices.size(), 1);
+    QCOMPARE(devices.first().toObject().value(QStringLiteral("device_id")).toString(),
+             QStringLiteral("phone-install"));
     channel.refreshBearerNow();
     QTest::qWait(100);
     QCOMPARE(server.operationCount(QStringLiteral("reauth")), 1);

@@ -14,6 +14,10 @@ QString requestOperation(const QString& path, const QByteArray& method) {
     if (method == "POST" && path == QStringLiteral("session-sync/presence")) return QStringLiteral("presence");
     if (method == "POST" && path == QStringLiteral("session-sync/send")) return QStringLiteral("send");
     if (method == "POST" && path == QStringLiteral("session-sync/ack")) return QStringLiteral("ack");
+    if (method == "POST" && path == QStringLiteral("session-sync/publish")) return QStringLiteral("publish");
+    if (method == "GET" && path == QStringLiteral("session-sync/history")) return QStringLiteral("history");
+    if (method == "POST" && path == QStringLiteral("session-sync/room-delete"))
+        return QStringLiteral("room-delete");
     return {};
 }
 
@@ -53,6 +57,10 @@ DesktopSessionSyncChannel::~DesktopSessionSyncChannel() {
 
 void DesktopSessionSyncChannel::setCatalogHandler(CatalogHandler handler) {
     catalogHandler_ = std::move(handler);
+}
+
+void DesktopSessionSyncChannel::setDeviceHandler(DeviceHandler handler) {
+    deviceHandler_ = std::move(handler);
 }
 
 void DesktopSessionSyncChannel::setInboxHandler(InboxHandler handler) {
@@ -223,6 +231,7 @@ void DesktopSessionSyncChannel::consume(MaiSessionSyncSocket::Event event, const
     const QString type = frame.value(QStringLiteral("type")).toString();
     if (type == QStringLiteral("catalog")) {
         if (catalogHandler_) catalogHandler_(frame.value(QStringLiteral("sessions")).toArray());
+        if (deviceHandler_) deviceHandler_(frame.value(QStringLiteral("devices")).toArray());
     } else if (type == QStringLiteral("inbox")) {
         if (inboxHandler_) inboxHandler_(frame.value(QStringLiteral("messages")).toArray());
     } else if (type == QStringLiteral("response")) {

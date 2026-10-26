@@ -4,7 +4,7 @@
 const Database = require('better-sqlite3');
 
 const TABLES = ['sync_envelopes', 'sync_message_receipts',
-  'sync_sessions', 'sync_devices'];
+  'sync_sessions', 'sync_devices', 'sync_room_messages', 'sync_room_state'];
 
 function main(args = process.argv.slice(2), env = process.env) {
   const execute = args[0] === '--execute';

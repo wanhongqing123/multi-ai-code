@@ -359,6 +359,11 @@ MaiModelRequest MaiTurnRunner::buildRequest(const std::string& modelName,
                                             bool requireFinalAnswer) const {
     MaiModelRequest request;
     request.model = modelName;
+    if (modelName == "deepseek-flash") {
+        request.reasoningEffort = mDependencies.reasoningEffortProvider
+                                      ? mDependencies.reasoningEffortProvider()
+                                      : mDependencies.reasoningEffort;
+    }
     request.baseInstructions = mDependencies.baseInstructions;
 
     // 历史里那条正在写的 assistant 消息，
@@ -475,6 +480,7 @@ void MaiTurnRunner::executeTools(const std::vector<MaiToolInvocation>& calls,
     context.cancel = &cancel;
     context.questions = mDependencies.questions;
     context.subAgents = mDependencies.subAgents;
+    context.sessionAgent = mDependencies.sessionAgent;
     context.specialistTasks = mDependencies.store;
     context.messageId = mAssistant.id;
     // 广播是在这儿绑的，而不是让工具自己去碰事件总线：工具层不该认识事件。

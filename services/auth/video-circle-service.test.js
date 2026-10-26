@@ -78,12 +78,19 @@ test('video stays private until review; blocked viewers lose feed and playback',
   assert.equal(f.db.prepare('SELECT COUNT(*) AS count FROM video_circle_reports').get().count, 1);
   assert.equal((await f.service.handle('POST', '/v1/video-circle/blocks',
     { author_id: 'author' }, f.viewer)).statusCode, 200);
+  assert.deepEqual((await f.service.handle('GET', '/v1/video-circle/blocks',
+    {}, f.viewer)).body.authors,
+  [{ author_id: 'author', author_name: 'author' }]);
+  assert.deepEqual((await f.service.handle('GET', '/v1/video-circle/blocks',
+    {}, f.owner)).body.authors, []);
   assert.deepEqual((await f.service.handle('GET', '/v1/video-circle/feed',
     {}, f.viewer)).body.posts, []);
   assert.equal((await f.service.handle('GET',
     `/v1/video-circle/posts/${created.body.post_id}/play`, {}, f.viewer)).statusCode, 404);
   assert.equal((await f.service.handle('POST', '/v1/video-circle/blocks/remove',
     { author_id: 'author' }, f.viewer)).statusCode, 200);
+  assert.deepEqual((await f.service.handle('GET', '/v1/video-circle/blocks',
+    {}, f.viewer)).body.authors, []);
   assert.equal((await f.service.handle('GET', '/v1/video-circle/feed',
     {}, f.viewer)).body.posts.length, 1);
   const hidden = await f.service.hide(created.body.post_id, 'admin', '审核后下架');
@@ -91,6 +98,46 @@ test('video stays private until review; blocked viewers lose feed and playback',
   assert.deepEqual(f.removed, [f.key]);
   assert.deepEqual((await f.service.handle('GET', '/v1/video-circle/feed',
     {}, f.viewer)).body.posts, []);
+});
+
+test('author can page beyond 100 posts with tied timestamps and withdraw an old post', async () => {
+  const f = fixture();
+  const insert = f.db.prepare(`INSERT INTO video_circle_posts
+    (id,author_user_id,title,object_key,source_tool,source_task_id,size_bytes,
+    content_type,duration_ms,status,created_at,published_at)
+    VALUES(?,?,?,?,'wan_video','task-1',1000,'video/mp4',8000,'approved',?,?)`);
+  for (let index = 0; index < 105; index++) {
+    const id = `123e4567-e89b-42d3-a456-${index.toString(16).padStart(12, '0')}`;
+    insert.run(id, f.owner.user_id, `Author ${index}`,
+      `video-circle/author/2026-10-22/${id}.mp4`,
+      1000 + Math.floor(index / 3), 1000 + Math.floor(index / 3));
+  }
+  const otherId = '223e4567-e89b-42d3-a456-426614174000';
+  insert.run(otherId, f.viewer.user_id, 'Other account',
+    `video-circle/viewer/2026-10-22/${otherId}.mp4`, 9999, 9999);
+  const expected = f.db.prepare(`SELECT id FROM video_circle_posts
+    WHERE author_user_id=? ORDER BY created_at DESC,id DESC`)
+    .all(f.owner.user_id).map(row => row.id);
+  const first = await f.service.handle('GET', '/v1/video-circle/mine', {}, f.owner);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.body.posts.length, 100);
+  assert.deepEqual(first.body.posts.map(post => post.id), expected.slice(0, 100));
+  assert.ok(first.body.next_cursor);
+  const second = await f.service.handle('GET', '/v1/video-circle/mine', {}, f.owner,
+    new URLSearchParams({ before: first.body.next_cursor }));
+  assert.equal(second.statusCode, 200);
+  assert.deepEqual(second.body.posts.map(post => post.id), expected.slice(100));
+  assert.equal(second.body.next_cursor, null);
+  assert.equal((await f.service.handle('GET', '/v1/video-circle/mine', {}, f.owner,
+    new URLSearchParams({ before: 'bad-cursor' }))).statusCode, 400);
+  assert.deepEqual((await f.service.handle('GET', '/v1/video-circle/mine', {}, f.viewer))
+    .body.posts.map(post => post.id), [otherId]);
+  const oldestId = expected.at(-1);
+  const withdrawn = await f.service.handle('POST',
+    `/v1/video-circle/posts/${oldestId}/withdraw`, {}, f.owner);
+  assert.equal(withdrawn.statusCode, 200);
+  assert.equal(f.db.prepare('SELECT status FROM video_circle_posts WHERE id=?')
+    .get(oldestId).status, 'withdrawn');
 });
 
 test('withdraw removes feed access and requests object deletion', async () => {

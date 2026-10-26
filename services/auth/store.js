@@ -266,7 +266,81 @@ function openStore(filename) {
     );
     CREATE INDEX IF NOT EXISTS video_circle_reports_pending
       ON video_circle_reports(status,created_at);
+    CREATE TABLE IF NOT EXISTS cloud_drive_videos (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL REFERENCES users(id),
+      name TEXT NOT NULL,
+      object_key TEXT NOT NULL UNIQUE,
+      upload_id TEXT,
+      size_bytes INTEGER NOT NULL,
+      content_type TEXT NOT NULL CHECK(content_type IN
+        ('video/mp4','video/quicktime','image/jpeg','image/png','image/webp','image/heic')),
+      status TEXT NOT NULL CHECK(status IN ('uploading','completing','ready','deleted')),
+      created_at INTEGER NOT NULL,
+      upload_expires_at INTEGER NOT NULL,
+      ready_at INTEGER,
+      deleted_at INTEGER,
+      cleanup_pending INTEGER NOT NULL DEFAULT 0,
+      cleanup_after INTEGER,
+      cleanup_hold_until INTEGER,
+      cleanup_revision INTEGER NOT NULL DEFAULT 0,
+      last_part_signed_at INTEGER,
+      completion_started_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS cloud_drive_videos_owner
+      ON cloud_drive_videos(owner_user_id,status,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS cloud_drive_videos_cleanup
+      ON cloud_drive_videos(cleanup_pending,cleanup_after);
   `);
+  const cloudColumns = new Set(db.pragma('table_info(cloud_drive_videos)')
+    .map(column => column.name));
+  if (!cloudColumns.has('cleanup_hold_until'))
+    db.exec('ALTER TABLE cloud_drive_videos ADD COLUMN cleanup_hold_until INTEGER');
+  if (!cloudColumns.has('cleanup_revision'))
+    db.exec('ALTER TABLE cloud_drive_videos ADD COLUMN cleanup_revision INTEGER NOT NULL DEFAULT 0');
+  // SQLite cannot widen an existing CHECK constraint with ALTER TABLE. Keep
+  // the same table/IDs and rebuild it transactionally before accepting images.
+  // Existing video records, active OSS upload IDs and cleanup tombstones stay
+  // intact; the new table keeps the owner FK and both operational indexes.
+  const cloudSQL = db.prepare(`SELECT sql FROM sqlite_master
+    WHERE type='table' AND name='cloud_drive_videos'`).get()?.sql || '';
+  if (!cloudSQL.includes("'image/jpeg'")) {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE cloud_drive_videos_media (
+        id TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        object_key TEXT NOT NULL UNIQUE,
+        upload_id TEXT,
+        size_bytes INTEGER NOT NULL,
+        content_type TEXT NOT NULL CHECK(content_type IN
+          ('video/mp4','video/quicktime','image/jpeg','image/png','image/webp','image/heic')),
+        status TEXT NOT NULL CHECK(status IN ('uploading','completing','ready','deleted')),
+        created_at INTEGER NOT NULL,
+        upload_expires_at INTEGER NOT NULL,
+        ready_at INTEGER,
+        deleted_at INTEGER,
+        cleanup_pending INTEGER NOT NULL DEFAULT 0,
+        cleanup_after INTEGER,
+        cleanup_hold_until INTEGER,
+        cleanup_revision INTEGER NOT NULL DEFAULT 0,
+        last_part_signed_at INTEGER,
+        completion_started_at INTEGER
+      );
+      INSERT INTO cloud_drive_videos_media SELECT
+        id,owner_user_id,name,object_key,upload_id,size_bytes,content_type,
+        status,created_at,upload_expires_at,ready_at,deleted_at,
+        cleanup_pending,cleanup_after,cleanup_hold_until,cleanup_revision,
+        last_part_signed_at,completion_started_at
+      FROM cloud_drive_videos;
+      DROP TABLE cloud_drive_videos;
+      ALTER TABLE cloud_drive_videos_media RENAME TO cloud_drive_videos;
+      CREATE INDEX cloud_drive_videos_owner
+        ON cloud_drive_videos(owner_user_id,status,created_at DESC,id DESC);
+      CREATE INDEX cloud_drive_videos_cleanup
+        ON cloud_drive_videos(cleanup_pending,cleanup_after);`);
+    })();
+  }
   const phoneColumn = db.prepare('PRAGMA table_info(users)').all()
     .find(column => column.name === 'phone_e164');
   if (phoneColumn?.notnull) {

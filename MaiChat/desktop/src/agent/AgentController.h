@@ -77,7 +77,9 @@ public:
     std::function<QString()> arkApiKeyProvider;
     std::function<QPair<QString, QString>()> wanCredentialsProvider;
     std::function<QPair<QString, QString>()> mediaServiceAccessProvider;
-    QString modelName = QStringLiteral("glm-5.3");
+    QString modelName = QStringLiteral("deepseek-flash");
+    QString reasoningEffort = QStringLiteral("high");
+    std::function<QString()> reasoningEffortProvider;
     MaiWireApi wire = MaiWireApi::Responses;
     MaiApprovalPolicy approvalPolicy = MaiApprovalPolicy::OnRequest;
   };
@@ -114,6 +116,7 @@ public:
 
   QString createSession(const QString &directory,
                         const QString &title = QString());
+  bool setSessionDirectory(const QString &sessionId, const QString &directory);
   bool sendPrompt(const QString &sessionId, const QString &text);
   bool sendPrompt(const QString &sessionId, const QString &text,
                   const QStringList &imagePaths);
@@ -157,6 +160,9 @@ public:
   QString lastError() const;
 
 signals:
+  // 本地或远端入口落库了一条用户消息。界面按消息 ID 呈现，同一条只画一次。
+  void userMessageAdded(const QString &sessionId, const QString &messageId);
+
   // 模型说给用户听的话，一次一小段。**不带全量**，界面自己往后追加。
   void textDelta(const QString &sessionId, const QString &messageId,
                  const QString &partId, const QString &delta);
@@ -187,6 +193,7 @@ signals:
   void turnFailed(const QString &sessionId, const QString &message);
   // 会话标题变了（第一轮结束后会用用户那句话自动填上）。
   void sessionTitleChanged(const QString &sessionId, const QString &title);
+  void sessionStructureChanged();
 
 private:
   // 事件从核心的线程过来，经这个信号排队到主线程。私有：界面不该直接连它，

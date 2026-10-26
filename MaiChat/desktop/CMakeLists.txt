@@ -2,7 +2,7 @@
 # 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 2.2.12 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 2.2.26 LANGUAGES C CXX)
 if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
   # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
   # records no header dependencies, so changing a public header leaves stale objects.
@@ -344,6 +344,8 @@ elseif(WIN32)
   target_link_libraries(maichat_pdf_preview PRIVATE Qt5::Concurrent windowsapp)
 endif()
 
+add_subdirectory(../Network "${CMAKE_CURRENT_BINARY_DIR}/maichat_network" EXCLUDE_FROM_ALL)
+
 add_library(remote_im_core
   src/model/RemoteIMContact.h
   src/model/RemoteIMMessage.h
@@ -375,6 +377,9 @@ add_library(remote_im_core
   src/im/DynamicTimSdkApi.cpp
   src/im/TimSdkRemoteIMClient.h
   src/im/TimSdkRemoteIMClient.cpp
+  src/im/DesktopCurlAttachmentDownload.h
+  src/im/DesktopCurlAttachmentDownload.cpp
+  src/auth/AuthCertificates.qrc
   src/im/VideoFileMetadata.h
   src/im/VideoFileMetadata.cpp
   src/im/FakeRemoteIMClient.h
@@ -417,7 +422,9 @@ add_library(remote_im_core
   src/remote/TrtcNetworkProxyApi.h
 )
 target_include_directories(remote_im_core PUBLIC src)
-target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB PRIVATE mai_md4c)
+target_link_libraries(remote_im_core PUBLIC Qt5::Core Qt5::Network Qt5::Sql ZLIB::ZLIB
+  mai_curl_download
+  PRIVATE mai_md4c Qt5::Concurrent CURL::libcurl)
 if(APPLE)
   target_link_libraries(remote_im_core PRIVATE
     "-framework ApplicationServices"
@@ -445,7 +452,6 @@ add_library(remote_im_desktop_app
   src/auth/DesktopAuthClient.cpp
   src/auth/DesktopCurlAuthTransport.h
   src/auth/DesktopCurlAuthTransport.cpp
-  src/auth/AuthCertificates.qrc
   src/auth/SecureRefreshTokenStore.h
   src/auth/SecureRefreshTokenStore.cpp
   src/diagnostics/RemoteDiagnosticsController.h
@@ -488,6 +494,12 @@ add_library(remote_im_desktop_ui
   src/ui/LoginDialog.cpp
   src/ui/MainWindow.h
   src/ui/MainWindow.cpp
+  src/MaiChatTools/DesktopRemoteSessionTools.h
+  src/MaiChatTools/DesktopRemoteSessionTools.cpp
+  src/MaiChatTools/DesktopCloudDriveTools.h
+  src/MaiChatTools/DesktopCloudDriveTools.cpp
+  ../MaiChatTools/MaiCloudDriveTools.h
+  ../MaiChatTools/MaiCloudDriveTools.cpp
   src/ui/MessageImageLoader.h
   src/ui/MessageImageLoader.cpp
   src/ui/FilePreviewDialog.h
@@ -496,6 +508,10 @@ add_library(remote_im_desktop_ui
   src/ui/ImagePreviewDialog.cpp
   src/ui/VideoPreviewDialog.h
   src/ui/VideoPreviewDialog.cpp
+  src/ui/VideoCircleDialog.h
+  src/ui/VideoCircleDialog.cpp
+  src/ui/CloudDriveDialog.h
+  src/ui/CloudDriveDialog.cpp
   src/ui/DesktopCameraDialog.h
   src/ui/DesktopCameraDialog.cpp
   src/ui/DesktopMusicPlayerDialog.h
@@ -521,32 +537,40 @@ target_sources(remote_im_desktop_ui PRIVATE
   "${MAICHAT_QUIRC_DIR}/quirc.c"
   "${MAICHAT_QUIRC_DIR}/decode.c"
   "${MAICHAT_QUIRC_DIR}/version_db.c")
-target_include_directories(remote_im_desktop_ui PRIVATE "${MAICHAT_QUIRC_DIR}")
+target_include_directories(remote_im_desktop_ui PRIVATE "${MAICHAT_QUIRC_DIR}"
+  ../MaiChatTools ../../MaiAgent/third_party/nlohmann)
 target_include_directories(remote_im_desktop_ui PUBLIC src)
 target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_im_core
   maichat_agent Qt5::Widgets Qt5::Svg Qt5::Multimedia Qt5::MultimediaWidgets
   maichat_pdf_preview)
-if(WIN32)
-  target_link_libraries(remote_im_desktop_ui PRIVATE Qt5::Concurrent CURL::libcurl)
-endif()
+target_link_libraries(remote_im_desktop_ui PRIVATE Qt5::Concurrent CURL::libcurl)
+target_link_libraries(remote_im_desktop_ui PRIVATE mai_video_circle_client
+  mai_cloud_drive_client mai_curl_download)
 if(APPLE AND TARGET maiagent_embedded_fftools)
   target_sources(remote_im_desktop_ui PRIVATE
-    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp)
+    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp
+    ../Media/MaiVideoCircleMark.cpp)
   target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
   target_include_directories(remote_im_desktop_ui PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include")
+    "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/ffmpeg-runtime/install/include"
+    ../../MaiAgent/include ../../MaiAgent/third_party/ffmpeg/fftools)
   target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_embedded_fftools)
   target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_FFMPEG_IMAGE_DECODE=1)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_VIDEO_CIRCLE_MARK_AVAILABLE=1)
 endif()
 if(WIN32 AND TARGET maichat_ffmpeg_tools)
   target_sources(remote_im_desktop_ui PRIVATE
-    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp)
+    ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp
+    ../Media/MaiVideoCircleMark.cpp)
   target_include_directories(remote_im_desktop_ui PUBLIC ../Media)
   target_include_directories(remote_im_desktop_ui PRIVATE
-    "${MAICHAT_FFMPEG_BUILD_DIR}/install/include")
+    "${MAICHAT_FFMPEG_BUILD_DIR}/install/include"
+    ../../MaiAgent/include ../../MaiAgent/third_party/ffmpeg/fftools)
   target_link_libraries(remote_im_desktop_ui PRIVATE
+    maichat_ffmpeg_tools maichat_ffmpeg_avfilter
     maichat_ffmpeg_avformat maichat_ffmpeg_avcodec
     maichat_ffmpeg_swscale maichat_ffmpeg_avutil)
+  target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_VIDEO_CIRCLE_MARK_AVAILABLE=1)
   target_compile_definitions(remote_im_desktop_ui PRIVATE MAICHAT_FFMPEG_IMAGE_DECODE=1)
 endif()
 
@@ -554,6 +578,11 @@ if(APPLE AND TARGET maiagent_embedded_fftools)
   add_executable(MaiImageDecodeTest tests/MaiImageDecodeTest.cpp)
   target_link_libraries(MaiImageDecodeTest PRIVATE remote_im_desktop_ui Qt5::Gui)
   add_test(NAME MaiImageDecodeTest COMMAND MaiImageDecodeTest)
+  add_executable(MaiVideoCircleMarkTest tests/MaiVideoCircleMarkTest.cpp)
+  target_link_libraries(MaiVideoCircleMarkTest PRIVATE remote_im_desktop_ui Qt5::Core)
+  add_test(NAME MaiVideoCircleMarkTest COMMAND MaiVideoCircleMarkTest
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video-lifecycle.mp4"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video-circle-61s.mp4")
 endif()
 if(TARGET maiagent_obs_metal OR TARGET maiagent_obs_d3d11)
   target_link_libraries(remote_im_desktop_ui PRIVATE maiagent_graphics)
@@ -789,7 +818,7 @@ target_include_directories(maichat_agent PRIVATE ../Media
   ../../MaiAgent/third_party/openssl/include)
 target_compile_definitions(maichat_agent PRIVATE ASIO_STANDALONE _WEBSOCKETPP_CPP11_STRICT_)
 target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Network Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
-  maiagent maichat_markdown maichat_pdf_preview)
+  maiagent maichat_markdown maichat_pdf_preview mai_video_circle_client)
 target_link_libraries(maichat_agent PRIVATE ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY})
 if(WIN32)
   target_link_libraries(maichat_agent PRIVATE ws2_32 mswsock)
@@ -947,6 +976,57 @@ target_compile_definitions(agent_panel_session_test PRIVATE
 # UiZoom 在 remote_im_desktop_ui 里，而 AgentChatPanel 用它做缩放，所以要一起链。
 target_link_libraries(agent_panel_session_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_executable(video_circle_dialog_test tests/VideoCircleDialogTest.cpp)
+target_compile_definitions(video_circle_dialog_test PRIVATE
+  MAICHAT_VIDEO_CIRCLE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video-lifecycle.mp4")
+target_link_libraries(video_circle_dialog_test PRIVATE remote_im_desktop_ui
+  remote_im_desktop_app remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
+add_test(NAME video_circle_dialog_local_tls COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../Network/tests/run_video_circle_local_tls.py"
+  "$<TARGET_FILE:video_circle_dialog_test>")
+set_tests_properties(video_circle_dialog_local_tls PROPERTIES
+  ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+add_executable(cloud_drive_dialog_test tests/CloudDriveDialogTest.cpp)
+target_link_libraries(cloud_drive_dialog_test PRIVATE remote_im_desktop_ui
+  remote_im_desktop_app remote_im_core maichat_agent maichat_markdown Qt5::Widgets)
+add_test(NAME cloud_drive_dialog_local_tls COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_cloud_drive_dialog_local_tls.py"
+  "$<TARGET_FILE:cloud_drive_dialog_test>"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video-lifecycle.mp4")
+set_tests_properties(cloud_drive_dialog_local_tls PROPERTIES
+  ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+# Explicit opt-in real-account test. It uses a disposable account and its own
+# Qt test-mode paths; CTest never invokes it against production. Its credential
+# file ownership/mode checks use POSIX lstat/geteuid and cannot compile on MSVC.
+if(UNIX)
+  add_executable(cloud_drive_dialog_live_test tests/CloudDriveDialogLiveTest.cpp)
+  target_link_libraries(cloud_drive_dialog_live_test PRIVATE remote_im_desktop_ui
+    remote_im_desktop_app remote_im_core maichat_agent maichat_markdown Qt5::Widgets)
+endif()
+
+add_executable(cloud_drive_agent_tools_test
+  ../MaiChatTools/tests/MaiCloudDriveToolsTest.cpp
+  ../MaiChatTools/MaiCloudDriveTools.cpp)
+target_include_directories(cloud_drive_agent_tools_test PRIVATE
+  ../MaiChatTools ../Network ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
+target_link_libraries(cloud_drive_agent_tools_test PRIVATE maiagent mai_cloud_drive_client)
+add_test(NAME cloud_drive_agent_tools COMMAND cloud_drive_agent_tools_test)
+
+add_executable(cloud_drive_agent_tools_integration_test
+  tests/CloudDriveAgentToolsIntegrationTest.cpp)
+target_link_libraries(cloud_drive_agent_tools_integration_test PRIVATE
+  remote_im_desktop_ui remote_im_desktop_app remote_im_core maichat_agent
+  Qt5::Widgets)
+add_test(NAME cloud_drive_agent_tools_local_tls COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_cloud_drive_dialog_local_tls.py"
+  "$<TARGET_FILE:cloud_drive_agent_tools_integration_test>"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/video-lifecycle.mp4")
+set_tests_properties(cloud_drive_agent_tools_local_tls PROPERTIES
+  ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
 add_executable(desktop_music_player_dialog_test tests/DesktopMusicPlayerDialogTest.cpp)
 target_include_directories(desktop_music_player_dialog_test PRIVATE ../Media/FfplayCompat)
@@ -1201,7 +1281,10 @@ target_compile_definitions(remote_diagnostics_controller_test PRIVATE
   MAICHAT_DIAGNOSTICS_REPORT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/remote-diagnostics-report.json")
 
 add_executable(attachment_download_evidence_test tests/AttachmentDownloadEvidenceTest.cpp)
-target_link_libraries(attachment_download_evidence_test PRIVATE remote_im_core Qt5::Network Qt5::Test)
+target_include_directories(attachment_download_evidence_test PRIVATE
+  ${OPENSSL_INCLUDE_DIR} ../../MaiAgent/third_party/openssl/include)
+target_link_libraries(attachment_download_evidence_test PRIVATE
+  remote_im_core Qt5::Network Qt5::Test ${OPENSSL_CRYPTO_LIBRARY})
 
 add_executable(remote_diagnostics_ui_test tests/RemoteDiagnosticsUiTest.cpp)
 target_link_libraries(remote_diagnostics_ui_test PRIVATE remote_im_desktop_ui remote_im_desktop_app Qt5::Widgets Qt5::Test)

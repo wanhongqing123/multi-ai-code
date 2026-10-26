@@ -14,6 +14,8 @@ class QImage;
 class QLabel;
 class QMimeData;
 enum class MaiApprovalPolicy;
+struct MaiMessage;
+struct MaiSession;
 
 // AI 助手的聊天页。
 //
@@ -57,7 +59,12 @@ public:
     void openSession(const QString& sessionId = QString());
     void setDefaultWorkspaceDirectory(const QString& directory);
 
-    // 在用户选定的工作目录新建会话；不改变已有会话的目录边界。
+    // 显式新建会话时先让用户挑工作目录；取消选择不改变当前会话。
+    // 返回是否真正创建成功，供远端会话页面决定是否切回本机面板。
+    bool chooseDirectoryAndCreateSession();
+    void openNewSessionInDirectory(const QString& directory);
+
+    // 更换当前会话的工作目录；没有打开会话时在选定目录新建。
     void openSessionInDirectory(const QString& directory);
 
     // 上下文条上显示哪个模型。
@@ -66,11 +73,14 @@ public:
     //（那表示「用 MaiAgent::Options 里的默认值」），而面板看不见那个默认值。
     // 自己编一个名字显示出去，用户看到的就可能不是实际在跑的那个。
     void setModelLabel(const QString& model, bool configured = true);
+    void setReasoningEffortLabel(const QString& effort);
     // 账号凭据确认可用后，原位更新当前会话模型；不重建消息、编辑器或滚动视图。
     bool applySelectedModel(const QString& model);
     void setOpenVideoCallback(std::function<void(const QString&, const QStringList&)> callback);
     void setForwardMediaCallback(
         std::function<void(const QString&, const QString&)> callback);
+    void setVideoCircleAvailable(bool available);
+    void setCloudDriveAvailable(bool available);
 
     QString sessionId() const;
 
@@ -80,8 +90,14 @@ signals:
     void sessionListChanged();
     void modelConfigurationRequested();
     void modelChangeRequested(const QString& model);
+    void reasoningEffortChangeRequested(const QString& effort);
+    void videoCircleRequested();
+    void videoCirclePublishRequested(const QString& completedCardJson,
+                                     const QString& sourcePath);
+    void cloudDriveSaveRequested(const QString& sourcePath);
 
 private:
+    void createSessionInDirectory(const QString& directory);
     // 这两个是这个面板专用的部件，别处用不上，所以做成嵌套私有类、定义在 .cpp 里。
     // 它们要能点（展开、授权），画不出来，所以嵌进 MarkdownView 里当部件用。
     class ThinkingLine;
@@ -92,6 +108,7 @@ private:
     // 把整个对话从存储里重画一遍。用在打开会话和清空之后——
     // 流式期间**不要**调它，那会把正在长的正文整个换掉，界面会闪。
     void reloadFromStore();
+    void appendStoredUserMessage(const MaiMessage& message, const MaiSession& session);
 
     // 这条事件是不是当前这个会话的。
     //

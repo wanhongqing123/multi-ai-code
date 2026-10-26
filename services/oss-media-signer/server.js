@@ -4,6 +4,8 @@ const http = require('node:http');
 const { handler } = require('./index');
 
 const MAX_REQUEST_BYTES = 4096;
+// Completing a 2 GB multipart upload sends at most 239 authoritative OSS ETags.
+const MAX_CLOUD_COMPLETE_BYTES = 32768;
 
 function createServer(handle = handler) {
   return http.createServer(async (request, response) => {
@@ -12,7 +14,9 @@ function createServer(handle = handler) {
     try {
       for await (const chunk of request) {
         totalBytes += chunk.length;
-        if (totalBytes > MAX_REQUEST_BYTES) {
+        const limit = request.url === '/cloud-drive/complete' ?
+          MAX_CLOUD_COMPLETE_BYTES : MAX_REQUEST_BYTES;
+        if (totalBytes > limit) {
           response.writeHead(413, { 'Content-Type': 'application/json',
             'Cache-Control': 'no-store' });
           response.end(JSON.stringify({ error: 'Request is too large' }));

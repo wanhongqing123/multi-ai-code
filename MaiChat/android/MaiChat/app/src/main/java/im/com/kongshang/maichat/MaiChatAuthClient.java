@@ -163,6 +163,28 @@ public final class MaiChatAuthClient {
         }
     }
 
+    public static final class VideoCircleAccess {
+        public final String authBaseUrl;
+        public final String mediaBaseUrl;
+        public final String accountToken;
+
+        VideoCircleAccess(String authBaseUrl, String mediaBaseUrl, String accountToken) {
+            this.authBaseUrl = authBaseUrl;
+            this.mediaBaseUrl = mediaBaseUrl;
+            this.accountToken = accountToken;
+        }
+    }
+
+    public static final class CloudDriveAccess {
+        public final String authBaseUrl;
+        public final String accountToken;
+
+        CloudDriveAccess(String authBaseUrl, String accountToken) {
+            this.authBaseUrl = authBaseUrl;
+            this.accountToken = accountToken;
+        }
+    }
+
     public static final class DesktopRequestInfo {
         public final String platform;
         public final String displayCode;
@@ -543,6 +565,26 @@ public final class MaiChatAuthClient {
         String token = currentAccessToken();
         String baseUrl = new URL(new URL(BASE_URL), "/maichat").toString();
         return new MediaServiceAccess(baseUrl, token);
+    }
+
+    public synchronized VideoCircleAccess videoCircleAccess() throws Exception {
+        if (!hasSession()) return null;
+        String token = currentAccessToken();
+        if (BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
+            (Build.FINGERPRINT.contains("sdk_gphone") || Build.FINGERPRINT.contains("generic")))
+            return new VideoCircleAccess("https://localhost:18444",
+                "https://localhost:18444", token);
+        return new VideoCircleAccess("https://ichat.life/api",
+            "https://ichat.life/maichat", token);
+    }
+
+    public synchronized CloudDriveAccess cloudDriveAccess() throws Exception {
+        if (!hasSession()) return null;
+        String token = currentAccessToken();
+        if (BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
+            (Build.FINGERPRINT.contains("sdk_gphone") || Build.FINGERPRINT.contains("generic")))
+            return new CloudDriveAccess("https://localhost:18444", token);
+        return new CloudDriveAccess("https://ichat.life/api", token);
     }
 
     private static boolean validModelKey(String key) {

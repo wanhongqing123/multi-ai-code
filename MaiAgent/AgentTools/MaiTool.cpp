@@ -14,6 +14,7 @@
 #include "MaiSystemResourcesTool.h"
 #include "MaiNetworkIpTool.h"
 #include "MaiQuestionTool.h"
+#include "MaiSessionTools.h"
 #include "MaiScreenshot.h"
 #include "MaiScreenshotTool.h"
 #include "MaiShellTool.h"
@@ -202,6 +203,7 @@ void registerMaiBuiltinTools(MaiToolRegistry& registry) {
     registry.add(makeMaiOpenSslCertificateTool());
 #endif
     registry.add(makeMaiQuestionTool());
+    registerMaiSessionTools(registry);
     registry.add(makeMaiSpawnAgentTool());
     registry.add(makeMaiWaitAgentTool());
     registry.add(makeMaiSendInputTool());

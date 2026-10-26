@@ -462,10 +462,15 @@ private struct RemoteIMImageEncodingInput: @unchecked Sendable {
 
 struct ChatView: View {
     @Binding var activeContact: RemoteIMContact?
+    @Binding var activeGroup: RemoteIMGroup?
     let showRemoteDesktop: () -> Void
+    let showCreateGroup: () -> Void
+    let showAddContact: () -> Void
+    let showScanQRCode: () -> Void
     let bottomBar: AnyView
     @State private var searchTargetMessageID: UUID?
     @State private var preparedContactID: String?
+    @State private var isMessageActionsOpen = false
     @StateObject private var landscapeArrival = ChatNavigationArrival()
     @EnvironmentObject private var appState: RemoteIMAppState
 
@@ -486,7 +491,8 @@ struct ChatView: View {
                         VStack(spacing: 10) {
                             Image(systemName: "bubble.left.and.bubble.right")
                                 .font(.system(size: 32))
-                            Text(activeContact == nil ? "选择一个对话" : "正在加载消息")
+                            Text(activeContact == nil && activeGroup == nil
+                                 ? "选择一个对话" : "正在加载消息")
                                 .font(.subheadline)
                         }
                         .foregroundStyle(RemoteIMStyle.textSecondary)
@@ -498,12 +504,18 @@ struct ChatView: View {
                 ChatNavigationHost(
                     root: AnyView(conversationRoot),
                     detail: detail,
-                    selectionID: canPresentContact ? activeContact?.userID : nil,
-                    onPop: { activeContact = nil }
+                    selectionID: (canPresentGroup ? activeGroup.map { "group:\($0.groupID)" } : nil)
+                        ?? (canPresentContact ? activeContact?.userID : nil),
+                    onPop: {
+                        activeContact = nil
+                        activeGroup = nil
+                    }
                 )
             }
         }
-        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        // The system status area belongs to the navigation header on both pages.
+        // Keep its white canvas stable while the detail owns only its content area.
+        .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
         .task(id: activeContact?.userID) {
             guard let contact = activeContact else {
                 preparedContactID = nil
@@ -515,20 +527,64 @@ struct ChatView: View {
             guard !Task.isCancelled, activeContact?.userID == contact.userID else { return }
             preparedContactID = contact.userID
         }
+        .onChange(of: appState.groups.map(\.groupID)) { joinedGroupIDs in
+            guard let activeGroup,
+                  !joinedGroupIDs.contains(activeGroup.groupID) else { return }
+            self.activeGroup = nil
+        }
+        .onChange(of: appState.chatState.ownerUserID) { _ in
+            activeGroup = nil
+        }
     }
 
     private var conversationRoot: some View {
-        VStack(spacing: 0) {
-            HeaderView()
-            ConversationListView(
-                activeContact: $activeContact,
-                searchTargetMessageID: $searchTargetMessageID
-            )
-            // 竖屏返回时页签随会话列表一同出现；横屏则留在左栏底部。
-            bottomBar
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                HeaderView(isActionsOpen: $isMessageActionsOpen)
+                ConversationListView(
+                    activeContact: $activeContact,
+                    activeGroup: $activeGroup,
+                    searchTargetMessageID: $searchTargetMessageID
+                )
+                // 竖屏返回时页签随会话列表一同出现；横屏则留在左栏底部。
+                bottomBar
+            }
+
+            if isMessageActionsOpen {
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .ignoresSafeArea()
+                    .onTapGesture { closeMessageActions() }
+                    .accessibilityLabel("关闭消息菜单")
+
+                MessageActionsPopover(
+                    createGroup: {
+                        closeMessageActions()
+                        showCreateGroup()
+                    },
+                    addFriend: {
+                        closeMessageActions()
+                        showAddContact()
+                    },
+                    scanFriend: {
+                        closeMessageActions()
+                        showScanQRCode()
+                    }
+                )
+                .padding(.top, 58)
+                .padding(.trailing, 16)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
+                .zIndex(1)
+            }
         }
-        .background(RemoteIMStyle.pageBackground)
+        .background(RemoteIMStyle.panelBackground)
         .environmentObject(appState)
+    }
+
+    private func closeMessageActions() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            isMessageActionsOpen = false
+        }
     }
 
     private var canPresentContact: Bool {
@@ -537,7 +593,16 @@ struct ChatView: View {
             !appState.isLoadingInitialMessages(with: contact.userID)
     }
 
+    private var canPresentGroup: Bool {
+        guard let activeGroup else { return false }
+        return appState.groups.contains(where: { $0.groupID == activeGroup.groupID })
+    }
+
     private var detail: AnyView? {
+        if let activeGroup, canPresentGroup {
+            return AnyView(GroupChatDetailView(group: activeGroup, activeGroup: $activeGroup)
+                .environmentObject(appState))
+        }
         guard let activeContact, canPresentContact else { return nil }
         return AnyView(ChatDetailView(
             contact: activeContact,
@@ -549,8 +614,97 @@ struct ChatView: View {
 }
 
 #if targetEnvironment(simulator)
+@MainActor
+struct GroupChatUITestRoot: View {
+    @StateObject private var appState: RemoteIMAppState
+
+    init() {
+        let state = RemoteIMAppState(loadedSettings: StoredRemoteIMSettings(
+            sdkAppID: nil, masterUserID: "sim-group-owner",
+            contacts: [], reconnectOnLaunch: false
+        ))
+        state.configureGroupUITestFixture()
+        _appState = StateObject(wrappedValue: state)
+    }
+
+    var body: some View {
+        RootView()
+            .environmentObject(appState)
+            .overlay(alignment: .topLeading) {
+                VStack(spacing: 5) {
+                    Button("退群") {
+                        guard let groupID = appState.selectedGroupID ?? appState.groups.first?.groupID
+                        else { return }
+                        appState.dropGroupForUITest(groupID: groupID)
+                    }
+                    .accessibilityIdentifier("fixture-drop-group")
+                    Button("切号") { appState.switchOwnerForUITest() }
+                        .accessibilityIdentifier("fixture-switch-owner")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .padding(6)
+                .background(Color.yellow.opacity(0.9),
+                            in: RoundedRectangle(cornerRadius: 8))
+                .padding(.leading, 4)
+                .padding(.top, 100)
+            }
+    }
+}
+
+struct ChatAddFriendMenuUITestRoot: View {
+    @State private var activeContact: RemoteIMContact?
+    @State private var activeGroup: RemoteIMGroup?
+    @State private var isShowingAddContact = false
+    @State private var isShowingQRScanner = false
+    @State private var pendingScannedFriendID: String?
+    @StateObject private var appState = RemoteIMAppState(
+        loadedSettings: StoredRemoteIMSettings(
+            sdkAppID: nil, masterUserID: "im-add-friend-menu-test",
+            contacts: [], reconnectOnLaunch: false
+        )
+    )
+
+    var body: some View {
+        ZStack {
+            ChatView(
+                activeContact: $activeContact,
+                activeGroup: $activeGroup,
+                showRemoteDesktop: {},
+                showCreateGroup: {},
+                showAddContact: {
+                    appState.newContactUserID = ""
+                    isShowingAddContact = true
+                },
+                showScanQRCode: {
+                    isShowingQRScanner = true
+                },
+                bottomBar: AnyView(Text("消息页签").frame(height: 48))
+            )
+
+            if isShowingAddContact {
+                AddContactDialog(isPresented: $isShowingAddContact)
+                    .zIndex(10)
+            }
+        }
+        .environmentObject(appState)
+        .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
+        .sheet(isPresented: $isShowingQRScanner, onDismiss: {
+            guard let pendingScannedFriendID else { return }
+            appState.newContactUserID = pendingScannedFriendID
+            self.pendingScannedFriendID = nil
+            isShowingAddContact = true
+        }) {
+            MaiChatQRScanSheet { userID in
+                pendingScannedFriendID = userID
+                isShowingQRScanner = false
+            }
+        }
+    }
+}
+
 struct ChatLandscapeUITestRoot: View {
     @State private var activeContact: RemoteIMContact?
+    @State private var activeGroup: RemoteIMGroup?
     @State private var installedLargeHistory = false
     @StateObject private var appState = RemoteIMAppState(
         loadedSettings: StoredRemoteIMSettings(
@@ -561,7 +715,10 @@ struct ChatLandscapeUITestRoot: View {
     )
 
     var body: some View {
-        ChatView(activeContact: $activeContact, showRemoteDesktop: {},
+        ChatView(activeContact: $activeContact, activeGroup: $activeGroup,
+                 showRemoteDesktop: {}, showCreateGroup: {},
+                 showAddContact: {},
+                 showScanQRCode: {},
                  bottomBar: AnyView(Text("消息页签").frame(height: 48)))
             .environmentObject(appState)
             .onAppear {
@@ -794,18 +951,301 @@ struct RemoteIMPresenceBadge: View {
 
 private struct HeaderView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @Binding var isActionsOpen: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Spacer(minLength: 0)
+        ZStack {
+            Text("消息")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(RemoteIMStyle.textPrimary)
 
-            StatusPill(state: appState.connectionState)
+            HStack(spacing: 14) {
+                Spacer(minLength: 0)
+                StatusPill(state: appState.connectionState)
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        isActionsOpen.toggle()
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("消息更多操作")
+                .accessibilityValue(isActionsOpen ? "已展开" : "已收起")
+                .accessibilityIdentifier("im-message-actions")
+            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .frame(height: 54)
         .background(RemoteIMStyle.panelBackground)
         .overlay(alignment: .bottom) {
             Divider().background(RemoteIMStyle.border)
+        }
+    }
+}
+
+private struct MessageActionsPopover: View {
+    let createGroup: () -> Void
+    let addFriend: () -> Void
+    let scanFriend: () -> Void
+    private let background = Color(red: 0.29, green: 0.29, blue: 0.29)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            row("发起群聊", symbol: "bubble.left.and.bubble.right", action: createGroup)
+                .accessibilityIdentifier("im-create-group-menu-item")
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(height: 0.5)
+                .padding(.leading, 47)
+            row("添加朋友", symbol: "person.badge.plus", action: addFriend)
+                .accessibilityIdentifier("im-add-friend-menu-item")
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(height: 0.5)
+                .padding(.leading, 47)
+            row("扫一扫", symbol: "qrcode.viewfinder", action: scanFriend)
+                .accessibilityIdentifier("im-scan-friend-menu-item")
+        }
+        .frame(width: 170)
+        .background(background, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .topTrailing) {
+            MessageMenuArrow()
+                .fill(background)
+                .frame(width: 14, height: 8)
+                .offset(x: -20, y: -7)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+        .accessibilityIdentifier("im-message-actions-popover")
+    }
+
+    private func row(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 23)
+                Text(title)
+                    .font(.system(size: 16))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 15)
+            .frame(height: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct MessageMenuArrow: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.closeSubpath()
+        }
+    }
+}
+
+struct GroupCreationView: View {
+    let friends: [RemoteIMContact]
+    let recoveryGroup: RemoteIMGroup?
+    let refreshFriends: () async -> Void
+    let create: (String, [String]) async -> Bool
+    let addFriend: () -> Void
+    let openRecoveredGroup: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var groupName = ""
+    @State private var selectedMemberIDs = Set<String>()
+    @State private var isCreating = false
+    @State private var creationError: String?
+
+    private var availableFriends: [RemoteIMContact] {
+        friends.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private var canCreate: Bool {
+        !groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !selectedMemberIDs.isEmpty && !isCreating && recoveryGroup == nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text("群聊名称")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(RemoteIMStyle.textPrimary)
+                            TextField("给群聊起个名字", text: $groupName)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .padding(.horizontal, 14)
+                                .frame(height: 48)
+                                .background(RemoteIMStyle.panelBackground,
+                                            in: RoundedRectangle(cornerRadius: 11))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 11)
+                                        .stroke(RemoteIMStyle.border, lineWidth: 1)
+                                }
+                                .accessibilityIdentifier("im-group-name")
+                                .onChange(of: groupName) { value in
+                                    if value.count > 30 { groupName = String(value.prefix(30)) }
+                                }
+                            Text("最多 30 个字")
+                                .font(.system(size: 12))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 11) {
+                            HStack {
+                                Text("邀请好友")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                                Spacer()
+                                Text("已选 \(selectedMemberIDs.count) 人")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                            }
+
+                            if availableFriends.isEmpty {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("还没有可以邀请的好友")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                                    Button("添加朋友", action: addFriend)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .accessibilityIdentifier("im-group-add-friend")
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(18)
+                                .background(RemoteIMStyle.panelBackground,
+                                            in: RoundedRectangle(cornerRadius: 12))
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(availableFriends) { friend in
+                                        Button {
+                                            if selectedMemberIDs.contains(friend.userID) {
+                                                selectedMemberIDs.remove(friend.userID)
+                                            } else if selectedMemberIDs.count < 19 {
+                                                selectedMemberIDs.insert(friend.userID)
+                                            } else {
+                                                creationError = "最多邀请 19 位好友"
+                                                return
+                                            }
+                                            creationError = nil
+                                        } label: {
+                                            HStack(spacing: 12) {
+                                                RemoteIMContactAvatar(
+                                                    contact: friend, isSelected: false,
+                                                    presenceStatus: .unknown, size: 38)
+                                                Text(friend.displayName)
+                                                    .font(.system(size: 15, weight: .medium))
+                                                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                                                    .lineLimit(1)
+                                                Spacer()
+                                                Image(systemName: selectedMemberIDs.contains(friend.userID)
+                                                      ? "checkmark.circle.fill" : "circle")
+                                                    .font(.system(size: 22))
+                                                    .foregroundStyle(selectedMemberIDs.contains(friend.userID)
+                                                                     ? RemoteIMStyle.blue
+                                                                     : RemoteIMStyle.textSecondary)
+                                            }
+                                            .frame(height: 58)
+                                            .padding(.horizontal, 14)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityIdentifier("im-group-member-\(friend.userID)")
+                                        if friend.id != availableFriends.last?.id {
+                                            Divider().padding(.leading, 64)
+                                        }
+                                    }
+                                }
+                                .background(RemoteIMStyle.panelBackground,
+                                            in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            Text("最多邀请 19 位好友，含你共 20 人")
+                                .font(.system(size: 12))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                        }
+                    }
+                    .padding(20)
+                }
+
+                if recoveryGroup != nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("群聊已创建，成员通知尚未送达")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("请打开已创建的群聊发送一条消息。重复创建会产生另一个群聊。")
+                            .font(.system(size: 13))
+                        Button("打开已创建群聊", action: openRecoveredGroup)
+                            .font(.system(size: 14, weight: .semibold))
+                            .accessibilityIdentifier("im-group-open-recovered")
+                    }
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(RemoteIMStyle.blueSoft,
+                                in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                } else if let creationError {
+                    Text(creationError)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                }
+                Button(action: createGroup) {
+                    HStack(spacing: 8) {
+                        if isCreating { ProgressView().tint(.white) }
+                        Text(isCreating ? "创建中" : "创建群聊")
+                    }
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(canCreate ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary,
+                                in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(!canCreate)
+                .accessibilityIdentifier("im-group-create")
+                .padding(20)
+            }
+            .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+            .navigationTitle("发起群聊")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+            }
+            .task { await refreshFriends() }
+        }
+    }
+
+    private func createGroup() {
+        guard canCreate else { return }
+        isCreating = true
+        creationError = nil
+        let name = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let members = selectedMemberIDs.sorted()
+        Task {
+            let created = await create(name, members)
+            isCreating = false
+            if created { dismiss() }
+            else { creationError = "创建失败，请检查连接后重试" }
         }
     }
 }
@@ -857,9 +1297,22 @@ private struct StatusPill: View {
     }
 }
 
+private enum ConversationListItem: Identifiable {
+    case contact(RemoteIMContact)
+    case group(RemoteIMGroup)
+
+    var id: String {
+        switch self {
+        case let .contact(contact): return "contact:\(contact.userID)"
+        case let .group(group): return "group:\(group.groupID)"
+        }
+    }
+}
+
 private struct ConversationListView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var activeContact: RemoteIMContact?
+    @Binding var activeGroup: RemoteIMGroup?
     @Binding var searchTargetMessageID: UUID?
     @State private var pendingClearHistoryContact: RemoteIMContact?
 
@@ -867,15 +1320,18 @@ private struct ConversationListView: View {
         ZStack {
             VStack(spacing: 0) {
                 List {
-                    if sortedContacts.isEmpty {
+                    if sortedConversations.isEmpty {
                         EmptyConversationListView()
                             .padding(.top, 96)
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                             .listRowBackground(RemoteIMStyle.panelBackground)
                     } else {
-                        ForEach(sortedContacts) { contact in
-                            conversationButton(contact)
+                        ForEach(sortedConversations) { item in
+                            switch item {
+                            case let .contact(contact): conversationButton(contact)
+                            case let .group(group): groupConversationButton(group)
+                            }
                         }
                     }
                 }
@@ -911,6 +1367,7 @@ private struct ConversationListView: View {
         Button {
             searchTargetMessageID = nil
             appState.selectContact(contact)
+            activeGroup = nil
             activeContact = contact
         } label: {
             ConversationRow(
@@ -936,18 +1393,324 @@ private struct ConversationListView: View {
         }
     }
 
-    private var sortedContacts: [RemoteIMContact] {
-        return appState.chatState.contacts
-            .sorted { left, right in
-                let leftDate = appState.chatState.latestMessage(with: left.userID)?.createdAt ?? .distantPast
-                let rightDate = appState.chatState.latestMessage(with: right.userID)?.createdAt ?? .distantPast
-                if leftDate == rightDate {
-                    return left.displayName.localizedStandardCompare(right.displayName) == .orderedAscending
-                }
-                return leftDate > rightDate
-            }
+    private func groupConversationButton(_ group: RemoteIMGroup) -> some View {
+        Button {
+            searchTargetMessageID = nil
+            activeContact = nil
+            appState.selectGroup(groupID: group.groupID)
+            activeGroup = group
+        } label: {
+            GroupConversationRow(
+                group: group,
+                latestMessage: appState.chatState.latestMessage(inGroup: group.groupID),
+                unreadCount: appState.unreadCountByGroupID[group.groupID] ?? 0
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("im-group-conversation-\(group.groupID)")
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(RemoteIMStyle.panelBackground)
     }
 
+    private var sortedConversations: [ConversationListItem] {
+        let items = appState.chatState.contacts.map(ConversationListItem.contact)
+            + appState.groups.map(ConversationListItem.group)
+        var dates: [String: Date] = [:]
+        for contact in appState.chatState.contacts {
+            dates["contact:\(contact.userID)"] =
+                appState.chatState.latestMessage(with: contact.userID)?.createdAt ?? .distantPast
+        }
+        for group in appState.groups {
+            dates["group:\(group.groupID)"] =
+                appState.chatState.latestMessage(inGroup: group.groupID)?.createdAt ?? .distantPast
+        }
+        return items.sorted { left, right in
+            let leftDate = dates[left.id] ?? .distantPast
+            let rightDate = dates[right.id] ?? .distantPast
+            return leftDate == rightDate ? left.id < right.id : leftDate > rightDate
+        }
+    }
+
+}
+
+private struct GroupConversationRow: View {
+    let group: RemoteIMGroup
+    let latestMessage: RemoteIMMessage?
+    let unreadCount: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.3.fill")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(RemoteIMStyle.blue)
+                .frame(width: 42, height: 42)
+                .background(RemoteIMStyle.blueSoft,
+                            in: RoundedRectangle(cornerRadius: 11))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(group.name)
+                        .font(ChatTypography.conversationTitle)
+                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .lineLimit(1)
+                    Text("\(group.memberCount)")
+                        .font(ChatTypography.conversationPreview)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                    Spacer(minLength: 8)
+                    if let latestMessage {
+                        Text(RemoteIMTimestampTextPolicy.displayText(for: latestMessage.createdAt))
+                            .font(ChatTypography.conversationTime)
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Text(latestMessage?.text ?? "暂无消息")
+                        .font(ChatTypography.conversationPreview)
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if unreadCount > 0 { RemoteIMUnreadBadge(count: unreadCount) }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 72)
+        .background(RemoteIMStyle.panelBackground)
+    }
+}
+
+private struct GroupChatDetailView: View {
+    let group: RemoteIMGroup
+    @Binding var activeGroup: RemoteIMGroup?
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var draft = ""
+    @State private var isSending = false
+    @State private var isLoadingEarlier = false
+    @State private var followsLatest = true
+
+    private var messages: [RemoteIMMessage] {
+        appState.groupMessages(groupID: group.groupID)
+    }
+
+    private var currentGroup: RemoteIMGroup {
+        appState.groups.first(where: { $0.groupID == group.groupID }) ?? group
+    }
+
+    private var canSend: Bool {
+        !isSending && appState.connectionState == .connected &&
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 14) {
+                        if appState.hasEarlierGroupMessages(groupID: group.groupID) {
+                            Button {
+                                let anchor = messages.first?.id
+                                isLoadingEarlier = true
+                                followsLatest = false
+                                Task {
+                                    await appState.loadEarlierGroupMessages(groupID: group.groupID)
+                                    isLoadingEarlier = false
+                                    if let anchor {
+                                        proxy.scrollTo(anchor, anchor: .top)
+                                    }
+                                }
+                            } label: {
+                                if isLoadingEarlier { ProgressView() }
+                                else { Text("加载更早消息") }
+                            }
+                            .font(.system(size: 13, weight: .medium))
+                            .disabled(isLoadingEarlier)
+                            .accessibilityIdentifier("im-group-load-earlier")
+                        }
+
+                        if messages.isEmpty {
+                            Text("群聊已创建，发条消息开始聊天吧")
+                                .font(.system(size: 14))
+                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 88)
+                        } else {
+                            ForEach(messages) { message in
+                                GroupChatMessageRow(
+                                    message: message,
+                                    senderName: appState.profile(for: message.fromUserID).displayName
+                                )
+                                .id(message.id)
+                            }
+                        }
+                        Color.clear.frame(height: 1).id("group-chat-bottom")
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 18)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in
+                    followsLatest = false
+                })
+                .background(RemoteIMStyle.pageBackground)
+                .overlay(alignment: .bottomTrailing) {
+                    if !followsLatest && !messages.isEmpty {
+                        Button {
+                            followsLatest = true
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo("group-chat-bottom", anchor: .bottom)
+                            }
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(RemoteIMStyle.blue)
+                                .frame(width: 42, height: 42)
+                                .background(.white, in: Circle())
+                        }
+                        .accessibilityLabel("回到最新群消息")
+                        .padding(14)
+                    }
+                }
+                .onAppear {
+                    DispatchQueue.main.async {
+                        proxy.scrollTo("group-chat-bottom", anchor: .bottom)
+                    }
+                }
+                .onChange(of: messages.last?.id) { _ in
+                    guard followsLatest else { return }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo("group-chat-bottom", anchor: .bottom)
+                    }
+                }
+            }
+            composer
+        }
+        .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
+        .onAppear {
+            if appState.selectedGroupID != group.groupID {
+                appState.selectGroup(groupID: group.groupID)
+            }
+            appState.setGroupConversationVisible(groupID: group.groupID, visible: true)
+        }
+        .onDisappear {
+            appState.setGroupConversationVisible(groupID: group.groupID, visible: false)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Button { activeGroup = nil } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("返回会话列表")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(currentGroup.name)
+                    .font(.system(size: 18, weight: .bold))
+                    .lineLimit(1)
+                Text("\(currentGroup.memberCount) 位成员")
+                    .font(.system(size: 12))
+                    .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+            Spacer()
+        }
+        .foregroundStyle(RemoteIMStyle.textPrimary)
+        .padding(.horizontal, 10)
+        .frame(height: 58)
+        .background(RemoteIMStyle.panelBackground)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityIdentifier("im-group-header")
+    }
+
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("发送文字消息", text: $draft, axis: .vertical)
+                .lineLimit(1...4)
+                .font(.system(size: 16))
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+                .background(RemoteIMStyle.pageBackground,
+                            in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("im-group-draft")
+                .onSubmit(send)
+            Button(action: send) {
+                if isSending { ProgressView().tint(.white) }
+                else {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 42, height: 42)
+            .background(canSend ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary,
+                        in: Circle())
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .accessibilityLabel("发送群消息")
+            .accessibilityIdentifier("im-group-send")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(RemoteIMStyle.panelBackground)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private func send() {
+        guard canSend else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        isSending = true
+        Task {
+            let sent = await appState.sendGroupText(text, to: group.groupID)
+            isSending = false
+            if sent, draft.trimmingCharacters(in: .whitespacesAndNewlines) == text {
+                draft = ""
+                followsLatest = true
+            }
+        }
+    }
+}
+
+private struct GroupChatMessageRow: View {
+    let message: RemoteIMMessage
+    let senderName: String
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            if message.direction == .outgoing { Spacer(minLength: 46) }
+            VStack(alignment: message.direction == .outgoing ? .trailing : .leading,
+                   spacing: 5) {
+                if message.direction == .incoming {
+                    Text(senderName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(RemoteIMStyle.textSecondary)
+                        .lineLimit(1)
+                }
+                Text(message.text)
+                    .font(.system(size: 15))
+                    .foregroundStyle(RemoteIMStyle.textPrimary)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 10)
+                    .background(message.direction == .outgoing
+                                ? RemoteIMStyle.outgoingBubbleBackground
+                                : RemoteIMStyle.panelBackground,
+                                in: RoundedRectangle(cornerRadius: 14))
+                HStack(spacing: 5) {
+                    Text(RemoteIMTimestampTextPolicy.displayText(for: message.createdAt))
+                    if message.status == .pending { Text("发送中") }
+                    if message.status == .failed { Text("发送失败").foregroundStyle(.red) }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+            }
+            if message.direction == .incoming { Spacer(minLength: 46) }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("im-group-message-\(message.id.uuidString)")
+    }
 }
 
 private struct ClearHistoryDialog: View {
@@ -1685,7 +2448,7 @@ private struct ChatDetailView: View {
             }
         }
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
-        .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
+        .background(RemoteIMStyle.pageBackground)
         .toolbar(.hidden, for: .navigationBar)
         .background {
             RemoteIMImagePresentationHost(presentation: $imagePreviewPresentation,
@@ -2385,6 +3148,7 @@ private struct ChatDetailHeader: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(RemoteIMStyle.textPrimary)
+            .accessibilityLabel("返回会话列表")
 
             Text(contact.displayName)
                 .font(.system(size: 18, weight: .bold))
@@ -4461,11 +5225,9 @@ private struct RemoteIMVideoFileState: Equatable, Sendable {
         let values = try? localURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         let isPlayable = values?.isRegularFile == true && (values?.fileSize ?? 0) > 0
         self.isPlayable = isPlayable
-        self.isDownloading = !isPlayable && (
-            isDownloadingHint || FileManager.default.fileExists(
-                atPath: RemoteIMMediaStorage.partialDownloadURL(for: localURL).path
-            )
-        )
+        // The shared downloader uses a private temporary file. A legacy .part
+        // file may be left by an older App version, so only live state is trusted.
+        self.isDownloading = !isPlayable && isDownloadingHint
     }
 }
 

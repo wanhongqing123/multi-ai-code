@@ -13,6 +13,7 @@
 #include "MaiModelStudioTools.h"
 #include "MaiOpenAiClient.h"
 #include "MaiSqliteStore.h"
+#include "MaiSessionTools.h"
 #include "MaiSystemResourcesTool.h"
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
 #include "MaiCvImageTools.h"
@@ -222,12 +223,16 @@ std::unique_ptr<MaiAgent>
 // 工具的权限及工作目录在这里统一传入，实际操作仍由工具入口负责校验。
 buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStore> store, const QString& defaultModel,
            MaiApprovalPolicy approvalPolicy, const AgentController::ToolRegistrar& hostTools,
-           const AgentController::ModelConfig& credentials) {
+           const AgentController::ModelConfig& credentials, const QString& databasePath) {
     // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
     // 会话没有工作目录时工具层会明确拒绝，
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    const QString defaultWorkspace = databasePath.isEmpty() ? QString() :
+        QDir(QFileInfo(databasePath).absolutePath()).filePath(QStringLiteral("Workspace"));
+    tools->add(makeMaiCreateSessionTool(MaiSessionCreateMode::DefaultOrExplicitDirectory,
+                                        toUtf8(defaultWorkspace)));
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
     const MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
                                        mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,
@@ -345,6 +350,14 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
 
     MaiAgent::Options options;
     if (!defaultModel.isEmpty()) options.defaultModel = toUtf8(defaultModel);
+    options.reasoningEffort = toUtf8(credentials.reasoningEffort);
+    if (credentials.reasoningEffortProvider) {
+        options.reasoningEffortProvider = [provider = credentials.reasoningEffortProvider] {
+            const QString value = provider();
+            return toUtf8(value == QStringLiteral("low") || value == QStringLiteral("max")
+                              ? value : QStringLiteral("high"));
+        };
+    }
     // 0 = 无限等。桌面端有人盯着，超时自动拒绝等于替用户做决定。
     options.permissionTimeoutMs = 0;
     options.approvalPolicy = approvalPolicy;
@@ -367,7 +380,7 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model, const QS
     qRegisterMetaType<MaiEvent>("MaiEvent");
 
     runtime_->agent = buildAgent(std::move(model), openStore(databasePath, runtime_->openError), QString(),
-                                 MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{});
+                                 MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{}, databasePath);
 
     // **显式 QueuedConnection，不用 Auto。**
     //
@@ -423,7 +436,7 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
 
     runtime_->modelName = model.modelName;
     runtime_->agent = buildAgent(std::move(client), openStore(databasePath, runtime_->openError), model.modelName,
-                                 model.approvalPolicy, hostTools, model);
+                                 model.approvalPolicy, hostTools, model, databasePath);
 
     connect(this, &AgentController::eventQueued, this, &AgentController::onEventQueued, Qt::QueuedConnection);
     runtime_->token = runtime_->agent->eventBus().subscribe([this](const MaiEvent& event) { rawEvent(event); });
@@ -465,6 +478,32 @@ QString AgentController::createSession(const QString& directory, const QString& 
         return QString();
     }
     return fromUtf8(created.value());
+}
+
+bool AgentController::setSessionDirectory(const QString& sessionId, const QString& directory) {
+    const QFileInfo selected(directory);
+    const QString canonical = selected.canonicalFilePath();
+    if (sessionId.isEmpty() || !selected.isDir() || canonical.isEmpty()) {
+        runtime_->lastError = QStringLiteral("工作目录不存在或不可访问。");
+        return false;
+    }
+    MaiSession session;
+    if (!runtime_->agent->getSession(toUtf8(sessionId), session)) {
+        runtime_->lastError = QStringLiteral("当前会话不存在。");
+        return false;
+    }
+    if (QDir(fromUtf8(session.directory)).canonicalPath() == canonical) return true;
+    if (runtime_->agent->isBusy(toUtf8(sessionId))) {
+        runtime_->lastError = QStringLiteral("任务进行中，请结束后再切换工作目录。");
+        return false;
+    }
+    MaiResult<std::string> updated =
+        runtime_->agent->submit(MaiUpdateSession{toUtf8(sessionId), "", "", "", toUtf8(canonical)});
+    if (!updated) {
+        runtime_->lastError = fromUtf8(updated.error().message());
+        return false;
+    }
+    return true;
 }
 
 bool AgentController::sendPrompt(const QString& sessionId, const QString& text) {
@@ -643,8 +682,21 @@ void AgentController::onEventQueued(const MaiEvent& event) {
     const QString sessionId = fromUtf8(event.sessionId);
     const QString messageId = fromUtf8(event.messageId);
     const QString partId = fromUtf8(event.partId);
+    if (event.type == MaiEventType::SessionCreated ||
+        event.type == MaiEventType::SessionDeleted) {
+        emit sessionStructureChanged();
+        return;
+    }
 
     switch (event.type) {
+        case MaiEventType::MessageUpdated:
+            for (const MaiMessage& message : runtime_->agent->listMessagesPage(
+                     event.sessionId, event.messageId + "~", 1)) {
+                if (message.id == event.messageId && message.role == MaiRole::User)
+                    emit userMessageAdded(sessionId, messageId);
+            }
+            return;
+
         case MaiEventType::MessagePartUpdated: {
             // 片段第一次出现，或者工具卡状态变了。查一次存储看它是什么。
             //

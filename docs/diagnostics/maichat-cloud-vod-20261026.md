@@ -1,5 +1,7 @@
 # Cloud-drive video waits for a full download before playback (2026-10-26)
 
+Source implementation commit: `d79fe4635f324862590356e55e63b0fec51dd130` on `main`. The package hashes below were built from this source tree before the commit was recorded; no product code changed between packaging and commit.
+
 ## User report and reproducible baseline
 
 On iOS, Android or Desktop, open **My Cloud Drive** and select a video that is not already present in a local preview. The current code obtains a private OSS read link, downloads the complete object to a UUID-named temporary file, and only then opens FFplay. Close the preview and open the same video again: it downloads the complete object again. A 2 GB video therefore cannot show its first frame until the full transfer and local temporary storage are available. Upload resume does not provide playback streaming.

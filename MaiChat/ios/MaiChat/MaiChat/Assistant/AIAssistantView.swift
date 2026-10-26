@@ -28,7 +28,6 @@ private struct AIRemoteDeviceGroup: Identifiable {
 struct AIAssistantView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     let isActive: Bool
-    let onExit: (() -> Void)?
     @ObservedObject private var model = AIAssistantModel.shared
     @ObservedObject private var videoCircle = MaiVideoCircleModel.shared
     @ObservedObject private var cloudDrive = MaiCloudDriveModel.shared
@@ -47,9 +46,8 @@ struct AIAssistantView: View {
     @State private var transcriptionPresentation = VoiceTranscriptionPresentation()
     @State private var galleryDirection = 0
 
-    init(isActive: Bool = true, onExit: (() -> Void)? = nil) {
+    init(isActive: Bool = true) {
         self.isActive = isActive
-        self.onExit = onExit
     }
 
     private var usesStandaloneUITestFixture: Bool {
@@ -89,13 +87,6 @@ struct AIAssistantView: View {
                     // 标题和输入栏保持稳定；消息区只接收剩余的可用高度。
                     // 播放器停靠或键盘弹出时不重建整页，也不清空已绘制的消息。
                     AIHeader(
-                        exit: onExit == nil ? nil : {
-                            composerFocusController.dismiss()
-                            isAttachmentPanelPresented = false
-                            showActions = false
-                            showSessions = false
-                            onExit?()
-                        },
                         openSessions: {
                             composerFocusController.dismiss()
                             isAttachmentPanelPresented = false
@@ -1036,16 +1027,12 @@ private struct AIAssistantMessageList: View {
 }
 
 private struct AIHeader: View {
-    let exit: (() -> Void)?
     let openSessions: () -> Void
     let openActions: () -> Void
     let openVideoCircle: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
-            if let exit {
-                AIHeaderButton(systemImage: "chevron.left", label: "返回主页面", action: exit)
-            }
             AIHeaderButton(systemImage: "sidebar.left", label: "对话列表", action: openSessions)
             Spacer()
             if let openVideoCircle {

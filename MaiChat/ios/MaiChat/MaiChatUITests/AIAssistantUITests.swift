@@ -1745,11 +1745,106 @@ final class AIAssistantUITests: XCTestCase {
         opened.lifetime = .keepAlways
         add(opened)
 
-        app.buttons["返回主页面"].tap()
+        XCTAssertFalse(app.buttons["返回主页面"].exists)
         app.buttons["我的"].tap()
         app.buttons["设置"].tap()
         app.buttons["切换账号"].tap()
         XCTAssertTrue(accountField.waitForExistence(timeout: 15))
+    }
+
+    @MainActor func testAssistantMainTabsKeepDraftAcrossNavigation() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let (_, response) = try? await URLSession.shared.data(from: statusURL),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机无付费测试账号服务")
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launch()
+
+        let titles = ["消息", "云盘", "创作中心", "好友列表", "我的"]
+        let tabs = titles.map { app.buttons[$0] }
+        for tab in tabs { XCTAssertTrue(tab.waitForExistence(timeout: 35)) }
+        tabs[2].tap()
+        XCTAssertTrue(app.staticTexts["创作中心"].waitForExistence(timeout: 35))
+        let fixtureIMError = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "IM 操作失败")).firstMatch
+        if fixtureIMError.exists { fixtureIMError.tap() }
+        XCTAssertFalse(app.buttons["返回主页面"].exists)
+        for tab in tabs { XCTAssertTrue(tab.isHittable) }
+        for index in 1..<tabs.count {
+            XCTAssertLessThan(tabs[index - 1].frame.midX, tabs[index].frame.midX)
+        }
+        let opened = XCTAttachment(screenshot: app.screenshot())
+        opened.name = "assistant-five-main-tabs"
+        opened.lifetime = .keepAlways
+        add(opened)
+
+        let editor = app.textViews["ai-composer"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.tap()
+        editor.typeText("切页后保留的草稿")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        for tab in tabs { XCTAssertTrue(tab.isHittable, "键盘弹出时应保留主标签栏") }
+        let typing = XCTAttachment(screenshot: app.screenshot())
+        typing.name = "assistant-five-main-tabs-keyboard"
+        typing.lifetime = .keepAlways
+        add(typing)
+
+        tabs[1].tap()
+        XCTAssertTrue(app.staticTexts["我的云盘"].waitForExistence(timeout: 10))
+        tabs[0].tap()
+        tabs[3].tap()
+        tabs[4].tap()
+        tabs[2].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 20))
+        XCTAssertEqual(editor.value as? String, "切页后保留的草稿")
+        XCTAssertFalse(app.buttons["返回主页面"].exists)
+        let returned = XCTAttachment(screenshot: app.screenshot())
+        returned.name = "assistant-draft-after-five-tabs"
+        returned.lifetime = .keepAlways
+        add(returned)
+    }
+
+    @MainActor func testAssistantMainTabsRemainVisibleWithDockedVideo() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let (_, response) = try? await URLSession.shared.data(from: statusURL),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机无付费测试账号服务")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--assistant-main-tab-video-layout-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launch()
+        let assistant = app.buttons["创作中心"]
+        XCTAssertTrue(assistant.waitForExistence(timeout: 35))
+        assistant.tap()
+        let expand = app.buttons["ffplay-expand"]
+        let editor = app.textViews["ai-composer"]
+        XCTAssertTrue(expand.waitForExistence(timeout: 20))
+        XCTAssertTrue(editor.waitForExistence(timeout: 20))
+        XCTAssertTrue(expand.isHittable)
+        XCTAssertTrue(editor.isHittable)
+        XCTAssertGreaterThan(editor.frame.midY, app.frame.midY,
+                             "分屏播放时创作中心输入栏仍应在播放器下方")
+        for title in ["消息", "云盘", "创作中心", "好友列表", "我的"] {
+            XCTAssertTrue(app.buttons[title].isHittable,
+                          "分屏播放时应保留完整的主标签栏：\(title)")
+        }
+        XCTAssertFalse(app.buttons["返回主页面"].exists)
+        let fixtureIMError = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "IM 操作失败")).firstMatch
+        if fixtureIMError.exists { fixtureIMError.tap() }
+        let split = XCTAttachment(screenshot: app.screenshot())
+        split.name = "assistant-five-main-tabs-docked-video"
+        split.lifetime = .keepAlways
+        add(split)
     }
 
     func testNormalAppKeepsConversationPageVisibleAcrossNavigation() throws {

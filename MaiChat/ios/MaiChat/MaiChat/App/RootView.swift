@@ -27,9 +27,11 @@ struct RootView: View {
         #endif
         return .messages
     }()
-    @State private var previousMainTab: AppTab = .messages
     @State private var hasOpenedAssistant = false
     @State private var assistantOpenGeneration = 0
+    #if DEBUG && targetEnvironment(simulator)
+    @State private var installedAssistantVideoLayoutFixture = false
+    #endif
     @State private var activeChatContact: RemoteIMContact?
     @State private var activeChatGroup: RemoteIMGroup?
     @State private var isShowingCreateGroup = false
@@ -141,10 +143,17 @@ struct RootView: View {
             // 保留同一页面实例可避免回来时重新加载历史或遗失当前输入。
             if !appState.shouldShowInitialLogin &&
                 (selectedTab == .assistant || hasOpenedAssistant) {
-                AIAssistantView(
-                    isActive: selectedTab == .assistant,
-                    onExit: { selectedTab = previousMainTab }
-                )
+                VStack(spacing: 0) {
+                    AIAssistantView(isActive: selectedTab == .assistant)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if selectedTab == .assistant {
+                        RootTabBar(
+                            selectedTab: $selectedTab,
+                            remoteDesktop: appState.remoteDesktop,
+                            openAssistant: openAssistant
+                        )
+                    }
+                }
                 .opacity(selectedTab == .assistant ? 1 : 0)
                 .allowsHitTesting(selectedTab == .assistant)
                 .accessibilityHidden(selectedTab != .assistant)
@@ -237,7 +246,15 @@ struct RootView: View {
         .onChange(of: selectedTab) { tab in
             if tab != .assistant { assistantOpenGeneration += 1 }
             if tab == .assistant { hasOpenedAssistant = true }
-            if tab != .assistant { previousMainTab = tab }
+            #if DEBUG && targetEnvironment(simulator)
+            if tab == .assistant,
+               !installedAssistantVideoLayoutFixture,
+               ProcessInfo.processInfo.arguments.contains("--assistant-main-tab-video-layout-test"),
+               let videoPath = Bundle.main.path(forResource: "ffplay-sample", ofType: "mp4") {
+                installedAssistantVideoLayoutFixture = true
+                appState.agentVideoPresentation = MaiFfplayPresentation(path: videoPath)
+            }
+            #endif
         }
         .animation(.easeOut(duration: 0.18), value: isShowingAddContact)
         .animation(.easeOut(duration: 0.18), value: movingContact?.userID)
@@ -358,7 +375,6 @@ struct RootView: View {
                 activeChatContact = nil
                 activeChatGroup = nil
                 selectedTab = .messages
-                previousMainTab = .messages
                 hasOpenedAssistant = false
                 return
             }

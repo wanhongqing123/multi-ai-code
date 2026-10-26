@@ -721,6 +721,16 @@ void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
     QVERIFY(actions && actions->isVisible());
     auto* modelSection = actions->findChild<QPushButton*>(QStringLiteral("agentEffortSection"));
     QVERIFY(modelSection);
+    QLabel* selectedValue = nullptr;
+    for (QLabel* label : modelSection->findChildren<QLabel*>()) {
+        if (label->text() == QStringLiteral("标准")) selectedValue = label;
+    }
+    QVERIFY(selectedValue);
+    QTest::mouseMove(modelSection, modelSection->rect().center());
+    const QPoint valueCenter = selectedValue->mapTo(modelSection, selectedValue->rect().center());
+    QTRY_COMPARE(modelSection->grab().toImage().pixelColor(valueCenter), QColor("#f1f6fb"));
+    const QString hoverCapture = qEnvironmentVariable("MAICHAT_AGENT_UI_HOVER_CAPTURE");
+    if (!hoverCapture.isEmpty()) QVERIFY(actions->grab().save(hoverCapture));
     QTest::mouseClick(modelSection, Qt::LeftButton);
     const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_UI_CAPTURE");
     if (!capturePath.isEmpty()) {
@@ -730,6 +740,8 @@ void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
     auto* option = actions->findChild<QPushButton*>(
         QStringLiteral("agentEffortOption-max"));
     QVERIFY(option && option->isVisible());
+    auto* selectedOption = actions->findChild<QPushButton*>(QStringLiteral("agentEffortOption-high"));
+    QVERIFY(selectedOption && selectedOption->isChecked());
     QSignalSpy selected(harness.panel.get(), &AgentChatPanel::reasoningEffortChangeRequested);
     QTest::mouseClick(option, Qt::LeftButton);
     QCOMPARE(selected.count(), 1);

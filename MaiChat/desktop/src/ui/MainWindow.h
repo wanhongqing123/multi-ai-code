@@ -374,6 +374,7 @@ private:
     QLabel* settingsProfileAvatar_ = nullptr;
     QLabel* settingsProfileName_ = nullptr;
     QLabel* settingsProfileId_ = nullptr;
+    QLabel* settingsConnectionText_ = nullptr;
     QListWidget* conversationList_ = nullptr;
     QListWidget* contactsList_ = nullptr;
     QLabel* titleLabel_ = nullptr;

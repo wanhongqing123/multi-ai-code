@@ -507,6 +507,15 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             }
             let scrollable = scroll.contentSize.height + scroll.adjustedContentInset.top +
                 scroll.adjustedContentInset.bottom > scroll.bounds.height + 1
+            // A fast flick may reach the top only after the finger is released.
+            // The pan callback then no longer receives `.changed`; request one
+            // page for this gesture without letting the new rows trigger more.
+            if !requestedTopForGesture && draggedTowardOlderEnough &&
+               !scroll.isTracking && !scroll.isDragging &&
+               scroll.contentOffset.y <= -scroll.adjustedContentInset.top + 1 {
+                requestedTopForGesture = true
+                onUserReachedTop?()
+            }
             let bottom = contentMarker.flatMap { marker in
                 marker.bounds.height > 0 ? marker.convert(marker.bounds, to: scroll).maxY : nil
             } ?? scroll.contentSize.height

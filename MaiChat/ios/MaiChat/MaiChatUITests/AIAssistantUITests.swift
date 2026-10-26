@@ -929,7 +929,11 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
-        start.press(forDuration: 0.05, thenDragTo: end)
+        // A single flick stays within the first twenty rows. Repeated quick
+        // flicks reach the page boundary while previous momentum is active.
+        for _ in 0..<6 {
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
         XCTAssertTrue(app.staticTexts["对话"].waitForExistence(timeout: 5))
         let catalog = XCTAttachment(screenshot: app.screenshot())
         catalog.name = "production-iphone-session-directory"
@@ -2158,12 +2162,86 @@ final class AIAssistantUITests: XCTestCase {
         let earlier = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2504")).firstMatch
         for _ in 0..<8 where !earlier.exists { timeline.swipeDown() }
-        XCTAssertTrue(earlier.waitForExistence(timeout: 5),
-                      "到达已加载页顶部后应开放上一页")
         let paged = XCTAttachment(screenshot: app.screenshot())
         paged.name = "im-older-page-loaded-without-empty-viewport"
         paged.lifetime = .keepAlways
         add(paged)
+        XCTAssertTrue(earlier.waitForExistence(timeout: 5),
+                      "到达已加载页顶部后应开放上一页")
+    }
+
+    @MainActor func testFastHistorySwipeWithExpandedHistory() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-large-history-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launchEnvironment["MAICHAT_IM_HISTORY_EXPANDED_PAGES"] = "1"
+        app.launch()
+        let conversation = app.buttons["im-conversation-im-test-peer"]
+        XCTAssertTrue(conversation.waitForExistence(timeout: 15))
+        conversation.tap()
+        XCTAssertTrue(app.staticTexts["im-history-expanded-ready"]
+            .waitForExistence(timeout: 15))
+
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2543")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        let timeline = app.scrollViews.element(boundBy: 0)
+        let laidOutRows = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 "))
+        XCTAssertGreaterThanOrEqual(laidOutRows.count, 160,
+                                    "长列表手势测试需要先打开足够多的历史页")
+        timeline.swipeDown(velocity: .fast)
+        let afterSwipe = XCTAttachment(screenshot: app.screenshot())
+        afterSwipe.name = "im-fast-history-swipe-after-gesture"
+        afterSwipe.lifetime = .keepAlways
+        add(afterSwipe)
+        Thread.sleep(forTimeInterval: 1.5)
+        let inFlightShot = XCTAttachment(screenshot: app.screenshot())
+        inFlightShot.name = "im-fast-history-swipe-after-1p5s"
+        inFlightShot.lifetime = .keepAlways
+        add(inFlightShot)
+        Thread.sleep(forTimeInterval: 2.0)
+        let afterSettling = XCTAttachment(screenshot: app.screenshot())
+        afterSettling.name = "im-fast-history-swipe-after-3p5s"
+        afterSettling.lifetime = .keepAlways
+        add(afterSettling)
+        XCTAssertTrue(timeline.exists)
+    }
+
+    @MainActor func testDatabaseHistoryLoadsOnePageAtTop() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--im-large-history-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launchEnvironment["MAICHAT_IM_HISTORY_DATABASE"] = "1"
+        app.launch()
+        let count = app.staticTexts["im-history-page-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 20))
+        let conversation = app.buttons["im-conversation-im-test-peer"]
+        XCTAssertTrue(conversation.waitForExistence(timeout: 15))
+        conversation.tap()
+        let latest = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2543")).firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        XCTAssertEqual(count.label, "IM 已加载 20 条")
+
+        let timeline = app.scrollViews.element(boundBy: 0)
+        for _ in 0..<12 where count.label == "IM 已加载 20 条" {
+            timeline.swipeDown(velocity: .fast)
+        }
+        Thread.sleep(forTimeInterval: 2.0)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "im-database-history-one-page-trigger-\(count.label)"
+        capture.lifetime = .keepAlways
+        add(capture)
+        guard let number = Int(count.label.split(separator: " ").dropLast().last ?? "") else {
+            XCTFail("历史页数未显示：\(count.label)")
+            return
+        }
+        XCTAssertGreaterThan(number, 20, "必须至少到达顶部并读取一页数据库消息")
+        XCTAssertLessThanOrEqual(number, 40,
+                                 "只触发一次顶部翻页后不能由行 onAppear 连锁翻完数据库")
     }
 
     func testSearchHitKeepsIMHistoryWindowBoundedAndReturnsToLatest() throws {

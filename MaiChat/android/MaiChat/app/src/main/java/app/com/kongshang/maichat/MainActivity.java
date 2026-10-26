@@ -1682,7 +1682,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void renderConversationList() {
-        content.addView(connectionHeader(), match(dp(42)));
         ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
@@ -2085,9 +2084,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             render();
         });
         header.addView(remote, new LinearLayout.LayoutParams(dp(42), dp(42)));
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(dp(8), dp(8));
-        statusParams.setMargins(dp(5), 0, dp(4), 0);
-        header.addView(statusDot(), statusParams);
         return header;
     }
 
@@ -3244,7 +3240,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         String nickname = session.nickname();
         LinearLayout accountSection = settingsSection("账号", new String[][]{
             {"昵称", nickname.isEmpty() ? "未设置  ›" : nickname + "  ›"},
-            {"登录账号", accountLabel + "  复制"}
+            {"登录账号", accountLabel + "  复制"},
+            {"消息连接", connectionText()}
         });
         page.addView(accountSection, matchWrap());
         ViewGroup accountCard = (ViewGroup) accountSection.getChildAt(1);
@@ -3258,6 +3255,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             clipboard.setPrimaryClip(ClipData.newPlainText("MaiChat account ID", accountId));
             toast("完整账号 ID 已复制");
         });
+        ViewGroup connectionRow = (ViewGroup) accountCard.getChildAt(2);
+        connectionRow.setContentDescription("消息连接状态：" + connectionText());
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(dp(8), dp(8));
+        statusParams.setMargins(dp(7), 0, 0, 0);
+        connectionRow.addView(statusDot(), statusParams);
         Button friendCode = secondaryButton("我的好友二维码");
         LinearLayout.LayoutParams friendCodeParams = match(dp(48));
         friendCodeParams.setMargins(0, dp(14), 0, 0);
@@ -3844,10 +3846,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         menu.setPadding(dp(8), dp(8), dp(8), dp(8));
         menu.setBackground(MaiChatTheme.bordered(Color.WHITE, MaiChatTheme.BORDER, 11, this));
         PopupWindow popup = new PopupWindow(menu, dp(190), ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        addPopupAction(menu, "✨  AI 帮我回复", () -> {
-            popup.dismiss();
-            requestAiReplySuggestions();
-        });
         addPopupAction(menu, "▣  拍照发送", () -> {
             popup.dismiss();
             requestCamera();
@@ -3859,6 +3857,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         addPopupAction(menu, "□  发送文件", () -> {
             popup.dismiss();
             openFilePicker();
+        });
+        addPopupAction(menu, "✨  AI 帮我回复", () -> {
+            popup.dismiss();
+            requestAiReplySuggestions();
         });
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popup.setElevation(dp(10));
@@ -5430,21 +5432,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
     }
 
-    private View connectionHeader() {
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-        header.setPadding(dp(16), dp(7), dp(16), dp(7));
-        header.setBackgroundColor(Color.WHITE);
-        header.addView(statusDot(), new LinearLayout.LayoutParams(dp(8), dp(8)));
-        if (session.connectionState() != TencentIMClient.ConnectionState.CONNECTED) {
-            TextView value = MaiChatTheme.label(this, connectionText(), 12, MaiChatTheme.SECONDARY);
-            LinearLayout.LayoutParams valueParams = wrapWrap();
-            valueParams.setMargins(dp(7), 0, 0, 0);
-            header.addView(value, valueParams);
-        }
-        return header;
-    }
-
     private View statusDot() {
         View dot = new View(this);
         int color;
@@ -5456,7 +5443,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             default: color = MaiChatTheme.SECONDARY; break;
         }
         dot.setBackground(MaiChatTheme.rounded(color, 4, this));
-        dot.setContentDescription("IM 连接状态：" + connectionText());
         return dot;
     }
 

@@ -25,6 +25,7 @@ struct SettingsView: View {
                                 Text(appState.maiChatAccountID)
                                     .font(.subheadline)
                                     .foregroundStyle(RemoteIMStyle.textSecondary)
+                                SelfConnectionStatus(state: appState.connectionState)
                             }
                             .lineLimit(1)
                         }
@@ -60,6 +61,32 @@ struct SettingsView: View {
             .onAppear {
                 Task { await cloudDrive.probe() }
             }
+        }
+    }
+}
+
+private struct SelfConnectionStatus: View {
+    let state: RemoteIMAppState.ConnectionState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text("消息\(state.rawValue)")
+                .font(.caption)
+                .foregroundStyle(RemoteIMStyle.textSecondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("消息连接")
+        .accessibilityValue(state.rawValue)
+        .accessibilityIdentifier("self-im-connection-status")
+    }
+
+    private var color: Color {
+        switch state {
+        case .connected: return RemoteIMStyle.green
+        case .connecting: return .orange
+        case .failed: return .red
+        case .disconnected: return RemoteIMStyle.textSecondary
         }
     }
 }

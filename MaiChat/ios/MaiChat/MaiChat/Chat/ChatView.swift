@@ -706,6 +706,8 @@ struct ChatLandscapeUITestRoot: View {
     @State private var activeContact: RemoteIMContact?
     @State private var activeGroup: RemoteIMGroup?
     @State private var installedLargeHistory = false
+    @State private var expandedHistoryReady = false
+    @State private var databaseHistoryReady = false
     @StateObject private var appState = RemoteIMAppState(
         loadedSettings: StoredRemoteIMSettings(
             sdkAppID: nil, masterUserID: "im-layout-test",
@@ -721,12 +723,28 @@ struct ChatLandscapeUITestRoot: View {
                  showScanQRCode: {},
                  bottomBar: AnyView(Text("消息页签").frame(height: 48)))
             .environmentObject(appState)
+            .overlay(alignment: .topLeading) {
+                if expandedHistoryReady {
+                    Text("IM 历史已就绪")
+                        .font(.caption2)
+                        .accessibilityIdentifier("im-history-expanded-ready")
+                }
+                if databaseHistoryReady {
+                    Text("IM 已加载 \(appState.visibleMessages(with: "im-test-peer").count) 条")
+                        .font(.caption2)
+                        .accessibilityIdentifier("im-history-page-count")
+                }
+            }
             .onAppear {
                 let searchFocus = ProcessInfo.processInfo.arguments.contains("--im-search-focus-ui-test")
                 guard ProcessInfo.processInfo.arguments.contains("--im-large-history-ui-test") ||
                         searchFocus,
                       !installedLargeHistory else { return }
                 installedLargeHistory = true
+                // Each UI test owns fresh synthetic history; a previous SQLite
+                // run must not merge duplicate text rows into this fixture.
+                let store = LocalChatHistoryStore()
+                try? store.purgeAccount(ownerUserID: "im-layout-test")
                 let contact = RemoteIMContact(userID: "im-test-peer", displayName: "横屏测试联系人")
                 let messages = (0..<2544).map { index in
                     RemoteIMMessage(
@@ -739,7 +757,19 @@ struct ChatLandscapeUITestRoot: View {
                     )
                 }
                 appState.chatState = MasterChatState(
-                    ownerUserID: "im-layout-test", contacts: [contact], messages: messages)
+                    ownerUserID: "im-layout-test", contacts: [contact],
+                    messages: ProcessInfo.processInfo.environment["MAICHAT_IM_HISTORY_DATABASE"] == "1"
+                        ? [] : messages)
+                if ProcessInfo.processInfo.environment["MAICHAT_IM_HISTORY_DATABASE"] == "1" {
+                    try? store.makePersistence().persist(mutations: [
+                        .upsert(messages, sdkAppID: nil, ownerUserID: "im-layout-test")
+                    ])
+                    Task {
+                        await appState.loadInitialMessages(with: contact.userID)
+                        databaseHistoryReady = true
+                    }
+                    return
+                }
                 if searchFocus {
                     let hit = LocalChatHistorySearchHit(peerUserID: contact.userID,
                                                         message: messages[100])
@@ -747,8 +777,20 @@ struct ChatLandscapeUITestRoot: View {
                     activeContact = contact
                 }
             }
+            .onChange(of: activeContact?.userID) { userID in
+                guard ProcessInfo.processInfo.environment["MAICHAT_IM_HISTORY_EXPANDED_PAGES"] == "1",
+                      let userID else { return }
+                expandedHistoryReady = false
+                Task {
+                    for _ in 0..<8 {
+                        await appState.loadEarlierMessages(with: userID)
+                    }
+                    expandedHistoryReady = true
+                }
+            }
     }
 }
+
 #endif
 
 struct RemoteIMContactAvatar: View {
@@ -950,7 +992,6 @@ struct RemoteIMPresenceBadge: View {
 }
 
 private struct HeaderView: View {
-    @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var isActionsOpen: Bool
 
     var body: some View {
@@ -961,7 +1002,6 @@ private struct HeaderView: View {
 
             HStack(spacing: 14) {
                 Spacer(minLength: 0)
-                StatusPill(state: appState.connectionState)
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) {
                         isActionsOpen.toggle()
@@ -1247,53 +1287,6 @@ struct GroupCreationView: View {
             if created { dismiss() }
             else { creationError = "创建失败，请检查连接后重试" }
         }
-    }
-}
-
-private struct StatusPill: View {
-    let state: RemoteIMAppState.ConnectionState
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
-            if state != .connected {
-                Text(state.rawValue)
-                    .font(.system(size: 13, weight: .semibold))
-            }
-        }
-        .foregroundStyle(textColor)
-        .padding(.horizontal, state == .connected ? 0 : 12)
-        .padding(.vertical, state == .connected ? 0 : 7)
-        .background(
-            state == .connected ? Color.clear : backgroundColor,
-            in: Capsule()
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("IM 连接状态")
-        .accessibilityValue(state.rawValue)
-    }
-
-    private var dotColor: Color {
-        switch state {
-        case .connected:
-            return RemoteIMStyle.green
-        case .connecting:
-            return .orange
-        case .failed:
-            return .red
-        case .disconnected:
-            return RemoteIMStyle.textSecondary
-        }
-    }
-
-    private var textColor: Color {
-        state == .connected ? RemoteIMStyle.green : RemoteIMStyle.textSecondary
-    }
-
-    private var backgroundColor: Color {
-        state == .connected ? RemoteIMStyle.greenSoft : Color(.secondarySystemBackground)
     }
 }
 
@@ -3196,7 +3189,6 @@ private struct ChatDetailHeader: View {
             .accessibilityLabel("更多")
             .accessibilityIdentifier("chatMoreMenu")
 
-            StatusPill(state: appState.connectionState)
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
@@ -3416,11 +3408,6 @@ private struct MessageListView: View {
                                 }
                                 .id(message.id)
                                 .onAppear {
-                                        if message.id == appState.chatState.messages(with: peerUserID).first?.id,
-                                            scrollIntent.userBrowsedHistory
-                                        {
-                                            Task { await loadEarlierMessagesIfNeeded() }
-                                    }
                                     let owner = appState.chatState.ownerUserID
                                     guard message.fromUserID == owner || message.toUserID == owner else { return }
                                     let peer = message.direction == .incoming ? message.fromUserID : message.toUserID
@@ -6605,14 +6592,6 @@ struct ComposerAttachmentPanel: View {
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .center, spacing: 14) {
-            if let suggestReply {
-                actionButton(
-                    title: "AI 帮我回复",
-                    systemImage: "sparkles",
-                    enabled: true,
-                    action: suggestReply
-                )
-            }
             actionButton(
                 title: "相册",
                 systemImage: "photo",
@@ -6645,6 +6624,14 @@ struct ComposerAttachmentPanel: View {
                     systemImage: "mic.fill",
                     enabled: canSendVoice,
                     action: openVoiceInput
+                )
+            }
+            if let suggestReply {
+                actionButton(
+                    title: "AI 帮我回复",
+                    systemImage: "sparkles",
+                    enabled: true,
+                    action: suggestReply
                 )
             }
         }
@@ -7126,12 +7113,14 @@ private struct ComposerView: View {
     }
 
     private var latestMessageID: UUID? {
-        appState.visibleMessages(with: peerUserID).last?.id
+        appState.chatState.latestMessage(with: peerUserID)?.id
     }
 
     private func requestAIReplySuggestions() {
         isAttachmentPanelPresented = false
-        let messages = appState.visibleMessages(with: peerUserID).suffix(24)
+        // The visible window may point at an old search result. Suggestions
+        // use the newest loaded conversation messages, capped to 24 texts.
+        let messages = appState.chatState.messages(with: peerUserID).suffix(24)
         let context = messages.compactMap { message -> [String: String]? in
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty, message.approvalRequest == nil,

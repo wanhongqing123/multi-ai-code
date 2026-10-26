@@ -191,7 +191,7 @@ private slots:
     void conversationListShowsUnreadBadgeAndClearsOnOpen();
     void everyNavButtonIsStyledConsistently();
     void accountAvatarFollowsIMProfile();
-    void connectionStatusLivesOnNavAvatarWithoutText();
+    void connectionStatusLivesInSelfProfile();
     void fileBubbleOffersContextMenu();
     void imageBubbleOffersContextMenu();
     void imageBubbleUsesNativePixmapPreview();
@@ -3783,7 +3783,7 @@ void MainWindowLayoutTest::accountAvatarFollowsIMProfile() {
     QCOMPARE(app.chatState().contacts().size(), 0);
 }
 
-void MainWindowLayoutTest::connectionStatusLivesOnNavAvatarWithoutText() {
+void MainWindowLayoutTest::connectionStatusLivesInSelfProfile() {
     auto client = std::make_unique<FakeRemoteIMClient>();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
     MainWindow window(app);
@@ -3792,27 +3792,22 @@ void MainWindowLayoutTest::connectionStatusLivesOnNavAvatarWithoutText() {
     QVERIFY(QTest::qWaitForWindowExposed(&window));
 
     auto* statusDot = window.findChild<QLabel*>(QStringLiteral("connectionStatusDot"));
+    auto* statusText = window.findChild<QLabel*>(QStringLiteral("selfConnectionStatus"));
     auto* logoContainer = window.findChild<QWidget*>(QStringLiteral("navLogoContainer"));
+    auto* profileCard = window.findChild<QWidget*>(QStringLiteral("selfProfileCard"));
     auto* chatHeader = window.findChild<QWidget*>(QStringLiteral("chatHeader"));
     QVERIFY(statusDot != nullptr);
+    QVERIFY(statusText != nullptr);
     QVERIFY(logoContainer != nullptr);
+    QVERIFY(profileCard != nullptr);
     QVERIFY(chatHeader != nullptr);
-    QCOMPARE(statusDot->parentWidget(), logoContainer);
-    QVERIFY2(!chatHeader->isAncestorOf(statusDot), "连接状态仍然占在聊天页右上角");
-    auto* logo = logoContainer->findChild<QLabel*>(QStringLiteral("navLogo"));
-    QVERIFY(logo != nullptr);
-    QVERIFY2(statusDot->x() > logo->x() + logo->width() / 2,
-             "连接状态点没有落在头像右侧");
-    QVERIFY2(statusDot->y() < logo->y() + logo->height() / 2,
-             "连接状态点没有落在头像上方");
+    QVERIFY(profileCard->isAncestorOf(statusDot));
+    QVERIFY(profileCard->isAncestorOf(statusText));
+    QVERIFY(!logoContainer->isAncestorOf(statusDot));
+    QVERIFY(!chatHeader->isAncestorOf(statusDot));
     QCOMPARE(statusDot->text(), QString());
     QCOMPARE(statusDot->property("connected").toBool(), false);
-
-    // 12px 的点挂在 34px 的头像上占了三分之一还多，抢眼到像个徽标。
-    QVERIFY2(statusDot->width() * 3 <= logo->width(),
-             qPrintable(QStringLiteral("状态点相对头像太大：%1 vs %2")
-                            .arg(statusDot->width())
-                            .arg(logo->width())));
+    QCOMPARE(statusText->text(), QStringLiteral("消息未连接"));
 
     // 形状必须真是个圆。QSS 的 border-radius 在非整数缩放倍率下会塌成圆角方块
     // （尺寸与圆角各自四舍五入，半径小于半边长），所以这里直接看画出来的像素：
@@ -3828,8 +3823,11 @@ void MainWindowLayoutTest::connectionStatusLivesOnNavAvatarWithoutText() {
 
     app.connectToService(1, QStringLiteral("test-user-sig"));
     QCOMPARE(statusDot->property("connected").toBool(), true);
+    QCOMPARE(statusText->text(), QStringLiteral("消息已连接"));
     QCOMPARE(statusDot->text(), QString());
     QVERIFY(statusDot->toolTip().contains(QStringLiteral("已连接")));
+    app.disconnectFromService();
+    QTRY_COMPARE(statusText->text(), QStringLiteral("消息未连接"));
 }
 
 void MainWindowLayoutTest::fileBubbleOffersContextMenu() {

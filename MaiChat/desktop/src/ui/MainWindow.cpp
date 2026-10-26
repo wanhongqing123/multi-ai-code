@@ -436,8 +436,8 @@ QPixmap statusDotPixmap(bool connected, int logicalSize, int ringWidth,
   QPainter painter(&pixmap);
   painter.setRenderHint(QPainter::Antialiasing, true);
   painter.setPen(Qt::NoPen);
-  // 外圈用导航栏底色，让点与头像之间留出一道呼吸缝。
-  painter.setBrush(QColor(0xec, 0xf3, 0xff));
+  // 状态只在白色的个人资料卡片中显示。
+  painter.setBrush(Qt::white);
   painter.drawEllipse(QRectF(0, 0, logicalSize, logicalSize));
   painter.setBrush(connected ? QColor(0x12, 0xb7, 0x6a)
                              : QColor(0x98, 0xa2, 0xb3));
@@ -2175,17 +2175,7 @@ void MainWindow::buildUi() {
   logo->setProfile(app_.selfProfile());
   logo->setAttribute(Qt::WA_TransparentForMouseEvents);
 
-  statusLabel_ = new QLabel(logoContainer);
-  statusLabel_->setObjectName(QStringLiteral("connectionStatusDot"));
-  // 34px 的头像上挂一个 12px 的点，占了三分之一还多，抢眼到像个徽标。
-  // 收到 9px，并往回挪到贴着头像右上角——原来在 y=1，浮在头像上边之外，
-  // 看着不像「头像上的状态」，像掉在角落里的一块东西。
-  statusLabel_->setFixedSize(UiZoom::s(9), UiZoom::s(9));
-  statusLabel_->move(UiZoom::s(30), UiZoom::s(6));
-  statusLabel_->setScaledContents(false);
-  statusLabel_->setAccessibleName(QStringLiteral("IM 连接状态"));
-  statusLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
-  // 头像独占一行居中；「添加联系人」已移到会话栏的搜索框旁边（微信式）。
+  // 头像独占一行居中；IM 连接状态放在点击头像后打开的个人资料中。
   navLayout->addWidget(logoContainer, 0, Qt::AlignHCenter);
   navLayout->addSpacing(UiZoom::s(6));
 
@@ -2777,6 +2767,21 @@ void MainWindow::buildUi() {
   settingsProfileId_->setObjectName(QStringLiteral("selfProfileId"));
   profileTextLayout->addWidget(settingsProfileName_);
   profileTextLayout->addWidget(settingsProfileId_);
+  auto *connectionRow = new QWidget(profileText);
+  auto *connectionLayout = new QHBoxLayout(connectionRow);
+  connectionLayout->setContentsMargins(0, 0, 0, 0);
+  connectionLayout->setSpacing(UiZoom::s(6));
+  statusLabel_ = new QLabel(connectionRow);
+  statusLabel_->setObjectName(QStringLiteral("connectionStatusDot"));
+  statusLabel_->setFixedSize(UiZoom::s(9), UiZoom::s(9));
+  statusLabel_->setScaledContents(false);
+  statusLabel_->setAccessibleName(QStringLiteral("IM 连接状态"));
+  connectionLayout->addWidget(statusLabel_);
+  settingsConnectionText_ = new QLabel(connectionRow);
+  settingsConnectionText_->setObjectName(QStringLiteral("selfConnectionStatus"));
+  connectionLayout->addWidget(settingsConnectionText_);
+  connectionLayout->addStretch(1);
+  profileTextLayout->addWidget(connectionRow);
   selfProfileLayout->addWidget(profileText, 1);
 
   auto *settingsPanel = new QWidget(settingsContent);
@@ -2952,8 +2957,7 @@ void MainWindow::applyStyle() {
             max-height: 34px;
             background: transparent;
         }
-        /* 形状和颜色都由 statusDotPixmap 画。这里只保证背景透明：
-           QSS 和点阵图各画一半，缩放时最容易对不齐。 */
+        /* 形状和颜色都由 statusDotPixmap 画。 */
         #connectionStatusDot {
             background: transparent;
             border: 0;
@@ -3184,6 +3188,8 @@ void MainWindow::applyStyle() {
         }
         #selfProfileName { color: #172033; font-size: 20px; font-weight: 600; }
         #selfProfileId { color: #66758d; font-size: 13px; }
+        #selfConnectionStatus { color: #667085; font-size: 12px; }
+        #selfConnectionStatus[connected="true"] { color: #14805b; }
         #settingsPanel {
             background: #ffffff;
             border: 1px solid #dae4f0;
@@ -4850,7 +4856,7 @@ void MainWindow::updateNavigationSelection(QPushButton *selectedButton) {
 }
 
 void MainWindow::updateConnectionIndicator() {
-  if (!statusLabel_)
+  if (!statusLabel_ || !settingsConnectionText_)
     return;
   const bool connected = app_.isConnected();
   statusLabel_->setText(QString());
@@ -4861,9 +4867,14 @@ void MainWindow::updateConnectionIndicator() {
                                      : QStringLiteral("IM 未连接"));
   statusLabel_->setAccessibleDescription(connected ? QStringLiteral("已连接")
                                                    : QStringLiteral("未连接"));
-  statusLabel_->style()->unpolish(statusLabel_);
-  statusLabel_->style()->polish(statusLabel_);
   statusLabel_->update();
+  settingsConnectionText_->setText(connected ? QStringLiteral("消息已连接")
+                                             : QStringLiteral("消息未连接"));
+  settingsConnectionText_->setProperty("connected", connected);
+  settingsConnectionText_->setToolTip(statusLabel_->toolTip());
+  settingsConnectionText_->setAccessibleDescription(statusLabel_->accessibleDescription());
+  settingsConnectionText_->style()->unpolish(settingsConnectionText_);
+  settingsConnectionText_->style()->polish(settingsConnectionText_);
 }
 
 void MainWindow::syncComposerPeer(const QString &peerId) {
@@ -7340,7 +7351,6 @@ void MainWindow::applyScaledFixedGeometry() {
   }
   if (statusLabel_) {
     statusLabel_->setFixedSize(UiZoom::s(9), UiZoom::s(9));
-    statusLabel_->move(UiZoom::s(30), UiZoom::s(6));
     updateConnectionIndicator(); // 重画点阵图，否则放大后还是旧尺寸那张
   }
   if (auto *pane = findChild<QWidget *>(QStringLiteral("conversationPane"))) {

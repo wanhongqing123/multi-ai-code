@@ -18,7 +18,7 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
 
     @MainActor private func openPersonalPage(_ app: XCUIApplication,
                                              accountID: String) -> Bool {
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         guard me.waitForExistence(timeout: 40) else { return false }
         for _ in 0..<8 {
             let profile = app.buttons["personal-profile-entry"]
@@ -55,7 +55,7 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
             return
         }
         dismissNotificationPrompt(app)
-        let entry = app.buttons["my-cloud-drive-entry"]
+        let entry = app.buttons["云盘"]
         guard entry.waitForExistence(timeout: 20) else {
             XCTFail("A 的云盘入口未出现")
             return
@@ -127,7 +127,7 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
             return
         }
         dismissNotificationPrompt(app)
-        let entry = app.buttons["my-cloud-drive-entry"]
+        let entry = app.buttons["云盘"]
         XCTAssertTrue(entry.waitForExistence(timeout: 20))
         entry.tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 20),
@@ -174,7 +174,7 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["0 B / 10 GB"].waitForExistence(timeout: 10))
     }
 
-    @MainActor func testPeerEntryHidden() throws {
+    @MainActor func testPeerCloudTabShowsUnavailableState() throws {
         try requireOptIn()
         let accountID = try expectedAccountID("B")
         let app = XCUIApplication()
@@ -188,8 +188,11 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
         }
         dismissNotificationPrompt(app)
         XCTAssertTrue(app.buttons["personal-profile-entry"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["my-cloud-drive-entry"].waitForExistence(timeout: 8),
-                       "未开通账号 B 不应看到云盘入口")
+        let cloud = app.buttons["云盘"]
+        XCTAssertTrue(cloud.waitForExistence(timeout: 8))
+        cloud.tap()
+        XCTAssertTrue(app.staticTexts["云盘暂不可用"].waitForExistence(timeout: 20),
+                      "未开通账号 B 应看到云盘不可用状态")
     }
 
     @MainActor func testPeerApiReturns404() throws {

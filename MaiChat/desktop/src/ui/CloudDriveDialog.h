@@ -2,7 +2,7 @@
 
 #include "auth/DesktopVideoCircleAccess.h"
 
-#include <QDialog>
+#include <QWidget>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -23,7 +23,7 @@ struct MaiCloudVodCancel;
 
 // The desktop host owns only presentation and local paths. HTTP, multipart
 // upload, checkpoint verification, and download live in shared C++ libraries.
-class CloudDriveDialog final : public QDialog {
+class CloudDriveDialog final : public QWidget {
 public:
     using AccessProvider = std::function<DesktopVideoCircleAccess()>;
     using AccountIdProvider = std::function<QString()>;
@@ -32,7 +32,7 @@ public:
 
     CloudDriveDialog(AccessProvider access, AccountIdProvider accountId,
                      PlayCallback play, QWidget* parent = nullptr,
-                     RelocateSelector relocate = {});
+                     RelocateSelector relocate = {}, bool embedded = false);
     ~CloudDriveDialog() override;
 
     // 1: account cloud API returned 200; 0: feature is disabled; -1: retryable.
@@ -92,4 +92,5 @@ private:
     std::shared_ptr<MaiCloudDriveCancel> thumbnailRequestCancel_;
     std::shared_ptr<MaiDownloadCancel> thumbnailDownloadCancel_;
     std::shared_ptr<QTemporaryDir> thumbnailDirectory_;
+    bool embedded_ = false;
 };

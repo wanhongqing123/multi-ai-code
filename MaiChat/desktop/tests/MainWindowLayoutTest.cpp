@@ -154,6 +154,7 @@ private slots:
     void agentSettingsIgnoresLegacyTokenStoreFailure();
     void leftNavigationRailIsResizableAndWider();
     void navigationIconsSitNearTopEdge();
+    void cloudDriveNavigationUsesMainPageInRequestedOrder();
     void removesRedundantChromeLabels();
     void conversationListsUseDelegateItemsForSmoothScrolling();
     void selectedConversationRowReachesTheListEdge();
@@ -2780,7 +2781,7 @@ void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {
     // 导航按钮按需求只留图标：文字移到 accessibleName / tooltip。这里同时钉住三点——
     // 确实没有文字、仍能认出是哪个入口、图标没漏设（只去文字不给图标就成了空按钮）。
     QVERIFY(contactsNavButton->text().isEmpty());
-    QCOMPARE(contactsNavButton->accessibleName(), QStringLiteral("通讯录"));
+    QCOMPARE(contactsNavButton->accessibleName(), QStringLiteral("好友列表"));
     QVERIFY(!contactsNavButton->icon().isNull());
     // 纯图标之后导航栏按需求收窄，并且不再可拉伸：min==max 才能保证它不会被
     // splitter 拖回原来那么宽。
@@ -2792,8 +2793,9 @@ void MainWindowLayoutTest::leftNavigationRailIsResizableAndWider() {
     // 而每个按钮单独看都正常，所以要横向比。
     const QList<QPushButton*> navButtons{
         window.findChild<QPushButton*>(QStringLiteral("messagesNavButton")),
+        window.findChild<QPushButton*>(QStringLiteral("cloudNavButton")),
+        window.findChild<QPushButton*>(QStringLiteral("agentNavButton")),
         contactsNavButton,
-        window.findChild<QPushButton*>(QStringLiteral("remoteNavButton")),
         window.findChild<QPushButton*>(QStringLiteral("settingsNavButton"))};
     for (QPushButton* button : navButtons) {
         QVERIFY(button != nullptr);
@@ -2822,6 +2824,55 @@ void MainWindowLayoutTest::navigationIconsSitNearTopEdge() {
     QVERIFY(navRail != nullptr);
     QVERIFY(navRail->layout() != nullptr);
     QCOMPARE(navRail->layout()->contentsMargins().top(), 0);
+}
+
+void MainWindowLayoutTest::cloudDriveNavigationUsesMainPageInRequestedOrder() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
+    MainWindow window(app);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const QStringList names{QStringLiteral("messagesNavButton"),
+                            QStringLiteral("cloudNavButton"),
+                            QStringLiteral("agentNavButton"),
+                            QStringLiteral("contactsNavButton"),
+                            QStringLiteral("settingsNavButton")};
+    const QStringList labels{QStringLiteral("消息"), QStringLiteral("云盘"),
+                             QStringLiteral("创作中心"), QStringLiteral("好友列表"),
+                             QStringLiteral("我的")};
+    int previousTop = -1;
+    for (int index = 0; index < names.size(); ++index) {
+        auto* button = window.findChild<QPushButton*>(names.at(index));
+        QVERIFY(button != nullptr);
+        QCOMPARE(button->accessibleName(), labels.at(index));
+        QVERIFY(button->isVisible());
+        const int top = button->mapTo(&window, QPoint(0, 0)).y();
+        QVERIFY(top > previousTop);
+        previousTop = top;
+    }
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("remoteNavButton")) == nullptr);
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("remoteDesktopButton")) != nullptr);
+    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("remoteViewerReturnButton")) != nullptr);
+    const QByteArray messagesCapture = qgetenv("MAICHAT_CAPTURE_MESSAGES_NAV");
+    if (!messagesCapture.isEmpty())
+        QVERIFY(window.grab().save(QString::fromUtf8(messagesCapture)));
+
+    auto* cloudButton = window.findChild<QPushButton*>(QStringLiteral("cloudNavButton"));
+    cloudButton->click();
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("contentStack"));
+    auto* page = window.findChild<QWidget*>(QStringLiteral("cloudDrivePage"));
+    auto* drive = window.findChild<QWidget*>(QStringLiteral("cloudDriveDialog"));
+    QVERIFY(stack != nullptr);
+    QVERIFY(page != nullptr);
+    QVERIFY(drive != nullptr);
+    QCOMPARE(stack->currentWidget(), page);
+    QVERIFY(drive->isVisible());
+    QVERIFY(!drive->isWindow());
+    QVERIFY(cloudButton->property("selected").toBool());
+    QVERIFY(window.findChild<QWidget*>(QStringLiteral("settingsCloudDriveOpen")) == nullptr);
+    const QByteArray capture = qgetenv("MAICHAT_CAPTURE_CLOUD_NAV");
+    if (!capture.isEmpty()) QVERIFY(window.grab().save(QString::fromUtf8(capture)));
 }
 
 void MainWindowLayoutTest::removesRedundantChromeLabels() {
@@ -3743,8 +3794,9 @@ void MainWindowLayoutTest::everyNavButtonIsStyledConsistently() {
     // 这里断言每个导航按钮都出现在样式表里，且共用同一条左对齐规则。
     const QString styleSheet = window.styleSheet();
     const QStringList navObjectNames{
-        QStringLiteral("messagesNavButton"), QStringLiteral("contactsNavButton"),
-        QStringLiteral("remoteNavButton"), QStringLiteral("settingsNavButton")};
+        QStringLiteral("messagesNavButton"), QStringLiteral("cloudNavButton"),
+        QStringLiteral("agentNavButton"), QStringLiteral("contactsNavButton"),
+        QStringLiteral("settingsNavButton")};
 
     for (const QString& name : navObjectNames) {
         auto* button = window.findChild<QPushButton*>(name);
@@ -3916,7 +3968,9 @@ void MainWindowLayoutTest::maximizedImageBubbleOpensOnlyOnePreview() {
     QVERIFY(imageLabel != nullptr);
 
     // 连续到达的点击事件也只能复用当前预览，不能叠出多个预览窗口。
+    QCOMPARE(window.findChildren<ImagePreviewDialog*>().size(), 0);
     QTest::mouseClick(imageLabel, Qt::LeftButton);
+    QCOMPARE(window.findChildren<ImagePreviewDialog*>().size(), 1);
     QTest::mouseClick(imageLabel, Qt::LeftButton);
     QVERIFY(window.findChild<QLabel*>(QStringLiteral("imagePreviewTransitionSnapshot")) != nullptr);
     const QByteArray capture = qgetenv("MAICHAT_TEST_CAPTURE_PATH");

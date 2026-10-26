@@ -108,7 +108,7 @@ public final class MaiCloudDriveImageProductionCanaryTest {
                 long deadline = System.currentTimeMillis() + 15_000;
                 while (System.currentTimeMillis() < deadline && !opened.get()) {
                     screen.onActivity(activity -> {
-                        View tab = byDescription(activity.getWindow().getDecorView(), "我");
+                        View tab = byDescription(activity.getWindow().getDecorView(), "云盘");
                         if (tab != null && tab.isShown()) {
                             tab.performClick();
                             opened.set(true);
@@ -121,16 +121,15 @@ public final class MaiCloudDriveImageProductionCanaryTest {
                 deadline = System.currentTimeMillis() + 15_000;
                 while (System.currentTimeMillis() < deadline && !opened.get()) {
                     screen.onActivity(activity -> {
-                        View entry = byDescription(activity.getWindow().getDecorView(),
-                            "打开我的云盘");
-                        if (entry != null && entry.isShown()) {
-                            entry.performClick();
+                        View page = byDescription(activity.getWindow().getDecorView(),
+                            "云盘状态");
+                        if (page != null && page.isShown()) {
                             opened.set(true);
                         }
                     });
                     if (!opened.get()) Thread.sleep(100);
                 }
-                assertTrue("Normal App cloud entry did not become visible", opened.get());
+                assertTrue("Normal App cloud page did not become visible", opened.get());
                 File thumbnailDirectory = new File(context.getCacheDir(),
                     "cloud-drive-thumbnails/" + MaiCloudDrive.accountKey(auth.accountId()));
                 deadline = System.currentTimeMillis() + 30_000;

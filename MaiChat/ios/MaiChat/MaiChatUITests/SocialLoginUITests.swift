@@ -341,7 +341,7 @@ final class SocialLoginUITests: XCTestCase {
         app.buttons["account-minimum-age"].tap()
         app.buttons["account-agreement"].tap()
         app.buttons["account-submit"].tap()
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
         openAccountSettings(in: app)
         let accountValue = app.staticTexts.matching(NSPredicate(
@@ -398,7 +398,7 @@ final class SocialLoginUITests: XCTestCase {
         app.buttons["account-minimum-age"].tap()
         app.buttons["account-agreement"].tap()
         app.buttons["account-submit"].tap()
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         openPersonalProfile(in: app)
         let edit = app.buttons["account-nickname-entry"]
         XCTAssertTrue(edit.waitForExistence(timeout: 10))
@@ -419,7 +419,7 @@ final class SocialLoginUITests: XCTestCase {
 
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         openPersonalProfile(in: app)
         XCTAssertTrue(nickname.waitForExistence(timeout: 15))
     }
@@ -447,7 +447,7 @@ final class SocialLoginUITests: XCTestCase {
         if app.buttons["以后"].waitForExistence(timeout: 3) {
             app.buttons["以后"].tap()
         }
-        let contacts = app.buttons["通讯录"]
+        let contacts = app.buttons["好友列表"]
         XCTAssertTrue(contacts.waitForExistence(timeout: 30))
         contacts.tap()
         let add = app.buttons["添加好友"]
@@ -470,7 +470,7 @@ final class SocialLoginUITests: XCTestCase {
         if app.buttons["以后"].waitForExistence(timeout: 3) {
             app.buttons["以后"].tap()
         }
-        let contacts = app.buttons["通讯录"]
+        let contacts = app.buttons["好友列表"]
         XCTAssertTrue(contacts.waitForExistence(timeout: 30))
         contacts.tap()
         let friend = app.staticTexts[friendId].firstMatch
@@ -506,7 +506,7 @@ final class SocialLoginUITests: XCTestCase {
         app.buttons["account-minimum-age"].tap()
         app.buttons["account-agreement"].tap()
         app.buttons["account-submit"].tap()
-        let contacts = app.buttons["通讯录"]
+        let contacts = app.buttons["好友列表"]
         XCTAssertTrue(contacts.waitForExistence(timeout: 30))
         if app.buttons["以后"].waitForExistence(timeout: 3) { app.buttons["以后"].tap() }
         if app.buttons["稍后"].waitForExistence(timeout: 5) { app.buttons["稍后"].tap() }
@@ -531,7 +531,7 @@ final class SocialLoginUITests: XCTestCase {
         app.launch()
         let field = app.textFields["account-phone"]
         if !field.waitForExistence(timeout: 5) {
-            let me = app.buttons["我"]
+            let me = app.buttons["我的"]
             XCTAssertTrue(me.waitForExistence(timeout: 10))
             me.tap()
             let settings = app.buttons["设置"]
@@ -565,7 +565,7 @@ final class SocialLoginUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["MAICHAT_LOCAL_UI_SOCIAL_TEST"] = "0"
         app.launch()
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
         me.tap()
         let settings = app.buttons["设置"]
@@ -579,7 +579,7 @@ final class SocialLoginUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["MAICHAT_LOCAL_UI_SOCIAL_TEST"] = "1"
         app.launch()
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.textFields["social-bind-phone"].exists)
     }
 
@@ -636,7 +636,7 @@ final class SocialLoginUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_LOCAL_UI_SOCIAL_CREDENTIAL"] = credential
         app.launch()
         // 测试间共享模拟器；先从前一个账号退出，再让新页面接收本机 SDK 凭据。
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         if me.waitForExistence(timeout: 5) {
             me.tap()
             let settings = app.buttons["设置"]
@@ -687,7 +687,7 @@ final class SocialLoginUITests: XCTestCase {
         codeField.typeText(code)
         XCTAssertTrue(submit.isEnabled)
         submit.tap()
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         let completed = XCTAttachment(screenshot: app.screenshot())
         completed.name = "social-phone-binding-completed"
         completed.lifetime = .keepAlways

@@ -173,6 +173,7 @@ private:
     void showContactsPage();
     void showSettingsPage();
     void showRemotePage();
+    void showCloudDrivePage();
     void showAgentPage();
     void rebuildAgentPage();
     void probeVideoCircleAvailability();
@@ -311,9 +312,6 @@ private:
     std::function<DesktopVideoCircleAccess()> videoCircleAccessProvider_;
     VideoCircleDialog* videoCircleDialog_ = nullptr;
     CloudDriveDialog* cloudDriveDialog_ = nullptr;
-    QWidget* cloudSettingsRow_ = nullptr;
-    QLabel* cloudSettingsValue_ = nullptr;
-    QPushButton* cloudSettingsButton_ = nullptr;
     unsigned cloudDriveProbeGeneration_ = 0;
     bool cloudDriveAvailable_ = false;
     unsigned videoCircleProbeGeneration_ = 0;
@@ -352,6 +350,7 @@ private:
     // 而"上次收起来的组这次还是收着的"反而容易让人以为联系人少了。
     QSet<QString> collapsedContactGroups_;
     QPushButton* messageNavButton_ = nullptr;
+    QPushButton* cloudNavButton_ = nullptr;
     QPushButton* contactsNavButton_ = nullptr;
     QPushButton* settingsNavButton_ = nullptr;
     QStackedWidget* contentStack_ = nullptr;
@@ -362,6 +361,7 @@ private:
     int videoDockVerticalExtent_ = 0;
     QPointer<QWidget> videoDialog_;
     QWidget* messagesPage_ = nullptr;
+    QWidget* cloudDrivePage_ = nullptr;
     QWidget* contactsPage_ = nullptr;
     QStackedWidget* contactProfileStack_ = nullptr;
     QLabel* contactProfileAvatar_ = nullptr;
@@ -380,6 +380,7 @@ private:
     QLabel* titleLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QPushButton* remoteDesktopButton_ = nullptr;
+    QPushButton* remoteViewerReturnButton_ = nullptr;
     SharingIndicatorBar* sharingIndicator_ = nullptr;
     RemoteDesktopViewPanel* remoteDesktopView_ = nullptr;
     // 进全屏前窗口是不是最大化的：退出时要还原成原样，不能一律 showNormal。
@@ -389,7 +390,6 @@ private:
     // 可能是 1728x1080；首帧回调前保持空，坐标采集也保持禁用。
     QSize remoteDesktopRemoteVideoSize_;
     QWidget* remotePage_ = nullptr;
-    QPushButton* remoteNavButton_ = nullptr;
 
     // ---- AI 助手 ----
     // 和 IM 那一侧完全不相干：不共用 RemoteIMClient，也不碰 chatState。

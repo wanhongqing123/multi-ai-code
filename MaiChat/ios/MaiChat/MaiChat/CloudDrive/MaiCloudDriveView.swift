@@ -215,56 +215,75 @@ struct MaiCloudDriveView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
-                quotaCard
-                if !model.notice.isEmpty {
-                    Text(model.notice)
-                        .font(.subheadline)
-                        .foregroundStyle(RemoteIMStyle.textPrimary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RemoteIMStyle.blueSoft,
-                                    in: RoundedRectangle(cornerRadius: 12))
-                }
-                if !model.localTasks.isEmpty {
-                    sectionTitle("待上传")
-                    ForEach(model.localTasks) { task in uploadCard(task) }
-                }
-                sectionTitle("我的文件")
-                if model.loading && model.videos.isEmpty {
-                    ProgressView("正在加载云盘")
-                        .frame(maxWidth: .infinity, minHeight: 180)
-                } else if model.videos.isEmpty && model.listError.isEmpty {
+                if model.availability == .disabled {
                     VStack(spacing: 12) {
-                        Image(systemName: "photo.on.rectangle.angled")
+                        Image(systemName: "icloud.slash")
                             .font(.system(size: 36, weight: .light))
-                            .foregroundStyle(RemoteIMStyle.blue)
-                        Text("还没有图片或视频").font(.headline)
-                        Text("上传后仅当前 MaiChat 账号可见")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .accessibilityIdentifier("cloud-drive-empty")
-                }
-                ForEach(model.videos) { media in mediaCard(media) }
-                if model.nextCursor != nil {
-                    Button(model.loadingMore ? "加载中…" : "加载更多") {
-                        Task { await model.loadMore() }
-                    }
-                    .disabled(model.loadingMore)
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .accessibilityIdentifier("cloud-drive-load-more")
-                }
-                if !model.listError.isEmpty {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text(model.listError).foregroundStyle(.red)
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                        Text("云盘暂不可用").font(.headline)
+                        Text("当前账号尚未开通云盘，或服务暂时不可用")
+                            .font(.subheadline)
+                            .foregroundStyle(RemoteIMStyle.textSecondary)
                         Button("重试") { Task { await model.reload() } }
+                            .font(.subheadline.weight(.semibold))
                     }
-                    .font(.subheadline)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.red.opacity(0.07),
-                                in: RoundedRectangle(cornerRadius: 12))
+                    .frame(maxWidth: .infinity, minHeight: 240)
+                    .accessibilityIdentifier("cloud-drive-unavailable")
+                } else {
+                    if model.availability == .available { quotaCard }
+                    if !model.notice.isEmpty {
+                        Text(model.notice)
+                            .font(.subheadline)
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RemoteIMStyle.blueSoft,
+                                        in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    if !model.localTasks.isEmpty {
+                        sectionTitle("待上传")
+                        ForEach(model.localTasks) { task in uploadCard(task) }
+                    }
+                    sectionTitle("我的文件")
+                    if model.availability == .unknown && model.listError.isEmpty {
+                        ProgressView("正在连接云盘")
+                            .frame(maxWidth: .infinity, minHeight: 180)
+                    } else if model.loading && model.videos.isEmpty {
+                        ProgressView("正在加载云盘")
+                            .frame(maxWidth: .infinity, minHeight: 180)
+                    } else if model.videos.isEmpty && model.listError.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 36, weight: .light))
+                                .foregroundStyle(RemoteIMStyle.blue)
+                            Text("还没有图片或视频").font(.headline)
+                            Text("上传后仅当前 MaiChat 账号可见")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .accessibilityIdentifier("cloud-drive-empty")
+                    }
+                    ForEach(model.videos) { media in mediaCard(media) }
+                    if model.nextCursor != nil {
+                        Button(model.loadingMore ? "加载中…" : "加载更多") {
+                            Task { await model.loadMore() }
+                        }
+                        .disabled(model.loadingMore)
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .accessibilityIdentifier("cloud-drive-load-more")
+                    }
+                    if !model.listError.isEmpty {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text(model.listError).foregroundStyle(.red)
+                            Button("重试") { Task { await model.reload() } }
+                        }
+                        .font(.subheadline)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.red.opacity(0.07),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                    }
                 }
             }
             .padding(18)
@@ -290,6 +309,7 @@ struct MaiCloudDriveView: View {
                 }
                 .accessibilityLabel("上传图片或视频")
                 .accessibilityIdentifier("cloud-drive-upload")
+                .disabled(model.availability != .available)
             }
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.arguments.contains("--cloud-drive-ui-test") {

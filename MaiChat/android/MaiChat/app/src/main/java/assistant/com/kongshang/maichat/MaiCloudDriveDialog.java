@@ -55,6 +55,7 @@ final class MaiCloudDriveDialog {
     private MaiCloudVod.Opening vodOpening;
     private final ArrayList<JSONObject> media = new ArrayList<>();
     private AlertDialog dialog;
+    private boolean embedded;
     private LinearLayout page, uploads, library;
     private TextView quota, status;
     private Button upload, next;
@@ -73,11 +74,33 @@ final class MaiCloudDriveDialog {
         this.downloads = new MaiChatAttachmentDownload.NativeTransport(client::trustPem);
     }
 
-    boolean isShowing() { return dialog != null && dialog.isShowing(); }
+    boolean isShowing() {
+        return embedded ? page != null && page.getParent() != null
+            : dialog != null && dialog.isShowing();
+    }
 
-    void dismiss() { if (isShowing()) dialog.dismiss(); }
+    boolean isEmbedded() { return embedded && isShowing(); }
+
+    void dismiss() {
+        if (!isShowing()) return;
+        if (!embedded) { dialog.dismiss(); return; }
+        release();
+        if (page.getParent() instanceof ViewGroup)
+            ((ViewGroup) page.getParent()).removeView(page);
+        embedded = false;
+    }
 
     void show() {
+        embedded = false;
+        showIn(null);
+    }
+
+    void showEmbedded(ViewGroup host) {
+        embedded = true;
+        showIn(host);
+    }
+
+    private void showIn(ViewGroup host) {
         account = MaiChatAuthClient.shared(activity).accountId();
         if (account.isEmpty()) {
             Toast.makeText(activity, "请先登录 MaiChat", Toast.LENGTH_SHORT).show();
@@ -105,10 +128,12 @@ final class MaiCloudDriveDialog {
         page.addView(actions, row());
         upload = button("上传图片或视频", () -> activity.pickCloudDriveMedia(this));
         actions.addView(upload, new LinearLayout.LayoutParams(0, dp(44), 1));
-        Button close = button("关闭", () -> dialog.dismiss());
-        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(dp(74), dp(44));
-        closeParams.leftMargin = dp(10);
-        actions.addView(close, closeParams);
+        if (!embedded) {
+            Button close = button("关闭", () -> dialog.dismiss());
+            LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(dp(74), dp(44));
+            closeParams.leftMargin = dp(10);
+            actions.addView(close, closeParams);
+        }
         status = label("", 13, MaiChatTheme.SECONDARY);
         status.setContentDescription("云盘状态");
         page.addView(status, row());
@@ -119,7 +144,7 @@ final class MaiCloudDriveDialog {
         LinearLayout.LayoutParams progressParams = row();
         progressParams.topMargin = dp(8);
         page.addView(progress, progressParams);
-        ScrollView scroll = new CappedScrollView(activity,
+        ScrollView scroll = embedded ? new ScrollView(activity) : new CappedScrollView(activity,
             (int) (activity.getResources().getDisplayMetrics().heightPixels * .56f));
         LinearLayout list = new LinearLayout(activity);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -134,21 +159,17 @@ final class MaiCloudDriveDialog {
         next = button("加载更多", this::loadNext);
         next.setVisibility(View.GONE);
         list.addView(next, row());
-        page.addView(scroll, row());
-        dialog = new AlertDialog.Builder(activity).setView(page).create();
-        dialog.setOnDismissListener(ignored -> {
-            ++generation;
-            client.cancel();
-            downloadScope.cancel();
-            if (vodOpening != null) vodOpening.cancel();
-            cleanupIdlePlaybackCache();
-            clearThumbnails();
-            if (activity.currentCloudDriveDialog() == this) activity.clearCloudDriveDialog(this);
-        });
-        dialog.show();
+        page.addView(scroll, embedded ? new LinearLayout.LayoutParams(-1, 0, 1) : row());
+        if (embedded) {
+            host.addView(page, new ViewGroup.LayoutParams(-1, -1));
+        } else {
+            dialog = new AlertDialog.Builder(activity).setView(page).create();
+            dialog.setOnDismissListener(ignored -> release());
+            dialog.show();
+        }
         cleanupIdlePlaybackCache();
         activity.cleanupIdleCloudDriveImages();
-        Window window = dialog.getWindow();
+        Window window = embedded ? null : dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawableResource(android.R.color.transparent);
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -157,6 +178,16 @@ final class MaiCloudDriveDialog {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         }
         refresh();
+    }
+
+    private void release() {
+        ++generation;
+        client.cancel();
+        downloadScope.cancel();
+        if (vodOpening != null) vodOpening.cancel();
+        cleanupIdlePlaybackCache();
+        clearThumbnails();
+        if (activity.currentCloudDriveDialog() == this) activity.clearCloudDriveDialog(this);
     }
 
     void confirmAgentFile(File file) {

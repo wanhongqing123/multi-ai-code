@@ -16,7 +16,7 @@ final class CloudDriveDeviceReadOnlySmokeUITests: XCTestCase {
         initial.name = "ios122-real-device-messages"
         initial.lifetime = .keepAlways
         add(initial)
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 20))
         me.tap()
         let profile = app.buttons["personal-profile-entry"]

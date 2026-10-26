@@ -230,16 +230,17 @@ int CloudDriveDialog::availability(const DesktopVideoCircleAccess& access) {
 }
 
 CloudDriveDialog::CloudDriveDialog(AccessProvider access, AccountIdProvider accountId,
-    PlayCallback play, QWidget* parent, RelocateSelector relocate)
-    : QDialog(parent), accessProvider_(std::move(access)),
+    PlayCallback play, QWidget* parent, RelocateSelector relocate, bool embedded)
+    : QWidget(parent), accessProvider_(std::move(access)),
       accountIdProvider_(std::move(accountId)), play_(std::move(play)),
-      relocate_(std::move(relocate)) {
+      relocate_(std::move(relocate)), embedded_(embedded) {
     setObjectName(QStringLiteral("cloudDriveDialog"));
+    if (embedded_) setWindowFlags(Qt::Widget);
     setWindowTitle(QStringLiteral("我的云盘"));
     resize(740, 640);
     setMinimumSize(540, 450);
     setStyleSheet(QStringLiteral(
-        "QDialog#cloudDriveDialog{background:#fff;color:#172033;}"
+        "QWidget#cloudDriveDialog{background:#fff;color:#172033;}"
         "QPushButton{padding:7px 12px;border:0;border-radius:8px;background:#eef6fd;color:#0b67b7;}"
         "QPushButton:hover{background:#dceefb;}"
         "QPushButton:disabled{background:#f4f5f7;color:#98a2b3;}"
@@ -262,8 +263,9 @@ CloudDriveDialog::CloudDriveDialog(AccessProvider access, AccountIdProvider acco
     });
     header->addWidget(uploadButton_);
     auto* close = new QPushButton(QStringLiteral("关闭"), this);
-    connect(close, &QPushButton::clicked, this, &QDialog::close);
-    header->addWidget(close);
+    connect(close, &QPushButton::clicked, this, &QWidget::close);
+    if (embedded_) close->hide();
+    else header->addWidget(close);
     root->addLayout(header);
 
     auto* quotaCard = new QFrame(this);
@@ -336,12 +338,27 @@ bool CloudDriveDialog::sameAccount() const {
 }
 
 void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
-    if (!accessProvider_ || !accountIdProvider_ || !accessProvider_().isValid()) {
+    const DesktopVideoCircleAccess access = accessProvider_ ? accessProvider_() :
+        DesktopVideoCircleAccess{};
+    const QString currentAccount = accountIdProvider_ ? accountIdProvider_() : QString();
+    if (!access.isValid() || currentAccount.isEmpty() || access.accountId != currentAccount) {
+        cancelPending();
+        resetThumbnails();
+        ++generation_;
+        requestCancel_.reset();
+        downloadCancel_.reset();
+        vodCancel_.reset();
+        openedAccountId_.clear();
+        nextCursor_.clear();
+        clearRows(videoRows_);
+        clearRows(uploadRows_);
+        setBusy(false);
+        quota_->setText(QStringLiteral("未连接"));
+        quotaBar_->setValue(0);
         setStatus(QStringLiteral("请先登录 MaiChat。"), true);
         show();
         return;
     }
-    const QString currentAccount = accountIdProvider_();
     if (openedAccountId_ != currentAccount) {
         cancelPending();
         resetThumbnails();
@@ -351,12 +368,16 @@ void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
         setBusy(false);
         openedAccountId_ = currentAccount;
         nextCursor_.clear();
+        quota_->setText(QStringLiteral("正在读取空间…"));
+        quotaBar_->setValue(0);
         clearRows(videoRows_);
         clearRows(uploadRows_);
     }
     show();
-    raise();
-    activateWindow();
+    if (!embedded_) {
+        raise();
+        activateWindow();
+    }
     refreshCheckpoints();
     if (suggestedVideo.isEmpty()) refresh();
     else {
@@ -388,7 +409,7 @@ void CloudDriveDialog::cancelPending() {
 
 void CloudDriveDialog::closeEvent(QCloseEvent* event) {
     cancelPending();
-    QDialog::closeEvent(event);
+    QWidget::closeEvent(event);
 }
 
 void CloudDriveDialog::setStatus(const QString& message, bool error) {

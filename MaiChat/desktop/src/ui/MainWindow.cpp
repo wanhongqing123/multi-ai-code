@@ -1027,6 +1027,7 @@ private:
 
 enum class LineIconKind {
   Messages = 1,
+  Cloud,
   Contacts,
   Settings,
   Search,
@@ -1051,6 +1052,7 @@ int lineIconKindValue(LineIconKind kind) { return static_cast<int>(kind); }
 LineIconKind lineIconKindFromValue(int value) {
   switch (static_cast<LineIconKind>(value)) {
   case LineIconKind::Messages:
+  case LineIconKind::Cloud:
   case LineIconKind::Contacts:
   case LineIconKind::Settings:
   case LineIconKind::Search:
@@ -1090,6 +1092,19 @@ QIcon makeLineIcon(LineIconKind kind, const QColor &color) {
     painter.drawLine(QPointF(17, 27), QPointF(27, 27));
     painter.drawLine(QPointF(18, 34), QPointF(14, 40));
     break;
+  case LineIconKind::Cloud: {
+    QPainterPath cloud;
+    cloud.moveTo(14, 36);
+    cloud.cubicTo(7, 36, 6, 29, 10, 25);
+    cloud.cubicTo(10, 20, 14, 16, 19, 16);
+    cloud.cubicTo(22, 10, 28, 9, 33, 14);
+    cloud.cubicTo(35, 16, 36, 18, 37, 21);
+    cloud.cubicTo(43, 23, 43, 31, 38, 35);
+    cloud.quadTo(36, 36, 33, 36);
+    cloud.closeSubpath();
+    painter.drawPath(cloud);
+    break;
+  }
   case LineIconKind::Contacts:
     painter.drawEllipse(QRectF(18, 10, 12, 12));
     painter.drawArc(QRectF(13, 21, 22, 18), 28 * 16, 124 * 16);
@@ -1258,7 +1273,7 @@ QString navIconResource(LineIconKind kind) {
   case LineIconKind::Screen:
     return QStringLiteral(":/maichat/icons/device-desktop.svg");
   case LineIconKind::Settings:
-    return QStringLiteral(":/maichat/icons/settings.svg");
+    return QStringLiteral(":/maichat/icons/user-circle.svg");
   case LineIconKind::Send:
     return QStringLiteral(":/maichat/icons/arrow-up.svg");
   default:
@@ -1274,6 +1289,9 @@ QColor navIconColor(LineIconKind kind, bool selected) {
   case LineIconKind::Assistant:
     return QColor(selected ? QStringLiteral("#5e52b6")
                            : QStringLiteral("#6f62c7"));
+  case LineIconKind::Cloud:
+    return QColor(selected ? QStringLiteral("#0b76bf")
+                           : QStringLiteral("#168fd0"));
   case LineIconKind::Contacts:
     return QColor(selected ? QStringLiteral("#117960")
                            : QStringLiteral("#198c73"));
@@ -1293,7 +1311,7 @@ QColor navIconColor(LineIconKind kind, bool selected) {
 
 QIcon makeNavIcon(LineIconKind kind, const QColor &color, bool filled = false) {
   QString resource = navIconResource(kind);
-  if (filled && !resource.isEmpty())
+  if (filled && !resource.isEmpty() && kind != LineIconKind::Settings)
     resource.replace(QStringLiteral(".svg"), QStringLiteral("-filled.svg"));
   if (resource.isEmpty())
     return makeLineIcon(kind, color);
@@ -1887,7 +1905,6 @@ void MainWindow::prepareForAccountDisconnect(std::function<void()> completion) {
   videoCircleAvailable_ = false;
   ++cloudDriveProbeGeneration_;
   cloudDriveAvailable_ = false;
-  if (cloudSettingsRow_) cloudSettingsRow_->hide();
   if (agentPanel_) agentPanel_->setCloudDriveAvailable(false);
   if (videoCircleDialog_) videoCircleDialog_->close();
   if (cloudDriveDialog_) cloudDriveDialog_->close();
@@ -2181,46 +2198,39 @@ void MainWindow::buildUi() {
 
   messageNavButton_ = makeNavButton(
       QStringLiteral("消息"), QStringLiteral("messagesNavButton"), navRail_);
+  cloudNavButton_ = makeNavButton(
+      QStringLiteral("云盘"), QStringLiteral("cloudNavButton"), navRail_);
+  agentNavButton_ = makeNavButton(
+      QStringLiteral("创作中心"), QStringLiteral("agentNavButton"), navRail_);
   contactsNavButton_ = makeNavButton(
-      QStringLiteral("通讯录"), QStringLiteral("contactsNavButton"), navRail_);
-  // 远程桌面画面在应用内成页展示，不再弹独立窗口。
-  remoteNavButton_ = makeNavButton(QStringLiteral("远程"),
-                                   QStringLiteral("remoteNavButton"), navRail_);
+      QStringLiteral("好友列表"), QStringLiteral("contactsNavButton"), navRail_);
   settingsNavButton_ = makeNavButton(
-      QStringLiteral("设置"), QStringLiteral("settingsNavButton"), navRail_);
-  agentNavButton_ = makeNavButton(QStringLiteral("AI"),
-                                  QStringLiteral("agentNavButton"), navRail_);
+      QStringLiteral("我的"), QStringLiteral("settingsNavButton"), navRail_);
   messageNavButton_->setProperty("navIconKind",
                                  lineIconKindValue(LineIconKind::Messages));
-  contactsNavButton_->setProperty("navIconKind",
-                                  lineIconKindValue(LineIconKind::Contacts));
-  remoteNavButton_->setProperty("navIconKind",
-                                lineIconKindValue(LineIconKind::Screen));
-  settingsNavButton_->setProperty("navIconKind",
-                                  lineIconKindValue(LineIconKind::Settings));
-  // 没有这一句那一格就是空白——makeNavButton 只画文字，图标是靠这个属性来的。
+  cloudNavButton_->setProperty("navIconKind",
+                               lineIconKindValue(LineIconKind::Cloud));
   agentNavButton_->setProperty("navIconKind",
                                lineIconKindValue(LineIconKind::Assistant));
+  contactsNavButton_->setProperty("navIconKind",
+                                  lineIconKindValue(LineIconKind::Contacts));
+  settingsNavButton_->setProperty("navIconKind",
+                                  lineIconKindValue(LineIconKind::Settings));
   messageNavButton_->setProperty("selected", true);
   for (QPushButton *navButton :
-       {messageNavButton_, contactsNavButton_, remoteNavButton_,
-        settingsNavButton_, agentNavButton_}) {
+       {messageNavButton_, cloudNavButton_, agentNavButton_,
+        contactsNavButton_, settingsNavButton_}) {
     navButton->setIconSize(QSize(kNavRailIconPixels, kNavRailIconPixels));
   }
   applyNavButtonIcon(messageNavButton_, true);
-  applyNavButtonIcon(contactsNavButton_, false);
-  applyNavButtonIcon(remoteNavButton_, false);
-  applyNavButtonIcon(settingsNavButton_, false);
-  // 漏了这一句按钮就是个空白方块：图标不是 makeNavButton 画的，
-  // 是这里按 navIconKind 属性单独画上去的。
+  applyNavButtonIcon(cloudNavButton_, false);
   applyNavButtonIcon(agentNavButton_, false);
+  applyNavButtonIcon(contactsNavButton_, false);
+  applyNavButtonIcon(settingsNavButton_, false);
   navLayout->addWidget(messageNavButton_);
+  navLayout->addWidget(cloudNavButton_);
+  navLayout->addWidget(agentNavButton_);
   navLayout->addWidget(contactsNavButton_);
-  navLayout->addWidget(remoteNavButton_);
-  // AI 放在「消息」下面、其它之上：它是要常用的东西，沉到最底下就等于藏起来。
-  // makeNavButton 只设 parent，不入布局——漏了这一句按钮会存在但永远不显示。
-  navLayout->insertWidget(navLayout->indexOf(contactsNavButton_),
-                          agentNavButton_);
   navLayout->addWidget(settingsNavButton_);
   navLayout->addStretch(1);
 
@@ -2297,6 +2307,14 @@ void MainWindow::buildUi() {
   connect(remoteDesktopButton_, &QPushButton::clicked, this,
           &MainWindow::requestRemoteDesktop);
   headerLayout->addWidget(remoteDesktopButton_);
+  remoteViewerReturnButton_ = makeHeaderIconButton(
+      LineIconKind::Screen, QStringLiteral("查看远程画面"), header);
+  remoteViewerReturnButton_->setObjectName(
+      QStringLiteral("remoteViewerReturnButton"));
+  remoteViewerReturnButton_->hide();
+  connect(remoteViewerReturnButton_, &QPushButton::clicked, this,
+          &MainWindow::showRemotePage);
+  headerLayout->addWidget(remoteViewerReturnButton_);
   moreButton_ =
       makeHeaderIconButton(LineIconKind::More, QStringLiteral("更多"), header);
   moreButton_->setObjectName(QStringLiteral("moreButton"));
@@ -2870,24 +2888,28 @@ void MainWindow::buildUi() {
   settingsLayout->addWidget(settingsTitle);
   settingsLayout->addWidget(settingsSubtitle);
   settingsLayout->addWidget(profileCard);
-  cloudSettingsValue_ = new QLabel(QStringLiteral("私人空间"), settingsContent);
-  cloudSettingsRow_ = createSettingsRow(
-      QStringLiteral("视频云盘"), cloudSettingsValue_,
-      QStringLiteral("跨设备保存和播放视频；单个最多 2 GB，账号空间 10 GB。"));
-  cloudSettingsRow_->hide();
-  cloudSettingsButton_ = new QPushButton(QStringLiteral("打开"), cloudSettingsRow_);
-  cloudSettingsButton_->setObjectName(QStringLiteral("settingsCloudDriveOpen"));
-  cloudSettingsButton_->setProperty("settingsRowButton", true);
-  qobject_cast<QHBoxLayout*>(cloudSettingsRow_->layout())->addWidget(cloudSettingsButton_);
-  connect(cloudSettingsButton_, &QPushButton::clicked, this, [this] {
-    if (cloudDriveAvailable_) openCloudDrive();
-    else probeCloudDriveAvailability();
-  });
-  settingsLayout->addWidget(cloudSettingsRow_);
   settingsLayout->addWidget(settingsPanel);
   settingsLayout->addSpacing(UiZoom::s(24));
   settingsLayout->addWidget(buildRemoteDesktopSettingsPanel(settingsContent));
   settingsLayout->addStretch(1);
+
+  cloudDrivePage_ = new QWidget(contentStack_);
+  cloudDrivePage_->setObjectName(QStringLiteral("cloudDrivePage"));
+  auto* cloudDriveLayout = new QVBoxLayout(cloudDrivePage_);
+  cloudDriveLayout->setContentsMargins(0, 0, 0, 0);
+  cloudDriveLayout->setSpacing(0);
+  cloudDriveDialog_ = new CloudDriveDialog(
+      [this] { return videoCircleAccessProvider_ ? videoCircleAccessProvider_()
+                                                  : DesktopVideoCircleAccess{}; },
+      [this] { return maiChatAccountIdProvider_ ? maiChatAccountIdProvider_()
+                                                 : QString(); },
+      [this](std::shared_ptr<MaiCloudVod> source, const QString& name) {
+        const QString display = QFileInfo(name).fileName().isEmpty() ?
+            QStringLiteral("云盘视频.mp4") : QFileInfo(name).fileName();
+        if (!openDockedVideo(display, {}, 0, std::move(source)))
+          showToast(QStringLiteral("视频无法播放"), 13, 3000);
+      }, cloudDrivePage_, {}, true);
+  cloudDriveLayout->addWidget(cloudDriveDialog_);
 
   // 远程桌面页：画面在应用内展示，不弹独立窗口。
   remotePage_ = new QWidget(contentStack_);
@@ -2923,6 +2945,7 @@ void MainWindow::buildUi() {
   }
 
   contentStack_->addWidget(messagesPage_);
+  contentStack_->addWidget(cloudDrivePage_);
   contentStack_->addWidget(contactsPage_);
   contentStack_->addWidget(remotePage_);
   contentStack_->addWidget(settingsPage_);
@@ -3005,8 +3028,8 @@ void MainWindow::applyStyle() {
         }
         /* 纯图标：不再留文字的左内边距，图标居中，宽高一致，
            否则一列图标会因为各自的留白不同而看起来大小不一。 */
-        #messagesNavButton, #contactsNavButton, #remoteNavButton, #settingsNavButton,
-        #agentNavButton {
+        #messagesNavButton, #cloudNavButton, #agentNavButton,
+        #contactsNavButton, #settingsNavButton {
             min-width: 44px;
             max-width: 44px;
             min-height: 44px;
@@ -3017,13 +3040,13 @@ void MainWindow::applyStyle() {
             background: transparent;
         }
         #messagesNavButton[selected="false"]:hover { background: #d9edfc; }
+        #cloudNavButton[selected="false"]:hover { background: #d9edfc; }
         #agentNavButton[selected="false"]:hover { background: #e7e1ff; }
         #contactsNavButton[selected="false"]:hover { background: #daf1e8; }
-        #remoteNavButton[selected="false"]:hover { background: #dfe7f3; }
         #settingsNavButton[selected="false"]:hover { background: #dfe6ef; }
-        #messagesNavButton[selected="true"], #contactsNavButton[selected="true"],
-        #remoteNavButton[selected="true"], #settingsNavButton[selected="true"],
-        #agentNavButton[selected="true"] {
+        #messagesNavButton[selected="true"], #cloudNavButton[selected="true"],
+        #agentNavButton[selected="true"], #contactsNavButton[selected="true"],
+        #settingsNavButton[selected="true"] {
             border: 0;
             background: transparent;
         }
@@ -3444,10 +3467,10 @@ void MainWindow::bindSignals() {
           [this] { contactsSearchInput_->clear(); });
   connect(messageNavButton_, &QPushButton::clicked, this,
           [this] { showMessagesPage(); });
+  connect(cloudNavButton_, &QPushButton::clicked, this,
+          [this] { showCloudDrivePage(); });
   connect(contactsNavButton_, &QPushButton::clicked, this,
           [this] { showContactsPage(); });
-  connect(remoteNavButton_, &QPushButton::clicked, this,
-          [this] { showRemotePage(); });
   connect(settingsNavButton_, &QPushButton::clicked, this,
           [this] { showSettingsPage(); });
   connect(selfProfileButton_, &QPushButton::clicked, this,
@@ -4124,7 +4147,6 @@ void MainWindow::setVideoCircleAccessProvider(
 void MainWindow::probeCloudDriveAvailability() {
   const unsigned generation = ++cloudDriveProbeGeneration_;
   cloudDriveAvailable_ = false;
-  if (cloudSettingsRow_) cloudSettingsRow_->hide();
   if (agentPanel_) agentPanel_->setCloudDriveAvailable(false);
   if (!videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
   const DesktopVideoCircleAccess access = videoCircleAccessProvider_();
@@ -4141,11 +4163,9 @@ void MainWindow::probeCloudDriveAvailability() {
       return;
     cloudDriveAvailable_ = available == 1;
     if (agentPanel_) agentPanel_->setCloudDriveAvailable(cloudDriveAvailable_);
-    if (cloudSettingsRow_) cloudSettingsRow_->setVisible(available != 0);
-    if (cloudSettingsValue_) cloudSettingsValue_->setText(
-        available == 1 ? QStringLiteral("私人空间") : QStringLiteral("连接失败"));
-    if (cloudSettingsButton_) cloudSettingsButton_->setText(
-        available == 1 ? QStringLiteral("打开") : QStringLiteral("重试"));
+    if (cloudNavButton_) cloudNavButton_->setToolTip(
+        available == 1 ? QStringLiteral("云盘") :
+        QStringLiteral("云盘暂不可用，点击重试"));
   });
   watcher->setFuture(QtConcurrent::run([access] {
     return CloudDriveDialog::availability(access);
@@ -4198,18 +4218,9 @@ void MainWindow::openVideoCircle(const QString& completedCardJson, const QString
 }
 
 void MainWindow::openCloudDrive(const QString& suggestedVideo) {
-  if (!cloudDriveAvailable_ || !videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
-  if (!cloudDriveDialog_) {
-    cloudDriveDialog_ = new CloudDriveDialog(videoCircleAccessProvider_,
-        maiChatAccountIdProvider_, [this](std::shared_ptr<MaiCloudVod> source,
-                                         const QString& name) {
-          const QString display = QFileInfo(name).fileName().isEmpty() ?
-              QStringLiteral("云盘视频.mp4") : QFileInfo(name).fileName();
-          if (!openDockedVideo(display, {}, 0, std::move(source))) {
-            showToast(QStringLiteral("视频无法播放"), 13, 3000);
-          }
-        }, this);
-  }
+  if (accountDisconnectPending_ || !cloudDriveDialog_) return;
+  contentStack_->setCurrentWidget(cloudDrivePage_);
+  syncNavigationSelection();
   cloudDriveDialog_->openDrive(suggestedVideo);
 }
 
@@ -4791,9 +4802,12 @@ void MainWindow::showContactsPage() {
 
 void MainWindow::showSettingsPage() {
   refreshSettings();
-  probeCloudDriveAvailability();
   contentStack_->setCurrentWidget(settingsPage_);
   syncNavigationSelection();
+}
+
+void MainWindow::showCloudDrivePage() {
+  openCloudDrive();
 }
 
 void MainWindow::showRemotePage() {
@@ -4820,6 +4834,10 @@ void MainWindow::showAgentPage() {
 }
 
 void MainWindow::syncNavigationSelection() {
+  if (contentStack_->currentWidget() == cloudDrivePage_) {
+    updateNavigationSelection(cloudNavButton_);
+    return;
+  }
   if (contentStack_->currentWidget() == agentPage_) {
     updateNavigationSelection(agentNavButton_);
     return;
@@ -4829,7 +4847,7 @@ void MainWindow::syncNavigationSelection() {
     return;
   }
   if (contentStack_->currentWidget() == remotePage_) {
-    updateNavigationSelection(remoteNavButton_);
+    updateNavigationSelection(nullptr);
     return;
   }
   if (contentStack_->currentWidget() == settingsPage_) {
@@ -4840,9 +4858,9 @@ void MainWindow::syncNavigationSelection() {
 }
 
 void MainWindow::updateNavigationSelection(QPushButton *selectedButton) {
-  const QList<QPushButton *> buttons = {messageNavButton_, contactsNavButton_,
-                                        remoteNavButton_, settingsNavButton_,
-                                        agentNavButton_};
+  const QList<QPushButton *> buttons = {messageNavButton_, cloudNavButton_,
+                                        agentNavButton_, contactsNavButton_,
+                                        settingsNavButton_};
   for (QPushButton *button : buttons) {
     if (!button)
       continue;
@@ -7474,6 +7492,11 @@ void MainWindow::updateRemoteDesktopButton() {
   remoteDesktopButton_->setIcon(makeLineIcon(icon, color));
   remoteDesktopButton_->setToolTip(tooltip);
   remoteDesktopButton_->setEnabled(enabled);
+  if (remoteViewerReturnButton_)
+    remoteViewerReturnButton_->setVisible(
+        state == RemoteDesktop::ViewerState::Inviting ||
+        state == RemoteDesktop::ViewerState::Connecting ||
+        state == RemoteDesktop::ViewerState::Viewing);
 }
 
 // 作用：建立远程桌面配置面板及其操作反馈。

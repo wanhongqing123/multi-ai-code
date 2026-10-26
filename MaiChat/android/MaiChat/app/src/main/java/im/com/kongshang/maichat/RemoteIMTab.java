@@ -4,10 +4,11 @@ package com.kongshang.maichat;
 
 public enum RemoteIMTab {
     MESSAGES("消息"),
+    CLOUD("云盘"),
     ASSISTANT("创作中心"),
-    CONTACTS("通讯录"),
+    CONTACTS("好友列表"),
     REMOTE("远程"),
-    ME("我");
+    ME("我的");
 
     private final String title;
 

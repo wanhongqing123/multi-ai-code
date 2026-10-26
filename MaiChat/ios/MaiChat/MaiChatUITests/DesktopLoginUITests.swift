@@ -13,7 +13,7 @@ final class DesktopLoginUITests: XCTestCase {
             throw XCTSkip("需要本机测试账号")
         }
         let app = launchAccountApp(phone: phone, password: password)
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         if app.buttons["稍后"].exists { app.buttons["稍后"].tap() }
         tapMeTab(in: app)
         let settings = app.buttons["设置"]
@@ -43,7 +43,7 @@ final class DesktopLoginUITests: XCTestCase {
             throw XCTSkip("需要本机测试账号")
         }
         let app = launchAccountApp(phone: phone, password: password)
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         if app.buttons["稍后"].exists { app.buttons["稍后"].tap() }
         tapMeTab(in: app)
         let settings = app.buttons["设置"]
@@ -86,7 +86,7 @@ final class DesktopLoginUITests: XCTestCase {
     @MainActor func testDesktopLoginScannerEntry() async throws {
         let (phone, password) = try await localAccount()
         let app = launchAccountApp(phone: phone, password: password)
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
         dismissLocalIMError(in: app)
         openDesktopScanner(in: app)
@@ -114,7 +114,7 @@ final class DesktopLoginUITests: XCTestCase {
         let (phone, password) = try await localAccount()
         let qr = try await makeDesktopRequest(platform: "mac")
         let app = launchAccountApp(phone: phone, password: password, qr: qr)
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
         dismissLocalIMError(in: app)
         openDesktopScanner(in: app)
@@ -156,7 +156,7 @@ final class DesktopLoginUITests: XCTestCase {
         let (phone, password) = try await localAccount()
         let qr = try await makeDesktopRequest(platform: "windows")
         let app = launchAccountApp(phone: phone, password: password, qr: qr)
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
         dismissLocalIMError(in: app)
         openDesktopScanner(in: app)
@@ -181,7 +181,7 @@ final class DesktopLoginUITests: XCTestCase {
             throw XCTSkip("需要本机测试账号")
         }
         let app = launchAccountApp(phone: phone, password: password)
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 30))
         tapMeTab(in: app)
         let settings = app.buttons["设置"]
@@ -221,7 +221,7 @@ final class DesktopLoginUITests: XCTestCase {
             throw XCTSkip("需要严格设备槽本机测试服务")
         }
         let app = launchAccountApp(phone: phone, password: password)
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         try await forceLegacyDeviceSlot()
         XCUIDevice.shared.press(.home)
         app.activate()
@@ -231,7 +231,7 @@ final class DesktopLoginUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = password
         app.launch()
-        XCTAssertTrue(app.buttons["我"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
         try await forceLegacyDeviceSlot()
         app.terminate()
         // 保留本机刷新令牌，不让本机自动登录钩子在第二次启动时新建会话。
@@ -255,7 +255,7 @@ final class DesktopLoginUITests: XCTestCase {
         app.launch()
         // 本机模拟服务重启后，旧 Keychain 会话可在首次启动时被清理；
         // 重开即用新账号登录。
-        if !app.buttons["我"].waitForExistence(timeout: 10),
+        if !app.buttons["我的"].waitForExistence(timeout: 10),
            app.textFields["account-phone"].exists {
             app.terminate()
             app.launch()

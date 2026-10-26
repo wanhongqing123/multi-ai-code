@@ -406,6 +406,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onDestroy() {
         destroyed = true;
+        if (cloudDriveDialog != null && cloudDriveDialog.isShowing()) cloudDriveDialog.dismiss();
         socialUiHandler.removeCallbacks(socialBindingTick);
         pendingGalleryAction = null;
         if (videoDialog != null) videoDialog.dismiss();
@@ -878,6 +879,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         if (activeTab == RemoteIMTab.ASSISTANT && activeChatUserId == null && aiAssistant != null
                 && aiAssistant.isAttachedToWindow() && !showInitialLogin && !session.requiresLogin()) return;
+        if (activeTab == RemoteIMTab.CLOUD && activeChatUserId == null
+                && cloudDriveDialog != null && cloudDriveDialog.isEmbedded()
+                && !showInitialLogin && !session.requiresLogin()) return;
+        if (cloudDriveDialog != null && cloudDriveDialog.isEmbedded())
+            cloudDriveDialog.dismiss();
         // 只有页面身份真的改变才重建导航容器；不能把每条新消息都当作换页。
         currentMessageList = null;
         renderedChatUserId = null;
@@ -1004,6 +1010,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             renderChatDetail(activeChatUserId);
         } else {
             switch (activeTab) {
+                case CLOUD:
+                    cloudDriveDialog = new MaiCloudDriveDialog(this);
+                    cloudDriveDialog.showEmbedded(content);
+                    break;
                 case ASSISTANT:
                     if (aiAssistant == null) aiAssistant = new AIAssistantPanel(this);
                     if (aiAssistant.getParent() instanceof ViewGroup)
@@ -1621,6 +1631,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         bar.setPadding(dp(16), dp(10), dp(16), dp(12));
         outside.addView(bar, new LinearLayout.LayoutParams(-1, 0, 1));
         bar.addView(tabButton(RemoteIMTab.MESSAGES), weightMatch());
+        bar.addView(tabButton(RemoteIMTab.CLOUD), weightMatch());
         bar.addView(tabButton(RemoteIMTab.ASSISTANT), weightMatch());
         bar.addView(tabButton(RemoteIMTab.CONTACTS), weightMatch());
         bar.addView(tabButton(RemoteIMTab.ME), weightMatch());
@@ -1631,14 +1642,26 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         FrameLayout button = new FrameLayout(this);
         boolean selected = activeTab == tab;
         button.setContentDescription(tab.title());
+        button.setSelected(selected);
         button.setClickable(true);
         button.setFocusable(true);
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(tabIconResource(tab));
         icon.setColorFilter(selected ? tabAccentColor(tab) : MaiChatTheme.SECONDARY);
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(23), dp(23), Gravity.CENTER);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(
+            dp(23), dp(23), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        iconParams.topMargin = dp(1);
         button.addView(icon, iconParams);
+
+        TextView title = new TextView(this);
+        title.setText(tab.title());
+        title.setTextSize(10);
+        title.setSingleLine(true);
+        title.setGravity(Gravity.CENTER);
+        title.setTextColor(selected ? tabAccentColor(tab) : MaiChatTheme.SECONDARY);
+        FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(-1, dp(17), Gravity.BOTTOM);
+        button.addView(title, titleParams);
 
         if (tab == RemoteIMTab.MESSAGES && session.totalUnreadCount() > 0) {
             View badge = new View(this);
@@ -1662,6 +1685,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private int tabIconResource(RemoteIMTab tab) {
         switch (tab) {
             case MESSAGES: return R.drawable.ic_nav_messages;
+            case CLOUD: return R.drawable.ic_nav_cloud;
             case ASSISTANT: return R.drawable.ic_nav_assistant;
             case CONTACTS: return R.drawable.ic_nav_contacts;
             case REMOTE: return R.drawable.ic_nav_remote;
@@ -1673,6 +1697,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private int tabAccentColor(RemoteIMTab tab) {
         switch (tab) {
             case MESSAGES: return MaiChatTheme.NAV_MESSAGES;
+            case CLOUD: return MaiChatTheme.NAV_MESSAGES;
             case ASSISTANT: return MaiChatTheme.NAV_ASSISTANT;
             case CONTACTS: return MaiChatTheme.NAV_CONTACTS;
             case REMOTE: return MaiChatTheme.NAV_REMOTE;
@@ -3215,27 +3240,6 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         content.addView(scroll, matchMatch());
 
         String accountId = session.accountId();
-        LinearLayout cloudSection = settingsSection("内容", new String[][]{
-            {"我的云盘", "仅自己可见  ›"}
-        });
-        page.addView(cloudSection, matchWrap());
-        View cloudRow = ((ViewGroup) cloudSection.getChildAt(1)).getChildAt(0);
-        cloudRow.setContentDescription("打开我的云盘");
-        cloudRow.setOnClickListener(view -> showCloudDrive());
-        int cloudState = MaiCloudDrive.availability(accountId);
-        cloudSection.setVisibility(cloudState == MaiCloudDrive.GATE_AVAILABLE ||
-            cloudState == MaiCloudDrive.GATE_RETRY ? View.VISIBLE : View.GONE);
-        MaiCloudDrive.probe(this, available -> {
-            if (destroyed || activeTab != RemoteIMTab.ME ||
-                !accountId.equals(session.accountId())) return;
-            cloudSection.setVisibility(available == MaiCloudDrive.GATE_AVAILABLE ||
-                available == MaiCloudDrive.GATE_RETRY ? View.VISIBLE : View.GONE);
-            if (available == MaiCloudDrive.GATE_RETRY) {
-                TextView value = (TextView) ((ViewGroup) cloudRow).getChildAt(1);
-                value.setText("连接失败，可重试  ›");
-            }
-        });
-
         String accountLabel = compactAccountId(accountId);
         String nickname = session.nickname();
         LinearLayout accountSection = settingsSection("账号", new String[][]{

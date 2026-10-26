@@ -37,7 +37,7 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class MaiCloudDriveProductionCanaryTest {
     private static final String CREDENTIALS = "cloud-drive-canary-credentials.json";
-    private static final String ENTRY = "打开我的云盘";
+    private static final String CLOUD_TAB = "云盘";
 
     @Test public void accountAUploadsPlaysAndDeletesWhileAccountBStaysClosed()
         throws Exception {
@@ -278,23 +278,21 @@ public final class MaiCloudDriveProductionCanaryTest {
     private static void assertEntry(Context context, boolean expected) throws Exception {
         try (ActivityScenario<MainActivity> screen = ActivityScenario.launch(MainActivity.class)) {
             screen.onActivity(activity -> {
-                View tab = byDescription(activity.getWindow().getDecorView(), "我");
+                View tab = byDescription(activity.getWindow().getDecorView(), CLOUD_TAB);
                 assertNotNull(tab);
+                assertTrue("Cloud tab must remain visible for every account", visible(tab));
                 tab.performClick();
             });
-            AtomicReference<View> entry = new AtomicReference<>();
+            AtomicReference<View> page = new AtomicReference<>();
             long deadline = System.currentTimeMillis() + 5000;
             do {
-                screen.onActivity(activity -> entry.set(byDescription(
-                    activity.getWindow().getDecorView(), ENTRY)));
-                if (entry.get() != null && visible(entry.get()) == expected) break;
+                screen.onActivity(activity -> page.set(byDescription(
+                    activity.getWindow().getDecorView(), "云盘状态")));
+                if (page.get() != null && visible(page.get())) break;
                 Thread.sleep(100);
             } while (System.currentTimeMillis() < deadline);
-            assertNotNull(entry.get());
-            assertEquals("Personal page cloud entry visibility", expected,
-                visible(entry.get()));
+            assertNotNull("Cloud tab page did not open", page.get());
             if (expected) {
-                screen.onActivity(activity -> entry.get().performClick());
                 AccessibilityNodeInfo play = null;
                 deadline = System.currentTimeMillis() + 15_000;
                 do {
@@ -321,18 +319,22 @@ public final class MaiCloudDriveProductionCanaryTest {
                 screen.onActivity(activity ->
                     assertTrue(activity.commandAgentVideo("close", 0, 0, 0)));
             } else {
+                AtomicReference<View> denied = new AtomicReference<>();
+                deadline = System.currentTimeMillis() + 15_000;
+                do {
+                    screen.onActivity(activity -> denied.set(byText(
+                        activity.getWindow().getDecorView(), "云盘暂未开放")));
+                    if (denied.get() != null && visible(denied.get())) break;
+                    Thread.sleep(100);
+                } while (System.currentTimeMillis() < deadline);
+                assertNotNull("Account B cloud page did not report unavailable", denied.get());
                 screen.onActivity(activity -> {
                     View root = activity.getWindow().getDecorView();
-                    View current = byDescription(root, ENTRY);
-                    if (current == null) {
-                        View tab = byDescription(root, "我");
-                        assertNotNull(tab);
-                        tab.performClick();
-                        current = byDescription(root, ENTRY);
-                    }
-                    assertNotNull("Account B personal page lacks cloud row layout", current);
-                    assertFalse("Account B cloud entry became visible", visible(current));
-                    screenshotView(context, root, "cloud-drive-canary-b-hidden.png");
+                    View upload = byText(root, "上传图片或视频");
+                    assertNotNull(upload);
+                    assertFalse("Account B must not upload to unavailable cloud",
+                        upload.isEnabled());
+                    screenshotView(context, root, "cloud-drive-canary-b-unavailable.png");
                 });
             }
         }
@@ -371,6 +373,19 @@ public final class MaiCloudDriveProductionCanaryTest {
             ViewGroup group = (ViewGroup) root;
             for (int i = 0; i < group.getChildCount(); ++i) {
                 View found = byDescription(group.getChildAt(i), description);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static View byText(View root, String wanted) {
+        if (root instanceof android.widget.TextView && wanted.contentEquals(
+            ((android.widget.TextView) root).getText())) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); ++i) {
+                View found = byText(group.getChildAt(i), wanted);
                 if (found != null) return found;
             }
         }

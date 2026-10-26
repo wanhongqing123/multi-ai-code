@@ -8,6 +8,7 @@ import UIKit
 
 enum AppTab {
     case messages
+    case cloudDrive
     case assistant
     case contacts
     case remote
@@ -98,6 +99,10 @@ struct RootView: View {
                                     openAssistant: openAssistant
                                 ))
                             )
+                        case .cloudDrive:
+                            NavigationStack {
+                                MaiCloudDriveView()
+                            }
                         case .assistant:
                             Color.clear
                         case .contacts:
@@ -730,6 +735,15 @@ private struct CompactTabBar: View {
                 selectedTab = .messages
             }
             TabButton(
+                title: "云盘",
+                imageName: "",
+                accent: RemoteIMStyle.blue,
+                selected: selectedTab == .cloudDrive,
+                systemImageName: "icloud"
+            ) {
+                selectedTab = .cloudDrive
+            }
+            TabButton(
                 title: "创作中心",
                 imageName: "NavAssistant",
                 accent: RemoteIMStyle.navAssistant,
@@ -738,7 +752,7 @@ private struct CompactTabBar: View {
                 openAssistant()
             }
             TabButton(
-                title: "通讯录",
+                title: "好友列表",
                 imageName: "NavContacts",
                 accent: RemoteIMStyle.navContacts,
                 selected: selectedTab == .contacts
@@ -746,7 +760,7 @@ private struct CompactTabBar: View {
                 selectedTab = .contacts
             }
             TabButton(
-                title: "我",
+                title: "我的",
                 imageName: "NavProfile",
                 accent: RemoteIMStyle.navProfile,
                 selected: selectedTab == .me
@@ -771,16 +785,23 @@ private struct TabButton: View {
     let accent: Color
     let selected: Bool
     var badgeCount = 0
+    var systemImageName: String? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .topTrailing) {
-                Image(selected ? imageName + "Filled" : imageName)
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 23, height: 23)
+                if let systemImageName {
+                    Image(systemName: selected ? systemImageName + ".fill" : systemImageName)
+                        .font(.system(size: 23))
+                        .frame(width: 23, height: 23)
+                } else {
+                    Image(selected ? imageName + "Filled" : imageName)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 23, height: 23)
+                }
                 if badgeCount > 0 {
                     Circle()
                         .fill(Color(red: 1.0, green: 0.235, blue: 0.188))

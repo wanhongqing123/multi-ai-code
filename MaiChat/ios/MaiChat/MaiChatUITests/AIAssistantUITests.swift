@@ -219,7 +219,7 @@ final class AIAssistantUITests: XCTestCase {
         #endif
     }
 
-    @MainActor func testCloudDriveDisabledHidesNormalAppEntry() async throws {
+    @MainActor func testCloudDriveDisabledShowsUnavailableState() async throws {
         #if targetEnvironment(simulator)
         let control = URL(string: "http://127.0.0.1:18449/test/cert")!
         guard let (certificate, response) = try? await URLSession.shared.data(from: control),
@@ -236,13 +236,16 @@ final class AIAssistantUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
             certificate.base64EncodedString()
         app.launch()
-        let me = app.buttons["我"]
+        let me = app.buttons["我的"]
         XCTAssertTrue(me.waitForExistence(timeout: 35))
         me.tap()
         XCTAssertTrue(app.buttons["personal-profile-entry"].waitForExistence(timeout: 10))
         try await Task.sleep(for: .seconds(2))
-        XCTAssertFalse(app.buttons["my-cloud-drive-entry"].exists,
-                       "云盘服务明确关闭时不应显示可操作入口")
+        let cloud = app.buttons["云盘"]
+        XCTAssertTrue(cloud.waitForExistence(timeout: 10))
+        cloud.tap()
+        XCTAssertTrue(app.staticTexts["云盘暂不可用"].waitForExistence(timeout: 15),
+                      "云盘服务明确关闭时应显示不可用状态")
         app.terminate()
         #else
         throw XCTSkip("门控用例只运行于隔离模拟器")
@@ -577,7 +580,7 @@ final class AIAssistantUITests: XCTestCase {
         #endif
     }
 
-    @MainActor func testCloudDriveNormalAppSettingsEntryAndEmptyState() async throws {
+    @MainActor func testCloudDriveNormalAppTabAndEmptyState() async throws {
         #if targetEnvironment(simulator)
         let control = URL(string: "http://127.0.0.1:18449/test/cert")!
         guard let (certificate, response) = try? await URLSession.shared.data(from: control),
@@ -594,12 +597,16 @@ final class AIAssistantUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
             certificate.base64EncodedString()
         app.launch()
-        let me = app.buttons["我"]
-        XCTAssertTrue(me.waitForExistence(timeout: 35))
-        me.tap()
-        let entry = app.buttons["my-cloud-drive-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 20))
-        entry.tap()
+        let tabs = ["消息", "云盘", "创作中心", "好友列表", "我的"]
+            .map { app.buttons[$0] }
+        for tab in tabs { XCTAssertTrue(tab.waitForExistence(timeout: 35)) }
+        for index in 1..<tabs.count {
+            XCTAssertLessThan(tabs[index - 1].frame.midX, tabs[index].frame.midX,
+                              "底栏顺序应为消息、云盘、创作中心、好友列表、我的")
+        }
+        let cloud = tabs[1]
+        XCTAssertTrue(cloud.waitForExistence(timeout: 35))
+        cloud.tap()
         XCTAssertTrue(app.staticTexts["我的云盘"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["云盘空间"].waitForExistence(timeout: 15))
         let ownVideo = app.buttons[
@@ -609,6 +616,12 @@ final class AIAssistantUITests: XCTestCase {
         let fakeIMError = app.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH %@", "IM 操作失败")).firstMatch
         if fakeIMError.exists { fakeIMError.tap() }
+        tabs[4].tap()
+        XCTAssertTrue(app.buttons["personal-profile-entry"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["my-cloud-drive-entry"].exists,
+                       "云盘只应保留底栏入口")
+        cloud.tap()
+        XCTAssertTrue(app.staticTexts["云盘空间"].waitForExistence(timeout: 15))
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "cloud-drive-normal-app-empty"
         attachment.lifetime = .keepAlways
@@ -1733,7 +1746,7 @@ final class AIAssistantUITests: XCTestCase {
         add(opened)
 
         app.buttons["返回主页面"].tap()
-        app.buttons["我"].tap()
+        app.buttons["我的"].tap()
         app.buttons["设置"].tap()
         app.buttons["切换账号"].tap()
         XCTAssertTrue(accountField.waitForExistence(timeout: 15))

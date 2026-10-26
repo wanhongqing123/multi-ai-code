@@ -3,6 +3,7 @@ package com.kongshang.maichat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.ContentValues;
@@ -114,7 +115,9 @@ public final class MaiCloudDriveInstrumentedTest {
         String id = null;
         try {
             MaiCloudDrive.Result uploaded = upload(client, source, checkpoint);
-            assertTrue(uploaded.body, uploaded.ok());
+            assertTrue("Local cloud upload failed: status=" + uploaded.status +
+                " http=" + uploaded.httpStatus + " curl=" + uploaded.curlCode +
+                " body=" + uploaded.body, uploaded.ok());
             assertEquals("image", uploaded.json().getString("media_type"));
             MaiCloudDrive.Result listed = request(client, MaiCloudDrive.LIST, new JSONObject());
             assertTrue(listed.body, listed.ok());
@@ -129,17 +132,11 @@ public final class MaiCloudDriveInstrumentedTest {
 
             try (ActivityScenario<MainActivity> screen = ActivityScenario.launch(MainActivity.class)) {
                 screen.onActivity(activity -> {
-                    View tab = byDescription(activity.getWindow().getDecorView(), "我");
+                    View tab = byDescription(activity.getWindow().getDecorView(), "云盘");
                     assertNotNull(tab);
                     tab.performClick();
                 });
                 Thread.sleep(300);
-                screen.onActivity(activity -> {
-                    View entry = byDescription(activity.getWindow().getDecorView(),
-                        "打开我的云盘");
-                    assertNotNull(entry);
-                    entry.performClick();
-                });
                 File thumbnailDirectory = new File(context.getCacheDir(),
                     "cloud-drive-thumbnails/" +
                         MaiCloudDrive.accountKey(MaiChatAuthClient.shared(context).accountId()));
@@ -370,16 +367,9 @@ public final class MaiCloudDriveInstrumentedTest {
 
         try (ActivityScenario<MainActivity> screen = ActivityScenario.launch(MainActivity.class)) {
             screen.onActivity(activity -> {
-                View tab = byDescription(activity.getWindow().getDecorView(), "我");
+                View tab = byDescription(activity.getWindow().getDecorView(), "云盘");
                 assertNotNull(tab);
                 tab.performClick();
-            });
-            Thread.sleep(400);
-            screen.onActivity(activity -> {
-                View entry = byDescription(activity.getWindow().getDecorView(),
-                    "打开我的云盘");
-                assertNotNull("我的页云盘入口", entry);
-                entry.performClick();
             });
             Thread.sleep(1200);
             screenshot(context, "cloud-drive-ready.png");
@@ -451,7 +441,7 @@ public final class MaiCloudDriveInstrumentedTest {
         downloaded.delete();
     }
 
-    @Test public void hiddenWhenCloudFeatureIsOff() throws Exception {
+    @Test public void cloudTabRemainsVisibleWhenFeatureIsOff() throws Exception {
         assertTrue(BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
             BuildConfig.APPLICATION_ID.endsWith(".isolated"));
         Context context = ApplicationProvider.getApplicationContext();
@@ -459,16 +449,20 @@ public final class MaiCloudDriveInstrumentedTest {
         MaiCloudDrive.useLocalFixtureForTest(null, certificateFrom(18190));
         try (ActivityScenario<MainActivity> screen = ActivityScenario.launch(MainActivity.class)) {
             screen.onActivity(activity -> {
-                View tab = byDescription(activity.getWindow().getDecorView(), "我");
+                View tab = byDescription(activity.getWindow().getDecorView(), "云盘");
                 assertNotNull(tab);
+                assertTrue("云盘主标签始终可见", tab.isShown());
                 tab.performClick();
             });
             Thread.sleep(900);
             screen.onActivity(activity -> {
-                View entry = byDescription(activity.getWindow().getDecorView(),
-                    "打开我的云盘");
-                assertNotNull("Settings row may exist for layout reuse", entry);
-                assertTrue("Cloud feature-off row must not be shown", hidden(entry));
+                View root = activity.getWindow().getDecorView();
+                assertNotNull("云盘页面应可访问", byDescription(root, "云盘状态"));
+                View myTab = byDescription(root, "我的");
+                assertNotNull(myTab);
+                myTab.performClick();
+                assertNull("我的页面不再重复云盘入口",
+                    byDescription(activity.getWindow().getDecorView(), "打开我的云盘"));
             });
         }
     }
@@ -1090,15 +1084,6 @@ public final class MaiCloudDriveInstrumentedTest {
             }
         }
         return null;
-    }
-
-    private static boolean hidden(View child) {
-        View view = child;
-        while (view != null) {
-            if (view.getVisibility() != View.VISIBLE) return true;
-            view = view.getParent() instanceof View ? (View) view.getParent() : null;
-        }
-        return false;
     }
 
     private static AccessibilityNodeInfo textNode(AccessibilityNodeInfo root, String wanted) {

@@ -257,7 +257,7 @@ private:
 bool validOptions(const MaiDownloadOptions* options) {
     return options && validUrl(options->url_utf8) && options->target_path_utf8 &&
            *options->target_path_utf8 && options->max_bytes > 0 &&
-           options->max_bytes <= uint64_t(std::numeric_limits<curl_off_t>::max()) &&
+           options->max_bytes <= uint64_t((std::numeric_limits<curl_off_t>::max)()) &&
            (options->ca_pem || options->ca_pem_length == 0) &&
            !(options->ca_pem_length > 0 && options->ca_path_utf8 && *options->ca_path_utf8);
 }

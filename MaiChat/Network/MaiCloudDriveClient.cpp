@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "MaiCloudDriveClient.h"
 
 #include <curl/curl.h>

@@ -11,13 +11,16 @@
 
 namespace {
 
-enum class Scenario { NativeZeroFrames, NativeSuccess, NativePresenterRejected,
+enum class Scenario { NativeZeroFrames, NativeSuccess, NativeThenRgba,
+                      NativePresenterRejected,
                       SoftwareRgbaOnly, BothZeroFrames, StopNative };
 std::atomic<Scenario> scenario{Scenario::NativeZeroFrames};
 std::atomic<int> nativeRuns{0};
 std::atomic<int> softwareRuns{0};
 std::atomic<int> closeRequests{0};
 std::atomic<bool> allowPresentation{true};
+std::atomic<int> hlgEnableRequests{0};
+std::atomic<int> hlgDisableRequests{0};
 
 template <class Predicate>
 bool waitFor(Predicate predicate) {
@@ -33,12 +36,22 @@ void reset(Scenario selected) {
     softwareRuns = 0;
     closeRequests = 0;
     allowPresentation = true;
+    hlgEnableRequests = 0;
+    hlgDisableRequests = 0;
 }
 
 void reportFrame(const MaiFfplayHost* host) {
     MaiVideoFrame frame{};
     frame.width = 1;
     frame.height = 1;
+    if (host->present_native_frames) {
+        frame.format = MAI_VIDEO_PIXEL_P010;
+        frame.color_space = MAI_VIDEO_COLOR_BT2020;
+        frame.color_transfer = MAI_VIDEO_TRANSFER_HLG;
+    } else {
+        frame.format = MAI_VIDEO_PIXEL_I420;
+        frame.color_space = MAI_VIDEO_COLOR_BT709;
+    }
     host->present_video(host->user_data, &frame, nullptr);
 }
 
@@ -49,8 +62,14 @@ int failed(const char* message) {
 
 }  // namespace
 
-extern "C" int maiFfplaySourceHasHdrWithoutSubtitles(const char*) {
-    return scenario == Scenario::SoftwareRgbaOnly ? 0 : 1;
+extern "C" int maiFfplayProbeHdrSource(const char*, MaiFfplayHdrSourceInfo* info) {
+    *info = {};
+    info->native_frame_eligible = scenario == Scenario::SoftwareRgbaOnly ? 0 : 1;
+    info->hlg = info->native_frame_eligible;
+    info->has_ambient = info->hlg;
+    const uint8_t ambient[] = {0, 47, 233, 160, 61, 19, 64, 66};
+    std::memcpy(info->ambient, ambient, sizeof(ambient));
+    return 1;
 }
 
 extern "C" int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char**,
@@ -58,6 +77,11 @@ extern "C" int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char**,
     if (argc == 5) {
         ++nativeRuns;
         if (scenario == Scenario::NativeSuccess) reportFrame(host);
+        if (scenario == Scenario::NativeThenRgba) {
+            reportFrame(host);
+            const uint8_t pixel[] = {0, 0, 0, 255};
+            host->present_rgba(host->user_data, pixel, 1, 1, 4);
+        }
         if (scenario == Scenario::NativePresenterRejected) {
             allowPresentation = false;
             reportFrame(host);
@@ -88,6 +112,19 @@ extern "C" bool maiGraphicsPresenterShowVideoFrameWithSubtitle(
     uint64_t, const MaiVideoFrame*, const MaiVideoSubtitle*, bool) { return allowPresentation; }
 extern "C" bool maiGraphicsPresenterShowFrame(
     uint64_t, const uint8_t*, uint32_t, uint32_t, uint32_t, bool) { return allowPresentation; }
+extern "C" bool maiGraphicsPresenterSetHlgOutput(uint64_t, bool enabled,
+                                                   const uint8_t* ambient,
+                                                   uint32_t ambientSize) {
+    if (enabled) {
+        if (!ambient || ambientSize != 8 || ambient[0] != 0 || ambient[1] != 47 ||
+            ambient[2] != 233 || ambient[3] != 160)
+            return false;
+        ++hlgEnableRequests;
+    } else {
+        ++hlgDisableRequests;
+    }
+    return true;
+}
 
 int main() {
     reset(Scenario::NativeZeroFrames);
@@ -104,6 +141,8 @@ int main() {
         return failed("rejected native presentation did not finish");
     if (nativeRuns != 1 || softwareRuns != 1 || maiFfplayIosExitCode(session) != 0)
         return failed("a rejected native frame must not suppress software fallback");
+    if (hlgEnableRequests != 1 || hlgDisableRequests != 1)
+        return failed("rejected HLG frame did not restore SDR before software fallback");
     maiFfplayIosStop(session);
 
     reset(Scenario::SoftwareRgbaOnly);
@@ -112,6 +151,8 @@ int main() {
         return failed("ordinary software RGBA playback did not finish");
     if (nativeRuns != 0 || softwareRuns != 1 || maiFfplayIosExitCode(session) != 0)
         return failed("presented RGBA frame must count as successful playback");
+    if (hlgEnableRequests != 0 || hlgDisableRequests != 0)
+        return failed("SDR playback must not change the Metal layer color mode");
     maiFfplayIosStop(session);
 
     reset(Scenario::NativeSuccess);
@@ -120,7 +161,29 @@ int main() {
         return failed("native success did not finish");
     if (nativeRuns != 1 || softwareRuns != 0 || maiFfplayIosExitCode(session) != 0)
         return failed("native success should not retry");
+    if (hlgEnableRequests != 1 || hlgDisableRequests != 0)
+        return failed("native HLG playback did not request per-view EDR");
     maiFfplayIosStop(session);
+    if (hlgDisableRequests != 1)
+        return failed("closed HLG session did not return its view to SDR");
+
+    scenario = Scenario::SoftwareRgbaOnly;
+    session = maiFfplayIosStart(1, "/tmp/sdr-after-hlg.mp4");
+    if (!session || !waitFor([&] { return maiFfplayIosHasFinished(session) == 1; }))
+        return failed("SDR session after HLG did not finish");
+    maiFfplayIosStop(session);
+    if (hlgEnableRequests != 1 || hlgDisableRequests != 1)
+        return failed("SDR session after HLG changed the color mode again");
+
+    reset(Scenario::NativeThenRgba);
+    session = maiFfplayIosStart(1, "/tmp/native-then-rgba.mov");
+    if (!session || !waitFor([&] { return maiFfplayIosHasFinished(session) == 1; }))
+        return failed("native-to-RGBA transition did not finish");
+    if (hlgEnableRequests != 1 || hlgDisableRequests != 1)
+        return failed("RGBA frame did not restore SDR before presentation");
+    maiFfplayIosStop(session);
+    if (hlgDisableRequests != 1)
+        return failed("closing an already-SDR session reset its view twice");
 
     reset(Scenario::BothZeroFrames);
     session = maiFfplayIosStart(1, "/tmp/unplayable.mov");

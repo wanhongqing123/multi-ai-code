@@ -53,14 +53,17 @@ The Agent `maichat_video_command` and player controls call the same path.
   8-bit formats and presents I420/BT.709/limited, losing source precision before
   Graphics. For local HDR HEVC without subtitle streams, the iOS host now uses
   FFplay's existing alternate AVFrame renderer entry point and VideoToolbox
-  decode. Graphics receives P010/BT.2020, runs the existing OBS HLG/PQ
-  conversion shader, and tone-maps to the app's SDR Metal swapchain. Other
-  files retain the ordinary SDL route. The upstream `ffplay.c` remains intact.
+  decode. Graphics receives P010/BT.2020. On iOS devices that provide
+  `CAEDRMetadata`, an HLG source uses a per-view FP16 extended-linear BT.2020
+  Metal swapchain and the source's ambient viewing metadata for system tone
+  mapping; an unavailable EDR layer falls back to the previous SDR shader.
+  Other files retain the ordinary SDL route and FFplay's playback clock.
 - Real-device testing on the 29.6-second 1080×1920 HLG sample confirmed about
   800 accepted frames and 800 Graphics-rendered frames, `fd=0`, no shader
   errors, accepted pause/play controls, and a finite 50% seek. Dolby Vision
-  dynamic metadata and HDR/EDR display output are not implemented; visual
-  parity with Photos still requires comparison on the same device. HDR files
+  dynamic metadata is not applied. The newer HLG EDR path has not yet passed
+  the same-device Photos color comparison; the simulator reports EDR unavailable.
+  HDR files
   with subtitle streams currently retain the 8-bit compatibility route.
 - `SWS_BILINEAR` in `MaiGraphicsPresenter::decodeImage` is used for image
   decoding, not this video draw path. The video draw path currently samples

@@ -21,6 +21,46 @@ import AppKit
 import UIKit
 #endif
 import Foundation
+import QuartzCore
+
+#if os(iOS)
+// The player owns this swapchain. Configure it on the graphics queue before
+// submitting the first HLG frame, rather than changing the process-wide OBS
+// video color space (other views can still be SDR).
+@_cdecl("mai_metal_swapchain_set_hlg")
+public func mai_metal_swapchain_set_hlg(
+    swap: UnsafeRawPointer, enabled: Int32,
+    ambient: UnsafePointer<UInt8>?, ambientCount: UInt32
+) -> Int32 {
+    let swapChain: OBSSwapChain = unretained(swap)
+    if enabled == 0 {
+        swapChain.layer.pixelFormat = .bgra8Unorm_srgb
+        swapChain.layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        swapChain.layer.wantsExtendedDynamicRangeContent = false
+        swapChain.layer.edrMetadata = nil
+        swapChain.colorRange = .sdr
+        swapChain.renderTarget = nil
+        return 1
+    }
+    guard CAEDRMetadata.isAvailable,
+          let colorSpace = CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)
+    else { return 0 }
+    let metadata: CAEDRMetadata
+    if #available(iOS 17.0, *), ambientCount == 8, let ambient {
+        metadata = CAEDRMetadata.hlg(
+            ambientViewingEnvironment: Data(bytes: ambient, count: 8))
+    } else {
+        metadata = .hlg
+    }
+    swapChain.layer.pixelFormat = .rgba16Float
+    swapChain.layer.colorspace = colorSpace
+    swapChain.layer.wantsExtendedDynamicRangeContent = true
+    swapChain.layer.edrMetadata = metadata
+    swapChain.colorRange = .hdrHLG
+    swapChain.renderTarget = nil
+    return 1
+}
+#endif
 
 /// Creates a ``OBSSwapChain`` instance for use as a pseudo swap chain implementation to be shared with `libobs`
 /// - Parameters:
@@ -235,12 +275,8 @@ public func device_load_swapchain(device: UnsafeRawPointer, swap: UnsafeRawPoint
         }
     }
 #else
-    if swapChain.colorRange != .sdr {
-        swapChain.layer.pixelFormat = .bgra8Unorm_srgb
-        swapChain.layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-        swapChain.colorRange = .sdr
-        swapChain.renderTarget = nil
-    }
+    // iOS playback selects HLG per swapchain before its first frame. Keep that
+    // mode until the player explicitly returns this swapchain to SDR.
 #endif
 
     switch swapChain.colorRange {

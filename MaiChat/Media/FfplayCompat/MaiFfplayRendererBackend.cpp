@@ -3,6 +3,8 @@
 #include "MaiFfplayEntry.h"
 
 #include <cerrno>
+#include <cstdint>
+#include <cstring>
 
 extern "C" {
 #include "ffplay_renderer.h"
@@ -11,6 +13,8 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixfmt.h>
+#include <libavutil/ambient_viewing_environment.h>
+#include <libavutil/mathematics.h>
 }
 
 // ffplay 的替代渲染器在 SDL 纹理转换前收到 AVFrame。
@@ -20,7 +24,42 @@ struct VkRenderer {
     AVBufferRef* hardwareDevice = nullptr;
 };
 
-extern "C" MAI_FFPLAY_EXPORT int maiFfplaySourceHasHdrWithoutSubtitles(const char* path) {
+namespace {
+
+bool encodeAmbient(const AVAmbientViewingEnvironment* ambient, uint8_t (&bytes)[8]) {
+    if (!ambient || ambient->ambient_illuminance.num < 0 ||
+        ambient->ambient_illuminance.den <= 0 || ambient->ambient_light_x.num < 0 ||
+        ambient->ambient_light_x.den <= 0 || ambient->ambient_light_y.num < 0 ||
+        ambient->ambient_light_y.den <= 0)
+        return false;
+    const int64_t illuminance = av_rescale_rnd(ambient->ambient_illuminance.num, 10000,
+                                               ambient->ambient_illuminance.den,
+                                               AV_ROUND_NEAR_INF);
+    const int64_t x = av_rescale_rnd(ambient->ambient_light_x.num, 50000,
+                                    ambient->ambient_light_x.den, AV_ROUND_NEAR_INF);
+    const int64_t y = av_rescale_rnd(ambient->ambient_light_y.num, 50000,
+                                    ambient->ambient_light_y.den, AV_ROUND_NEAR_INF);
+    if (illuminance < 0 || illuminance > UINT32_MAX || x < 0 || x > UINT16_MAX ||
+        y < 0 || y > UINT16_MAX)
+        return false;
+    const uint32_t lux = static_cast<uint32_t>(illuminance);
+    bytes[0] = static_cast<uint8_t>(lux >> 24);
+    bytes[1] = static_cast<uint8_t>(lux >> 16);
+    bytes[2] = static_cast<uint8_t>(lux >> 8);
+    bytes[3] = static_cast<uint8_t>(lux);
+    bytes[4] = static_cast<uint8_t>(x >> 8);
+    bytes[5] = static_cast<uint8_t>(x);
+    bytes[6] = static_cast<uint8_t>(y >> 8);
+    bytes[7] = static_cast<uint8_t>(y);
+    return true;
+}
+
+}  // namespace
+
+extern "C" MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSource(
+    const char* path, MaiFfplayHdrSourceInfo* info) {
+    if (!info) return 0;
+    *info = {};
     if (!path || !*path) return 0;
     AVFormatContext* input = nullptr;
     if (avformat_open_input(&input, path, nullptr, nullptr) < 0) return 0;
@@ -37,12 +76,31 @@ extern "C" MAI_FFPLAY_EXPORT int maiFfplaySourceHasHdrWithoutSubtitles(const cha
                 (codec->sample_aspect_ratio.num == 0 ||
                  codec->sample_aspect_ratio.num == codec->sample_aspect_ratio.den) &&
                 (codec->color_trc == AVCOL_TRC_ARIB_STD_B67 ||
-                 codec->color_trc == AVCOL_TRC_SMPTE2084))
+                 codec->color_trc == AVCOL_TRC_SMPTE2084)) {
                 hdr = true;
+                if (codec->color_trc == AVCOL_TRC_ARIB_STD_B67) {
+                    info->hlg = 1;
+                    const AVPacketSideData* side = av_packet_side_data_get(
+                        codec->coded_side_data, codec->nb_coded_side_data,
+                        AV_PKT_DATA_AMBIENT_VIEWING_ENVIRONMENT);
+                    if (side && side->size >= sizeof(AVAmbientViewingEnvironment)) {
+                        const auto* ambient =
+                            reinterpret_cast<const AVAmbientViewingEnvironment*>(side->data);
+                        info->has_ambient = encodeAmbient(ambient, info->ambient);
+                    }
+                }
+            }
         }
     }
     avformat_close_input(&input);
-    return hdr && !subtitles ? 1 : 0;
+    info->native_frame_eligible = hdr && !subtitles ? 1 : 0;
+    if (!info->native_frame_eligible) info->hlg = info->has_ambient = 0;
+    return 1;
+}
+
+extern "C" MAI_FFPLAY_EXPORT int maiFfplaySourceHasHdrWithoutSubtitles(const char* path) {
+    MaiFfplayHdrSourceInfo info{};
+    return maiFfplayProbeHdrSource(path, &info) ? info.native_frame_eligible : 0;
 }
 
 extern "C" VkRenderer* vk_get_renderer(void) {

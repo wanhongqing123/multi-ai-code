@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <thread>
 
 #include "../../ios/MaiChat/MaiChat/Media/MaiFfplayIosBridge.h"
@@ -17,6 +18,7 @@ std::atomic<unsigned> hdrFrames{0};
 std::atomic<unsigned> nativeHdrFrames{0};
 std::atomic<unsigned> nonFlatFrames{0};
 std::atomic<unsigned> filterLinkErrors{0};
+std::atomic<unsigned> hlgOutputRequests{0};
 
 void onLog(void*, int, const char* line) {
     if (line && std::strstr(line, "Impossible to convert between the formats"))
@@ -72,18 +74,43 @@ extern "C" bool maiGraphicsPresenterShowFrame(
     return true;
 }
 
+extern "C" bool maiGraphicsPresenterSetHlgOutput(
+    uint64_t, bool enabled, const uint8_t* ambient, uint32_t ambientSize) {
+    if (enabled) {
+        if ((ambientSize != 0 && ambientSize != 8) ||
+            (ambientSize == 8 && !ambient))
+            return false;
+        ++hlgOutputRequests;
+    }
+    return true;
+}
+
 int main(int argc, char** argv) {
-    if (argc != 3 || (std::strcmp(argv[2], "rotated-hdr") != 0 &&
+    if ((argc != 3 && argc != 4) || (std::strcmp(argv[2], "rotated-hdr") != 0 &&
                       std::strcmp(argv[2], "straight-hdr") != 0 &&
                       std::strcmp(argv[2], "sdr") != 0)) {
-        std::fprintf(stderr, "usage: %s movie.mov {rotated-hdr|straight-hdr|sdr}\n",
+        std::fprintf(stderr, "usage: %s movie.mov {rotated-hdr|straight-hdr|sdr} [amve-hex]\n",
                      argv[0]);
         return 2;
     }
     const bool isHdr = std::strcmp(argv[2], "sdr") != 0;
-    if (maiFfplaySourceHasHdrWithoutSubtitles(argv[1]) != (isHdr ? 1 : 0)) {
+    MaiFfplayHdrSourceInfo source{};
+    if (!maiFfplayProbeHdrSource(argv[1], &source) ||
+        source.native_frame_eligible != (isHdr ? 1 : 0)) {
         std::fprintf(stderr, "fixture selected the wrong iOS decoder path\n");
         return 3;
+    }
+    if (argc == 4) {
+        std::string actual;
+        for (uint8_t byte : source.ambient) {
+            char hex[3] = {};
+            std::snprintf(hex, sizeof(hex), "%02x", byte);
+            actual += hex;
+        }
+        if (!source.hlg || !source.has_ambient || actual != argv[3]) {
+            std::fprintf(stderr, "source HLG ambient metadata did not reach the probe\n");
+            return 9;
+        }
     }
     maiFfplaySetDiagnosticSink(onLog, nullptr);
     MaiFfplayIosSession* session = maiFfplayIosStart(1, argv[1]);
@@ -119,6 +146,10 @@ int main(int argc, char** argv) {
     if (isHdr && nativeHdr == 0) {
         std::fprintf(stderr, "HDR movie lost native P010/BT.2020/HLG output\n");
         return 7;
+    }
+    if ((isHdr && hlgOutputRequests == 0) || (!isHdr && hlgOutputRequests != 0)) {
+        std::fprintf(stderr, "HLG display mode was not selected for the source\n");
+        return 8;
     }
     return 0;
 }

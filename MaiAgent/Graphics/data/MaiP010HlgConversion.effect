@@ -91,10 +91,33 @@ float4 PSP010_HLG_2020_709_Reverse(VertTexPos frag_in) : TARGET
     return float4(rgb, 1.);
 }
 
+// CAEDRMetadata.hlg expects scene-referred, linear BT.2020 with the HLG
+// inverse OETF applied but no OOTF or normalization (nominal range 0..12).
+float4 PSP010_HLG_2020_SceneLinear_Reverse(VertTexPos frag_in) : TARGET
+{
+    float y = image.Load(int3(frag_in.pos.xy, 0)).x;
+    float2 cbcr = image1.Sample(def_sampler, frag_in.uv).xy;
+    float3 yuv_65535 = floor(float3(y, cbcr) * 65535. + 0.5);
+    float3 yuv_1023 = floor(yuv_65535 * 0.015625);
+    float3 hlg = max(YUV_to_RGB(yuv_1023 / 1023.), float3(0., 0., 0.));
+    float3 scene2020 = float3(hlg_to_linear_channel(hlg.r),
+                              hlg_to_linear_channel(hlg.g),
+                              hlg_to_linear_channel(hlg.b)) * 12.;
+    return float4(scene2020, 1.);
+}
+
 technique P010_HLG_2020_709_Reverse
 {
     pass {
         vertex_shader = VS420TopLeft_Reverse(id);
         pixel_shader = PSP010_HLG_2020_709_Reverse(frag_in);
+    }
+}
+
+technique P010_HLG_2020_SceneLinear_Reverse
+{
+    pass {
+        vertex_shader = VS420TopLeft_Reverse(id);
+        pixel_shader = PSP010_HLG_2020_SceneLinear_Reverse(frag_in);
     }
 }

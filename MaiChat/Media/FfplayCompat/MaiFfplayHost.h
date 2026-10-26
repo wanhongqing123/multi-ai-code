@@ -37,6 +37,16 @@ typedef struct MaiFfplayHost {
 void maiFfplayBindHost(const MaiFfplayHost* host);
 MaiFfplayHost maiFfplayCurrentHost(void);
 MAI_FFPLAY_EXPORT int maiFfplaySourceHasHdrWithoutSubtitles(const char* path);
+typedef struct MaiFfplayHdrSourceInfo {
+    int native_frame_eligible;
+    int hlg;
+    int has_ambient;
+    uint8_t ambient[8];
+} MaiFfplayHdrSourceInfo;
+// Read the source's HLG ambient viewing environment once before playback.
+// The eight bytes are the big-endian 'amve' payload accepted by CAEDRMetadata.
+MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSource(const char* path,
+                                              MaiFfplayHdrSourceInfo* info);
 
 #ifdef __cplusplus
 }

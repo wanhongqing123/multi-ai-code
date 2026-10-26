@@ -58,8 +58,11 @@ def verify(path, *, hdr, rotated):
         raise RuntimeError(f"unexpected display matrix in {path.name}: {rotations}")
 
 
-def run_case(exe, path, mode, label):
-    result = subprocess.run([str(exe), str(path), mode], text=True,
+def run_case(exe, path, mode, label, expected_ambient=None):
+    command = [str(exe), str(path), mode]
+    if expected_ambient:
+        command.append(expected_ambient)
+    result = subprocess.run(command, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             timeout=15)
     print(f"{label} {result.stdout.strip()}", flush=True)
@@ -68,7 +71,8 @@ def run_case(exe, path, mode, label):
                     if "Impossible to convert" in line or
                        "movie produced" in line or
                        "filter link failed" in line or
-                       "lost native" in line]
+                       "lost native" in line or
+                       "ambient metadata" in line]
         raise RuntimeError(f"{label} failed ({result.returncode}): " +
                            "; ".join(relevant[-5:]))
 
@@ -122,7 +126,8 @@ def main():
                            (sdr, "sdr")):
             run_case(exe, path, mode, mode)
         if original:
-            run_case(exe, original, "rotated-hdr", "original")
+            run_case(exe, original, "rotated-hdr", "original",
+                     expected_ambient="002fe9a03d134042")
     print("rotated HDR playback gate: PASS")
 
 

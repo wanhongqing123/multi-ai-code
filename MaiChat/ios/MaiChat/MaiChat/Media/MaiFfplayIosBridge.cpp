@@ -25,6 +25,8 @@ struct MaiFfplayIosSession {
     std::atomic<int> result{0};
     std::atomic<bool> firstFrameLogged{false};
     std::atomic<uint64_t> presentedFrames{0};
+    std::atomic<bool> hlgOutputRequested{false};
+    MaiFfplayHdrSourceInfo sourceInfo{};
 };
 
 namespace {
@@ -32,6 +34,19 @@ namespace {
 bool presentVideo(void* user, const MaiVideoFrame* frame,
                   const MaiVideoSubtitle* subtitle) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+    const bool hlgFrame = frame && session->sourceInfo.hlg &&
+        frame->format == MAI_VIDEO_PIXEL_P010 &&
+        frame->color_space == MAI_VIDEO_COLOR_BT2020 &&
+        frame->color_transfer == MAI_VIDEO_TRANSFER_HLG;
+    if (hlgFrame && !session->hlgOutputRequested.exchange(true)) {
+        const uint8_t* ambient = session->sourceInfo.has_ambient
+                                     ? session->sourceInfo.ambient : nullptr;
+        const uint32_t ambientSize = session->sourceInfo.has_ambient ? 8 : 0;
+        if (!maiGraphicsPresenterSetHlgOutput(session->viewId, true, ambient, ambientSize))
+            session->hlgOutputRequested = false;
+    } else if (!hlgFrame && session->hlgOutputRequested.exchange(false)) {
+        maiGraphicsPresenterSetHlgOutput(session->viewId, false, nullptr, 0);
+    }
     const bool shown = maiGraphicsPresenterShowVideoFrameWithSubtitle(
         session->viewId, frame, subtitle, false);
     if (!shown) return false;
@@ -52,6 +67,8 @@ bool presentVideo(void* user, const MaiVideoFrame* frame,
 bool presentRgba(void* user, const uint8_t* pixels,
                  uint32_t width, uint32_t height, uint32_t stride) {
     auto* session = static_cast<MaiFfplayIosSession*>(user);
+    if (session->hlgOutputRequested.exchange(false))
+        maiGraphicsPresenterSetHlgOutput(session->viewId, false, nullptr, 0);
     const bool shown = maiGraphicsPresenterShowFrame(session->viewId, pixels,
                                                       width, height, stride, false);
     if (!shown) return false;
@@ -86,9 +103,9 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const 
             char hardwareDecode[] = "-hwaccel";
             char videoToolbox[] = "videotoolbox";
             std::string input = session->path;
-            session->host.present_native_frames =
-                input.find("://") == std::string::npos &&
-                        maiFfplaySourceHasHdrWithoutSubtitles(input.c_str()) ? 1 : 0;
+            session->host.present_native_frames = input.find("://") == std::string::npos &&
+                maiFfplayProbeHdrSource(input.c_str(), &session->sourceInfo) &&
+                session->sourceInfo.native_frame_eligible ? 1 : 0;
             if (session->host.present_native_frames) {
                 char* arguments[] = {name, nativeRenderer, hardwareDecode,
                                      videoToolbox, &input[0]};
@@ -99,6 +116,8 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const 
                 // quit event whose exit code is zero. The absence of a frame is
                 // the reliable signal that this decoder/render path did not open.
                 if (!session->stopRequested && session->presentedFrames == 0) {
+                    if (session->hlgOutputRequested.exchange(false))
+                        maiGraphicsPresenterSetHlgOutput(session->viewId, false, nullptr, 0);
                     session->host.present_native_frames = 0;
                     char* fallback[] = {name, &input[0]};
                     session->result = maiFfplayRunAtSpeed(&session->host, 2, fallback,
@@ -162,5 +181,7 @@ extern "C" void maiFfplayIosStop(MaiFfplayIosSession* session) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (session->worker.joinable()) session->worker.join();
+    if (session->hlgOutputRequested.exchange(false))
+        maiGraphicsPresenterSetHlgOutput(session->viewId, false, nullptr, 0);
     delete session;
 }

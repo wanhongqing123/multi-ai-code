@@ -21,6 +21,9 @@
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -35,6 +38,11 @@ extern "C" {
 #include "MaiGraphics.h"
 #include "MaiVideoColorParameters.h"
 #include "vec4.h"
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+extern "C" int32_t mai_metal_swapchain_set_hlg(const void* swapchain, int32_t enabled,
+                                               const uint8_t* ambient, uint32_t ambient_size);
+#endif
 
 namespace {
 
@@ -129,6 +137,7 @@ struct MaiGraphicsViewState {
     uint32_t videoHeight = 0;
     bool highBitFailureLogged = false;
     uint64_t highBitRendered = 0;
+    bool hlgOutput = false;
 };
 
 struct MaiDecodedImage {
@@ -346,6 +355,40 @@ public:
             return 0;
         }
         return view->id;
+    }
+
+    bool setHlgOutput(uint64_t id, bool enabled, const uint8_t* ambient,
+                      uint32_t ambientSize) {
+        if (enabled && ambientSize != 0 && (ambientSize != 8 || !ambient)) return false;
+        std::shared_ptr<MaiGraphicsViewState> view = findView(id);
+        if (!view) return false;
+        std::array<uint8_t, 8> copied{};
+        if (enabled && ambientSize == copied.size())
+            std::memcpy(copied.data(), ambient, copied.size());
+        return mGraphicsRunner.post([this, view, enabled, ambientSize, copied] {
+            if (!view->active || !view->swapchain) return;
+            gs_enter_context(mGraphics);
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+            const bool configured = mai_metal_swapchain_set_hlg(
+                view->swapchain, enabled ? 1 : 0,
+                enabled && ambientSize == copied.size() ? copied.data() : nullptr,
+                enabled ? ambientSize : 0) == 1;
+            view->hlgOutput = enabled && configured;
+            if (enabled && configured)
+                std::fprintf(stderr, "[MaiVideoHDR] HLG EDR enabled ambient=%u\n",
+                             ambientSize == copied.size() ? 1U : 0U);
+            if (enabled && !configured)
+                std::fprintf(stderr, "[MaiVideoHDR] HLG EDR unavailable; using SDR output\n");
+            if (!enabled)
+                std::fprintf(stderr, "[MaiVideoHDR] HLG EDR reset to SDR\n");
+#else
+            (void)enabled;
+            (void)ambientSize;
+            (void)copied;
+            view->hlgOutput = false;
+#endif
+            gs_leave_context();
+        });
     }
 
     bool showImage(uint64_t id, const char* path, bool fillView) {
@@ -586,9 +629,9 @@ private:
     // 以当前交换链尺寸计算画面矩形，叠加字幕后再提交；交换链不可用时返回失败供上层恢复。
     bool drawTexture(MaiGraphicsViewState* view, gs_texture_t* texture, uint32_t sourceWidth,
                      uint32_t sourceHeight, gs_texture_t* subtitle = nullptr,
-                     bool hdr = false) {
+                     bool linearSource = false, bool toneMap = false) {
         if (!view->swapchain || !texture || !ensureDrawEffect()) return false;
-        gs_technique_t* drawTechnique = hdr ? mDrawTonemapTechnique : mDrawTechnique;
+        gs_technique_t* drawTechnique = toneMap ? mDrawTonemapTechnique : mDrawTechnique;
         if (!drawTechnique) return false;
         const uint32_t width = view->width;
         const uint32_t height = view->height;
@@ -602,7 +645,7 @@ private:
         gs_clear(GS_CLEAR_COLOR, &black, 1.0f, 0);
         gs_set_cull_mode(GS_NEITHER);
         gs_enable_blending(false);
-        if (hdr) gs_effect_set_texture(mImageParameter, texture);
+        if (linearSource) gs_effect_set_texture(mImageParameter, texture);
         else gs_effect_set_texture_srgb(mImageParameter, texture);
         const float widthScale = static_cast<float>(width) / sourceWidth;
         const float heightScale = static_cast<float>(height) / sourceHeight;
@@ -719,6 +762,8 @@ private:
                              frame.format == MAI_VIDEO_PIXEL_I010;
         const bool fastP010Hlg = frame.format == MAI_VIDEO_PIXEL_P010 &&
                                  frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG;
+        const bool hlgEdr = view->hlgOutput && fastP010Hlg &&
+                            frame.colorSpace == MAI_VIDEO_COLOR_BT2020;
         gs_effect_t* effect = nullptr;
         if (fastP010Hlg && ensureP010HlgEffect())
             effect = mP010HlgEffect;
@@ -730,7 +775,8 @@ private:
         const char* techniqueName = nullptr;
         if (highBit) {
             const bool planar = frame.format == MAI_VIDEO_PIXEL_I010;
-            techniqueName = frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG
+            techniqueName = hlgEdr ? "P010_HLG_2020_SceneLinear_Reverse"
+                            : frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG
                                 ? (planar ? "I010_HLG_2020_709_Reverse"
                                           : "P010_HLG_2020_709_Reverse")
                             : frame.colorTransfer == MAI_VIDEO_TRANSFER_PQ
@@ -764,7 +810,14 @@ private:
         }
         if (!view->convertedVideo) return nullptr;
         gs_texrender_reset(view->convertedVideo);
-        if (!gs_texrender_begin(view->convertedVideo, frame.width, frame.height)) return nullptr;
+        // The intermediate stores linear BT.2020 scene values in FP16. OBS's
+        // extended enum describes the linear render state; no gamut conversion
+        // occurs until the tagged Metal layer displays this texture.
+        const bool began = hlgEdr
+            ? gs_texrender_begin_with_color_space(view->convertedVideo, frame.width,
+                                                  frame.height, GS_CS_709_EXTENDED)
+            : gs_texrender_begin(view->convertedVideo, frame.width, frame.height);
+        if (!began) return nullptr;
 
         const MaiVideoColorParameters color =
             maiVideoColorParameters(frame.colorSpace, frame.colorRange);
@@ -806,7 +859,7 @@ private:
         if (frame.format == MAI_VIDEO_PIXEL_I420 || frame.format == MAI_VIDEO_PIXEL_I010)
             gs_effect_set_texture(image2, view->videoTextures[2]);
         const bool previousSrgb = gs_framebuffer_srgb_enabled();
-        gs_enable_framebuffer_srgb(highBit);
+        gs_enable_framebuffer_srgb(highBit && !hlgEdr);
         gs_enable_blending(false);
         const size_t passes = gs_technique_begin(technique);
         bool converted = passes > 0;
@@ -828,6 +881,15 @@ private:
     bool renderVideo(MaiGraphicsViewState* view, const MaiDecodedVideoFrame& frame) {
         if (!view->swapchain) return false;
         gs_enter_context(mGraphics);
+        const bool hlgFrame = frame.format == MAI_VIDEO_PIXEL_P010 &&
+                              frame.colorSpace == MAI_VIDEO_COLOR_BT2020 &&
+                              frame.colorTransfer == MAI_VIDEO_TRANSFER_HLG;
+        if (view->hlgOutput && !hlgFrame) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+            mai_metal_swapchain_set_hlg(view->swapchain, 0, nullptr, 0);
+#endif
+            view->hlgOutput = false;
+        }
         const bool uploaded = uploadVideoPlanes(view, frame);
         gs_texture_t* texture = uploaded ? convertVideo(view, frame) : nullptr;
         if (!frame.subtitlePixels.empty() &&
@@ -842,10 +904,12 @@ private:
         if (!frame.subtitlePixels.empty() && view->subtitleTexture)
             gs_texture_set_image(view->subtitleTexture, frame.subtitlePixels.data(),
                                  frame.width * 4, false);
+        const bool highDynamicRange = frame.colorTransfer != MAI_VIDEO_TRANSFER_SDR;
         const bool presented = drawTexture(view, texture, frame.width, frame.height,
                                            frame.subtitlePixels.empty() ? nullptr
                                                                        : view->subtitleTexture,
-                                           frame.colorTransfer != MAI_VIDEO_TRANSFER_SDR);
+                                           highDynamicRange,
+                                           highDynamicRange && !view->hlgOutput);
         if (!presented && frame.colorTransfer != MAI_VIDEO_TRANSFER_SDR &&
             !view->highBitFailureLogged) {
             view->highBitFailureLogged = true;
@@ -924,6 +988,17 @@ extern "C" uint64_t maiGraphicsPresenterAttach(void* native_view, uint32_t width
         return current ? current->attach(native_view, width, height, retain_view, release_view) : 0;
     } catch (const std::exception&) {
         return 0;
+    }
+}
+
+extern "C" bool maiGraphicsPresenterSetHlgOutput(uint64_t view_id, bool enabled,
+                                                 const uint8_t* ambient,
+                                                 uint32_t ambient_size) {
+    try {
+        auto current = presenter();
+        return current && current->setHlgOutput(view_id, enabled, ambient, ambient_size);
+    } catch (const std::exception&) {
+        return false;
     }
 }
 

@@ -32,6 +32,13 @@ typedef struct MaiFfplayHost {
     void (*set_position)(void* user_data, int x, int y);
     void (*set_fullscreen)(void* user_data, int enabled);
     void (*show_window)(void* user_data);
+    // Optional seekable byte source for cloud VOD. The callback runs on the
+    // decoder thread and returns 1..capacity bytes, 0 at EOF, or <0 on error.
+    // The host keeps user_data and its source alive until playback has stopped.
+    // No signed URL or media bytes need to appear in the FFplay input path.
+    int (*read_input_at)(void* user_data, uint64_t offset,
+                         uint8_t* output, int capacity);
+    uint64_t input_size_bytes;
 } MaiFfplayHost;
 
 void maiFfplayBindHost(const MaiFfplayHost* host);
@@ -47,6 +54,8 @@ typedef struct MaiFfplayHdrSourceInfo {
 // The eight bytes are the big-endian 'amve' payload accepted by CAEDRMetadata.
 MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSource(const char* path,
                                               MaiFfplayHdrSourceInfo* info);
+MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSourceFromHost(
+    const MaiFfplayHost* host, MaiFfplayHdrSourceInfo* info);
 
 #ifdef __cplusplus
 }

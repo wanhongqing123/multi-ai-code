@@ -30,6 +30,8 @@ class Fixture(http.server.ThreadingHTTPServer):
         self.complete_calls = 0
         self.slow_complete = True
         self.oss_authorization = 0
+        self.range_requests = 0
+        self.full_downloads = 0
         self.redirect_followed = 0
         self.status = "none"
         self.name = ""
@@ -98,7 +100,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/oss/play":
             with self.server.lock:
                 content = b"".join(self.server.part_bytes.values())
-            self.send_response(200)
+            range_header = self.headers.get("Range")
+            if range_header:
+                with self.server.lock:
+                    self.server.range_requests += 1
+                match = re.fullmatch(r"bytes=(\d+)-(\d+)", range_header)
+                if not match:
+                    self.send_error(416)
+                    return
+                first, last = int(match.group(1)), int(match.group(2))
+                if first >= len(content) or first > last:
+                    self.send_error(416)
+                    return
+                if last >= len(content):
+                    # Match production OSS: an overlong final Range can be
+                    # ignored and return 200. The VOD client must retry with
+                    # the exact EOF instead of accepting a whole-file body.
+                    self.send_response(200)
+                else:
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {first}-{last}/{len(content)}")
+                    content = content[first:last + 1]
+            else:
+                with self.server.lock:
+                    self.server.full_downloads += 1
+                self.send_response(200)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("ETag", '"fixture-play-object"')
             self.send_header("Content-Length", str(len(content)))
             self.send_header("Content-Type", self.server.content_type)
             self.end_headers()

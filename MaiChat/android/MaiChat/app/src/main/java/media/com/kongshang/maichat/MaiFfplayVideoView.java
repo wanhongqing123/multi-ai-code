@@ -32,7 +32,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
 
     static { System.loadLibrary("maichat_agent"); }
     private static native long nativeCreate(long viewId, String path, double speed,
-                                            long startPositionUs);
+                                            long startPositionUs, long vodHandle);
     private static native boolean nativeCommand(long handle, String command);
     private static native boolean nativeSeekPercent(long handle, double fraction);
     private static native boolean nativeSeekAbsoluteUs(long handle, long positionUs);
@@ -40,6 +40,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
     private static native void nativeDestroy(long handle);
 
     private final MaiGraphicsTextureView surface;
+    private long cloudVodHandle;
     private final TextView errorLabel;
     private final ImageButton playButton;
     private final Button speedButton;
@@ -226,6 +227,7 @@ public final class MaiFfplayVideoView extends FrameLayout {
         return presented && surface.isAvailable() ? surface.getBitmap() : null;
     }
     public String currentVideoPath() { return videoPath; }
+    public void setCloudVodHandle(long handle) { cloudVodHandle = handle; }
     public void setOnVideoSwipeListener(OnVideoSwipeListener listener) {
         swipeListener = listener;
     }
@@ -259,7 +261,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
         graphicsViewId = viewId;
         MaiFfplayVideoView previous = active.get();
         if (previous != null && previous != this) previous.stop();
-        playbackHandle = nativeCreate(viewId, videoPath, speed, startPositionUs);
+        playbackHandle = nativeCreate(viewId, videoPath, speed, startPositionUs,
+                                      cloudVodHandle);
         if (playbackHandle == 0) {
             errorLabel.setText("无法打开视频");
             return;
@@ -318,7 +321,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
         playbackHandle = 0;
         if (previous != 0) nativeDestroy(previous);
         startPositionUs = 0;
-        playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, 0);
+        playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, 0,
+                                      cloudVodHandle);
         if (playbackHandle == 0) return false;
         playing = true;
         playButton.setImageResource(android.R.drawable.ic_media_pause);
@@ -340,7 +344,8 @@ public final class MaiFfplayVideoView extends FrameLayout {
         nativeDestroy(previous);
         speed = requested;
         speedButton.setText(formatSpeed(speed));
-        playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, position);
+        playbackHandle = nativeCreate(graphicsViewId, videoPath, speed, position,
+                                      cloudVodHandle);
         if (playbackHandle == 0) {
             errorLabel.setText("倍速切换失败");
             errorLabel.setVisibility(VISIBLE);

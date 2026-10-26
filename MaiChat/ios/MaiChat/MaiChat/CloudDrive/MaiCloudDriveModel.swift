@@ -358,6 +358,7 @@ struct MaiCloudDriveUploadProgress: Sendable {
     }
 
     func showError(_ message: String) { listError = message }
+    func showNotice(_ message: String) { notice = message }
 
     func discardLocalTask(_ task: MaiCloudDriveLocalTask) {
         guard transfers[task.id] == nil, !aborting.contains(task.id) else { return }

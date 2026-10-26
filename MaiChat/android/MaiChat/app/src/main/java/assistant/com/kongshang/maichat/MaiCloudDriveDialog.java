@@ -25,11 +25,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 final class MaiCloudDriveDialog {
     private static final long MAX_THUMBNAIL_BYTES = 2L * 1024 * 1024;
+    private static final ExecutorService VOD_WORKERS = Executors.newFixedThreadPool(2,
+        runnable -> new Thread(runnable, "maichat-cloud-vod"));
     private static final class CappedScrollView extends ScrollView {
         private final int maximumHeight;
         CappedScrollView(MainActivity activity, int maximumHeight) {
@@ -48,6 +52,7 @@ final class MaiCloudDriveDialog {
     private final MaiCloudDrive client;
     private final MaiChatAttachmentDownload.NativeTransport downloads;
     private MaiChatAttachmentDownload.Scope downloadScope = new MaiChatAttachmentDownload.Scope();
+    private MaiCloudVod.Opening vodOpening;
     private final ArrayList<JSONObject> media = new ArrayList<>();
     private AlertDialog dialog;
     private LinearLayout page, uploads, library;
@@ -58,7 +63,7 @@ final class MaiCloudDriveDialog {
     private String account = "";
     private final String thumbnailInstance = UUID.randomUUID().toString();
     private File thumbnailDirectory;
-    private boolean uploading, loading, playing;
+    private boolean uploading, loading, playing, saving;
     private int generation;
     private File requestedCheckpoint;
 
@@ -135,6 +140,7 @@ final class MaiCloudDriveDialog {
             ++generation;
             client.cancel();
             downloadScope.cancel();
+            if (vodOpening != null) vodOpening.cancel();
             cleanupIdlePlaybackCache();
             clearThumbnails();
             if (activity.currentCloudDriveDialog() == this) activity.clearCloudDriveDialog(this);
@@ -401,6 +407,13 @@ final class MaiCloudDriveDialog {
         card.addView(actions, row());
         Button open = button(image ? "查看" : "播放", () -> open(id, name, bytes, image));
         actions.addView(open, new LinearLayout.LayoutParams(0, dp(42), 1));
+        if (!image) {
+            Button save = button("保存", () -> saveVideo(id, name, bytes));
+            LinearLayout.LayoutParams saveParams =
+                new LinearLayout.LayoutParams(dp(72), dp(42));
+            saveParams.leftMargin = dp(8);
+            actions.addView(save, saveParams);
+        }
         Button delete = button("删除", () -> new AlertDialog.Builder(activity)
             .setMessage("删除「" + name + "」？此操作无法撤销。")
             .setNegativeButton("取消", null)
@@ -479,20 +492,22 @@ final class MaiCloudDriveDialog {
     }
 
     private void open(String id, String name, long bytes, boolean image) {
-        if (id.isEmpty() || playing || uploading) return;
+        if (id.isEmpty() || playing || uploading || saving) return;
         MaiCloudDrive.MediaInfo info = MaiCloudDrive.mediaInfo(name);
         if (info == null || !info.mediaType.equals(image ? "image" : "video") ||
             bytes < 1 || bytes > info.maxBytes) {
             status.setText("云盘文件信息无效，无法预览");
             return;
         }
-        File directory = new File(activity.getCacheDir(), image ?
-            "cloud-drive-images" : "cloud-drive-playback");
+        if (!image) {
+            startVideoVod(id, name);
+            return;
+        }
+        File directory = new File(activity.getCacheDir(), "cloud-drive-images");
         if (!directory.isDirectory() && !directory.mkdirs()) {
             status.setText("无法准备预览缓存"); return;
         }
-        if (image) activity.cleanupIdleCloudDriveImages();
-        else cleanupIdlePlaybackCache();
+        activity.cleanupIdleCloudDriveImages();
         if (!MaiCloudDrivePlaybackCache.hasSpace(directory, bytes)) {
             status.setText("设备剩余空间不足，无法缓存文件"); return;
         }
@@ -512,7 +527,7 @@ final class MaiCloudDriveDialog {
             }
             String extension = name.substring(name.lastIndexOf('.')).toLowerCase(Locale.ROOT);
             File target = new File(directory, UUID.randomUUID() + extension);
-            status.setText(image ? "正在下载图片…" : "正在下载视频…");
+            status.setText("正在下载图片…");
             MaiChatAttachmentDownload.Scope scope = downloadScope;
             downloads.download(url, target, info.maxBytes,
                 scope, downloaded -> activity.runOnUiThread(() -> {
@@ -524,8 +539,112 @@ final class MaiCloudDriveDialog {
                     playing = false;
                     if (!downloaded.ok()) { status.setText("下载失败，请重试"); return; }
                     status.setText("");
-                    if (!(image ? activity.openCloudDriveImage(target.getAbsolutePath()) :
-                        activity.openCloudDriveVideo(target.getAbsolutePath()))) target.delete();
+                    if (!activity.openCloudDriveImage(target.getAbsolutePath())) target.delete();
+                }));
+        });
+    }
+
+    private void startVideoVod(String id, String name) {
+        final MaiCloudVod.Opening opening;
+        try { opening = new MaiCloudVod.Opening(); }
+        catch (IOException | LinkageError failure) {
+            status.setText("无法启动云盘点播");
+            return;
+        }
+        vodOpening = opening;
+        playing = true;
+        status.setText("正在缓冲视频…");
+        int requestGeneration = generation;
+        String expectedAccount = account;
+        String extension = name.toLowerCase(Locale.ROOT).endsWith(".mov") ? "mov" : "mp4";
+        VOD_WORKERS.execute(() -> {
+            MaiCloudVod.Session source = null;
+            String error = null;
+            try { source = client.openVodBlocking(id, extension, opening); }
+            catch (Exception | LinkageError failure) { error = failure.getMessage(); }
+            MaiCloudVod.Session ready = source;
+            String message = error;
+            activity.runOnUiThread(() -> {
+                if (vodOpening == opening) vodOpening = null;
+                if (!isShowing() || generation != requestGeneration || opening.isCanceled() ||
+                    !expectedAccount.equals(MaiChatAuthClient.shared(activity).accountId())) {
+                    if (ready != null) { ready.cancel(); ready.close(); }
+                    else opening.release();
+                    if (isShowing()) playing = false;
+                    return;
+                }
+                playing = false;
+                if (ready == null) {
+                    opening.release();
+                    status.setText(message == null ? "视频点播失败，请重试" : message);
+                    return;
+                }
+                status.setText("");
+                if (!activity.openCloudDriveVideo(ready)) {
+                    ready.cancel();
+                    ready.close();
+                    status.setText("视频无法播放");
+                }
+            });
+        });
+    }
+
+    private void saveVideo(String id, String name, long bytes) {
+        if (id.isEmpty() || saving || playing || uploading) return;
+        MaiCloudDrive.MediaInfo info = MaiCloudDrive.mediaInfo(name);
+        if (info == null || !"video".equals(info.mediaType) ||
+            bytes < 1 || bytes > info.maxBytes) {
+            status.setText("云盘视频信息无效，无法保存");
+            return;
+        }
+        File directory = new File(activity.getCacheDir(), "cloud-drive-explicit-saves");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            status.setText("无法准备保存缓存");
+            return;
+        }
+        saving = true;
+        status.setText("正在下载以保存到相册…");
+        int requestGeneration = generation;
+        String expectedAccount = account;
+        JSONObject payload = new JSONObject();
+        try { payload.put("video_id", id); }
+        catch (Exception ignored) { saving = false; return; }
+        client.request(MaiCloudDrive.PLAY_LINK, payload, result -> {
+            if (!live(requestGeneration) || !expectedAccount.equals(account)) {
+                saving = false;
+                return;
+            }
+            if (!result.ok()) {
+                saving = false;
+                status.setText(MaiCloudDrive.errorText(result));
+                return;
+            }
+            String url = result.json().optString("read_url", "");
+            if (!url.startsWith("https://")) {
+                saving = false;
+                status.setText("云盘保存链接无效");
+                return;
+            }
+            String extension = name.toLowerCase(Locale.ROOT).endsWith(".mov") ? ".mov" : ".mp4";
+            File target = new File(directory, UUID.randomUUID() + extension);
+            MaiChatAttachmentDownload.Scope scope = downloadScope;
+            downloads.download(url, target, info.maxBytes, scope,
+                downloaded -> activity.runOnUiThread(() -> {
+                    if (!downloaded.ok() || !live(requestGeneration) ||
+                        !expectedAccount.equals(account) || scope != downloadScope) {
+                        saving = false;
+                        target.delete();
+                        if (isShowing()) status.setText("保存下载失败，请重试");
+                        return;
+                    }
+                    status.setText("正在保存到相册…");
+                    activity.saveCloudDriveVideo(target.getAbsolutePath(), () -> {
+                        target.delete();
+                        activity.runOnUiThread(() -> {
+                            saving = false;
+                            if (isShowing()) status.setText("");
+                        });
+                    });
                 }));
         });
     }

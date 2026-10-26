@@ -265,7 +265,7 @@ struct RootView: View {
                             galleryImage = next
                         }
                         return true
-                    }) {
+                    }, vod: presentation.vod) {
                         appState.agentVideoPresentation = nil
                     }
                     .id(presentation.id)

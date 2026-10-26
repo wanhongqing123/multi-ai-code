@@ -18,6 +18,8 @@ class QTemporaryDir;
 class QVBoxLayout;
 struct MaiCloudDriveCancel;
 struct MaiDownloadCancel;
+struct MaiCloudVod;
+struct MaiCloudVodCancel;
 
 // The desktop host owns only presentation and local paths. HTTP, multipart
 // upload, checkpoint verification, and download live in shared C++ libraries.
@@ -25,7 +27,7 @@ class CloudDriveDialog final : public QDialog {
 public:
     using AccessProvider = std::function<DesktopVideoCircleAccess()>;
     using AccountIdProvider = std::function<QString()>;
-    using PlayCallback = std::function<void(const QString&)>;
+    using PlayCallback = std::function<void(std::shared_ptr<MaiCloudVod>, const QString&)>;
     using RelocateSelector = std::function<QString(const QString&)>;
 
     CloudDriveDialog(AccessProvider access, AccountIdProvider accountId,
@@ -52,7 +54,8 @@ private:
     void resetThumbnails();
     void startUpload(const QString& sourcePath, const QString& checkpointPath = {},
                      const QString& originalName = {});
-    void startPlayback(const QString& videoId);
+    void startPlayback(const QString& videoId, const QString& name);
+    void saveVideo(const QString& videoId, const QString& name);
     void startImagePreview(const QString& mediaId);
     void deleteVideo(const QString& videoId, const QString& name);
     void discardUpload(const QString& checkpointPath, const QString& name);
@@ -85,6 +88,7 @@ private:
     QVBoxLayout* videoRows_ = nullptr;
     std::shared_ptr<MaiCloudDriveCancel> requestCancel_;
     std::shared_ptr<MaiDownloadCancel> downloadCancel_;
+    std::shared_ptr<MaiCloudVodCancel> vodCancel_;
     std::shared_ptr<MaiCloudDriveCancel> thumbnailRequestCancel_;
     std::shared_ptr<MaiDownloadCancel> thumbnailDownloadCancel_;
     std::shared_ptr<QTemporaryDir> thumbnailDirectory_;

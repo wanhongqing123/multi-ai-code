@@ -457,12 +457,10 @@ public final class MaiCloudDriveAgentTools {
             !playback.optString("media_type", "")
                 .equals(image ? "image" : "video"))
             throw new Failure("protocol", "cloud media size or type is unavailable");
-        File directory = image ? new File(activity.getCacheDir(), "cloud-drive-images") :
-            new File(new File(activity.getCacheDir(), "cloud-drive-agent-playback"),
-                MaiCloudDrive.accountKey(account));
+        if (!image) return openVod(activity, client, account, id, suffix);
+        File directory = new File(activity.getCacheDir(), "cloud-drive-images");
         if (!directory.isDirectory() && !directory.mkdirs())
             throw new Failure("internal", "could not create private playback cache");
-        if (!image) MaiCloudDrivePlaybackCache.cleanupIdle(directory);
         if (!MaiCloudDrivePlaybackCache.hasSpace(directory, sizeBytes))
             throw new Failure("invalid_input", "device lacks space for private media preview");
         File target = new File(directory, UUID.randomUUID() + suffix);
@@ -496,15 +494,14 @@ public final class MaiCloudDriveAgentTools {
             activity.runOnUiThread(() -> {
                 boolean success = allowOpen.get() &&
                     account.equals(MaiChatAuthClient.shared(activity).accountId()) &&
-                    (image ? activity.openCloudDriveImage(target.getAbsolutePath()) :
-                        activity.openCloudDriveVideo(target.getAbsolutePath()));
+                    activity.openCloudDriveImage(target.getAbsolutePath());
                 if (!success) target.delete();
                 opened.complete(success);
             });
             if (!opened.get(5, TimeUnit.SECONDS))
                 throw new Failure("internal", "cloud media viewer could not open");
             return new JSONObject().put("opened", true).put("media_id", id)
-                .put("media_type", image ? "image" : "video");
+                .put("media_type", "image");
         } catch (InterruptedException canceled) {
             allowOpen.set(false);
             scope.cancel();
@@ -520,6 +517,38 @@ public final class MaiCloudDriveAgentTools {
             allowOpen.set(false);
             target.delete();
             throw failure;
+        }
+    }
+
+    private static JSONObject openVod(MainActivity activity, MaiCloudDrive client,
+                                      String account, String id,
+                                      String suffix) throws Exception {
+        MaiCloudVod.Opening opening = new MaiCloudVod.Opening();
+        MaiCloudVod.Session source = null;
+        boolean handedToPlayer = false;
+        try {
+            source = client.openVodBlocking(id, suffix.substring(1), opening);
+            if (!account.equals(MaiChatAuthClient.shared(activity).accountId()))
+                throw new Failure("not_configured", "MaiChat account changed");
+            CompletableFuture<Boolean> opened = new CompletableFuture<>();
+            MaiCloudVod.Session ready = source;
+            activity.runOnUiThread(() -> opened.complete(
+                account.equals(MaiChatAuthClient.shared(activity).accountId()) &&
+                    activity.openCloudDriveVideo(ready)));
+            if (!opened.get(5, TimeUnit.SECONDS))
+                throw new Failure("internal", "cloud video viewer could not open");
+            handedToPlayer = true;
+            return new JSONObject().put("opened", true).put("media_id", id)
+                .put("media_type", "video");
+        } catch (InterruptedException canceled) {
+            opening.cancel();
+            Thread.currentThread().interrupt();
+            throw new Failure("canceled", "cloud video preview was interrupted");
+        } finally {
+            if (!handedToPlayer) {
+                if (source != null) { source.cancel(); source.close(); }
+                else opening.release();
+            }
         }
     }
 

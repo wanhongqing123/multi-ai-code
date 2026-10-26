@@ -264,7 +264,7 @@ target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media ../S
     ${MAI_OPENSSL_INCLUDE_DIR})
 target_compile_definitions(maichat_mobile PRIVATE ASIO_STANDALONE _WEBSOCKETPP_CPP11_STRICT_)
 target_link_libraries(maichat_mobile PRIVATE maiagent mai_curl_download mai_video_circle_client
-  mai_cloud_drive_client
+  mai_cloud_drive_client mai_cloud_vod
   ${MAI_OPENSSL_SSL_TARGET} ${MAI_OPENSSL_CRYPTO_TARGET}
   maiagent_cv_video_analysis
   maichat_ffmpeg_tools

@@ -59,6 +59,7 @@
 #include "cmdutils.h"
 #include "ffplay_renderer.h"
 #include "opt_common.h"
+#include "FfplayCompat/MaiFfplayCustomInput.h"
 
 const char program_name[] = "ffplay";
 const int program_birth_year = 2003;
@@ -214,6 +215,7 @@ typedef struct VideoState {
     int64_t seek_rel;
     int read_pause_return;
     AVFormatContext *ic;
+    MaiFfplayCustomInput *custom_input;
     int realtime;
 
     Clock audclk;
@@ -1323,6 +1325,7 @@ static void stream_close(VideoState *is)
         stream_component_close(is, is->subtitle_stream);
 
     avformat_close_input(&is->ic);
+    maiFfplayCustomInputDestroy(&is->custom_input);
 
     packet_queue_destroy(&is->videoq);
     packet_queue_destroy(&is->audioq);
@@ -2938,6 +2941,18 @@ static int read_thread(void *arg)
     }
     ic->interrupt_callback.callback = decode_interrupt_cb;
     ic->interrupt_callback.opaque = is;
+    {
+        const MaiFfplayHost host = maiFfplayCurrentHost();
+        if (host.read_input_at) {
+            is->custom_input = maiFfplayCustomInputCreate(&host);
+            if (!is->custom_input) {
+                ret = AVERROR(ENOMEM);
+                goto fail;
+            }
+            ic->pb = is->custom_input->avio;
+            ic->flags |= AVFMT_FLAG_CUSTOM_IO;
+        }
+    }
     if (!av_dict_get(format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
         av_dict_set(&format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
         scan_all_pmts_set = 1;

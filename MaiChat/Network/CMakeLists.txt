@@ -11,6 +11,13 @@ target_include_directories(mai_curl_download PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(mai_curl_download PUBLIC CURL::libcurl)
 set_target_properties(mai_curl_download PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(mai_cloud_vod STATIC MaiCloudVod.cpp)
+target_compile_features(mai_cloud_vod PUBLIC cxx_std_17)
+target_include_directories(mai_cloud_vod PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party")
+target_link_libraries(mai_cloud_vod PUBLIC CURL::libcurl mai_cloud_drive_client)
+set_target_properties(mai_cloud_vod PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(mai_video_circle_client STATIC MaiVideoCircleClient.cpp)
 target_compile_features(mai_video_circle_client PUBLIC cxx_std_17)
 target_include_directories(mai_video_circle_client PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -55,6 +62,13 @@ if(MAICHAT_NETWORK_BUILD_TESTS)
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_cloud_drive_local_tls.py"
       "$<TARGET_FILE:mai_cloud_drive_client_test>")
+
+  add_executable(mai_cloud_vod_test tests/MaiCloudVodTest.cpp)
+  target_link_libraries(mai_cloud_vod_test PRIVATE mai_cloud_vod)
+  add_test(NAME mai_cloud_vod_local_tls
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_cloud_vod_local_tls.py"
+      "$<TARGET_FILE:mai_cloud_vod_test>")
 
   # Operator-run only. This target is never registered as a CTest because it
   # writes to the dedicated real OSS bucket when explicitly orchestrated.

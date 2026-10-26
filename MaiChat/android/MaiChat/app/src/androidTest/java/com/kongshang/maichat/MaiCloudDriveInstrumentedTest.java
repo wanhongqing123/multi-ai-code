@@ -6,7 +6,9 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.ContentValues;
+import android.content.ContentUris;
 import android.content.Context;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
@@ -29,6 +31,8 @@ import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -81,13 +85,11 @@ public final class MaiCloudDriveInstrumentedTest {
         paused.delete(); checkpoint.delete();
     }
 
-    @Test public void playbackRequiresEnoughSpaceForVideoAndReserve() {
-        long bytes = 1_800_000_000L;
+    @Test public void imagePreviewRequiresEnoughSpaceAndReserve() {
+        long bytes = 20_000_000L;
         long reserve = 64L * 1024 * 1024;
         assertFalse(MaiCloudDrivePlaybackCache.hasSpace(bytes + reserve - 1, bytes));
         assertTrue(MaiCloudDrivePlaybackCache.hasSpace(bytes + reserve, bytes));
-        assertFalse(MaiCloudDrivePlaybackCache.hasSpace(3_000_000_000L,
-            MaiCloudDrive.MAX_VIDEO_BYTES + 1));
     }
 
     @Test public void imageUploadShowsPrivateThumbnailAndFullScreenPreview() throws Exception {
@@ -220,14 +222,14 @@ public final class MaiCloudDriveInstrumentedTest {
         }
     }
 
-    @Test public void accountSwitchClosesPlayerAndRemovesPrivateCache() throws Exception {
+    @Test public void accountSwitchClosesVodWithoutDeletingSource() throws Exception {
+        requireFixture();
         assertTrue(BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
             BuildConfig.APPLICATION_ID.endsWith(".isolated"));
         Context context = ApplicationProvider.getApplicationContext();
         MaiChatAuthClient.shared(context).loginWithPassword("sync-ui-test", PASSWORD, true);
-        File directory = new File(context.getCacheDir(), "cloud-drive-playback");
-        assertTrue(directory.isDirectory() || directory.mkdirs());
-        File target = new File(directory, "account-switch-test.mp4");
+        resetFixture();
+        File target = new File(context.getCacheDir(), "account-switch-source.mp4");
         try (InputStream input = InstrumentationRegistry.getInstrumentation()
                  .getContext().getAssets().open("gallery-sample.mp4");
              FileOutputStream output = new FileOutputStream(target)) {
@@ -235,10 +237,20 @@ public final class MaiCloudDriveInstrumentedTest {
             int count;
             while ((count = input.read(buffer)) >= 0) output.write(buffer, 0, count);
         }
+        MaiCloudDrive client = new MaiCloudDrive(context);
+        MaiCloudDrive.Result uploaded = upload(client, client.inspect(target),
+                                               client.newCheckpoint());
+        assertTrue(uploaded.body, uploaded.ok());
+        String id = request(client, MaiCloudDrive.LIST, new JSONObject())
+            .json().getJSONArray("videos").getJSONObject(0).getString("id");
+        MaiCloudVod.Opening opening = new MaiCloudVod.Opening();
+        MaiCloudVod.Session source = client.openVodBlocking(id, "mp4", opening);
         try (ActivityScenario<MainActivity> screen = ActivityScenario.launch(MainActivity.class)) {
             screen.onActivity(activity -> assertTrue(
-                activity.openCloudDriveVideo(target.getAbsolutePath())));
-            assertTrue("Playback file must exist while player is open", target.isFile());
+                activity.openCloudDriveVideo(source)));
+            assertTrue("Point-of-demand session should be active", source.handle() != 0);
+            assertFalse("Point-of-demand playback must not create a file",
+                        new File(source.displayPath).exists());
             screen.onActivity(activity -> {
                 try {
                     Field sessionField = MainActivity.class.getDeclaredField("session");
@@ -251,10 +263,12 @@ public final class MaiCloudDriveInstrumentedTest {
                 } catch (Exception error) { throw new AssertionError(error); }
             });
             long deadline = System.currentTimeMillis() + 5000;
-            while (target.exists() && System.currentTimeMillis() < deadline)
+            while (source.handle() != 0 && System.currentTimeMillis() < deadline)
                 Thread.sleep(50);
-            assertFalse("Account switch left private playback cache", target.exists());
+            assertEquals("Account switch left VOD source active", 0, source.handle());
+            assertTrue("Account switch removed original source", target.isFile());
         }
+        target.delete();
     }
 
     @Test public void pauseUploadWithSeekableContentUri() throws Exception {
@@ -375,24 +389,55 @@ public final class MaiCloudDriveInstrumentedTest {
             AccessibilityNodeInfo play = textNode(root, "播放");
             assertNotNull("Cloud video play button", play);
             assertTrue(play.performAction(AccessibilityNodeInfo.ACTION_CLICK));
-            File playbackFile = null;
+            String playbackSource = null;
             long deadline = System.currentTimeMillis() + 20_000;
             while (System.currentTimeMillis() < deadline) {
                 MaiFfplayVideoView active = MaiFfplayVideoView.activeView();
-                if (active != null && active.currentVideoPath() != null &&
-                    active.currentVideoPath().contains("cloud-drive-playback")) {
-                    playbackFile = new File(active.currentVideoPath());
-                    if (playbackFile.isFile()) break;
+                if (active != null && active.hasPresentedFrame() &&
+                    active.currentVideoPath() != null &&
+                    active.currentVideoPath().startsWith("maicloud-vod-")) {
+                    playbackSource = active.currentVideoPath();
+                    break;
                 }
                 Thread.sleep(100);
             }
-            assertNotNull("Cloud playback did not open", playbackFile);
-            assertTrue(playbackFile.isFile());
+            assertNotNull("Cloud VOD did not open", playbackSource);
+            assertFalse("Cloud VOD unexpectedly wrote a media file",
+                new File(playbackSource).exists());
+            assertTrue("Cloud VOD did not use Range", state().getInt("range_requests") > 0);
+            Thread.sleep(400); // Let the presented frame reach the Android view hierarchy.
+            screenshot(context, "cloud-drive-vod-playing.png");
+            long restartStarted = android.os.SystemClock.elapsedRealtime();
+            screen.onActivity(activity -> {
+                MaiFfplayVideoView active = MaiFfplayVideoView.activeView();
+                assertNotNull(active);
+                assertTrue("Speed change did not reuse VOD source", active.setSpeed(1.5));
+                assertTrue("Replay did not reuse VOD source", active.replay());
+            });
+            assertTrue("VOD speed/replay blocked the UI thread",
+                android.os.SystemClock.elapsedRealtime() - restartStarted < 4000);
             screen.onActivity(activity -> assertTrue(activity.commandAgentVideo("close", 0, 0, 0)));
-            deadline = System.currentTimeMillis() + 5000;
-            while (playbackFile.exists() && System.currentTimeMillis() < deadline)
+            int fullDownloadsBeforeSave = state().getInt("full_downloads");
+            Set<Long> savedBefore = savedCloudVideoIds(context);
+            AccessibilityNodeInfo save = textNode(
+                InstrumentationRegistry.getInstrumentation().getUiAutomation()
+                    .getRootInActiveWindow(), "保存");
+            assertNotNull("Cloud list needs an explicit Save action", save);
+            assertTrue(save.performAction(AccessibilityNodeInfo.ACTION_CLICK));
+            deadline = System.currentTimeMillis() + 30_000;
+            Set<Long> newSaves = new HashSet<>();
+            while (System.currentTimeMillis() < deadline) {
+                newSaves = savedCloudVideoIds(context);
+                newSaves.removeAll(savedBefore);
+                if (!newSaves.isEmpty()) break;
                 Thread.sleep(100);
-            assertFalse("Playback cache survives player close", playbackFile.exists());
+            }
+            assertFalse("Explicit cloud save did not reach MediaStore", newSaves.isEmpty());
+            assertTrue("Explicit cloud save did not download the full object",
+                state().getInt("full_downloads") > fullDownloadsBeforeSave);
+            for (long savedID : newSaves)
+                context.getContentResolver().delete(ContentUris.withAppendedId(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI, savedID), null, null);
         }
 
         MaiCloudDrive.Result deleted = request(client, MaiCloudDrive.DELETE,
@@ -591,24 +636,26 @@ public final class MaiCloudDriveInstrumentedTest {
                 new JSONObject().put("media_id", videoId));
             assertTrue(opened.toString(), opened.getBoolean("ok"));
             assertTrue(opened.getJSONObject("output").getBoolean("opened"));
-            File agentPlayback = null;
+            String agentPlayback = null;
             deadline = System.currentTimeMillis() + 10_000;
             while (System.currentTimeMillis() < deadline) {
                 MaiFfplayVideoView active = MaiFfplayVideoView.activeView();
-                if (active != null && active.currentVideoPath() != null &&
-                    active.currentVideoPath().contains("cloud-drive-agent-playback")) {
-                    agentPlayback = new File(active.currentVideoPath());
-                    if (agentPlayback.isFile()) break;
+                if (active != null && active.hasPresentedFrame() &&
+                    active.currentVideoPath() != null &&
+                    active.currentVideoPath().startsWith("maicloud-vod-")) {
+                    agentPlayback = active.currentVideoPath();
+                    break;
                 }
                 Thread.sleep(100);
             }
             assertNotNull("Agent cloud player did not open", agentPlayback);
-            assertTrue(agentPlayback.isFile());
+            assertFalse("Agent cloud playback wrote a media file",
+                new File(agentPlayback).exists());
+            assertTrue("Agent cloud playback did not use Range",
+                state().getInt("range_requests") > 0);
+            Thread.sleep(400);
+            screenshot(context, "cloud-drive-agent-vod-playing.png");
             screen.onActivity(activity -> assertTrue(activity.commandAgentVideo("close", 0, 0, 0)));
-            deadline = System.currentTimeMillis() + 5000;
-            while (agentPlayback.exists() && System.currentTimeMillis() < deadline)
-                Thread.sleep(100);
-            assertFalse("Agent playback cache survives player close", agentPlayback.exists());
             assertTrue(host(owner.get(), "maichat_cloud_drive_delete_media",
                 new JSONObject().put("media_id", videoId))
                 .getJSONObject("output").getBoolean("deleted"));
@@ -1075,5 +1122,17 @@ public final class MaiCloudDriveInstrumentedTest {
             assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, output));
         }
         image.recycle();
+    }
+
+    private static Set<Long> savedCloudVideoIds(Context context) {
+        Set<Long> ids = new HashSet<>();
+        try (Cursor rows = context.getContentResolver().query(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            new String[]{MediaStore.Video.Media._ID},
+            MediaStore.Video.Media.DISPLAY_NAME + " LIKE ?",
+            new String[]{"MaiChat-%"}, null)) {
+            if (rows != null) while (rows.moveToNext()) ids.add(rows.getLong(0));
+        }
+        return ids;
     }
 }

@@ -62,6 +62,7 @@ class QPixmap;
 class ImagePreviewDialog;
 class VideoCircleDialog;
 class CloudDriveDialog;
+struct MaiCloudVod;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -98,7 +99,8 @@ public:
     AgentController* activeAgentController() const { return agentController_; }
     void setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator);
     bool openDockedVideo(const QString& path, const QStringList& playlist = {},
-                         int64_t startPositionUs = 0);
+                         int64_t startPositionUs = 0,
+                         std::shared_ptr<MaiCloudVod> cloudSource = {});
 
     // 把 IM 收/发的文件附件从本地缓存拷贝到 targetPath（存在则覆盖）。
     // 纯文件操作、不弹 UI，供右键「保存到本地」与单测复用；失败时经

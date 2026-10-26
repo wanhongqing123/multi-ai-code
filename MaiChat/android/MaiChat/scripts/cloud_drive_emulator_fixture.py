@@ -115,6 +115,8 @@ class Control(http.server.BaseHTTPRequestHandler):
                         "size": fixture.size,
                         "owner": "sync-ui-test",
                         "oss_authorization": fixture.oss_authorization}
+                body["range_requests"] = fixture.range_requests
+                body["full_downloads"] = fixture.full_downloads
             data = json.dumps(body).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -134,6 +136,8 @@ class Control(http.server.BaseHTTPRequestHandler):
             fixture.signs.clear()
             fixture.sessions = 0
             fixture.oss_authorization = 0
+            fixture.range_requests = 0
+            fixture.full_downloads = 0
             fixture.status = "none"
             fixture.name = ""
             fixture.content_type = ""

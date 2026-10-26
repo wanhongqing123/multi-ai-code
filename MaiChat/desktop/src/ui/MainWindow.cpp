@@ -4195,15 +4195,13 @@ void MainWindow::openCloudDrive(const QString& suggestedVideo) {
   if (!cloudDriveAvailable_ || !videoCircleAccessProvider_ || !maiChatAccountIdProvider_) return;
   if (!cloudDriveDialog_) {
     cloudDriveDialog_ = new CloudDriveDialog(videoCircleAccessProvider_,
-        maiChatAccountIdProvider_, [this](const QString& path) {
-          if (!openDockedVideo(path)) {
-            QFile::remove(path);
+        maiChatAccountIdProvider_, [this](std::shared_ptr<MaiCloudVod> source,
+                                         const QString& name) {
+          const QString display = QFileInfo(name).fileName().isEmpty() ?
+              QStringLiteral("云盘视频.mp4") : QFileInfo(name).fileName();
+          if (!openDockedVideo(display, {}, 0, std::move(source))) {
             showToast(QStringLiteral("视频无法播放"), 13, 3000);
-            return;
           }
-          if (videoDialog_)
-            connect(videoDialog_, &QObject::destroyed, this,
-                    [path] { QFile::remove(path); });
         }, this);
   }
   cloudDriveDialog_->openDrive(suggestedVideo);
@@ -4355,7 +4353,8 @@ void MainWindow::rebuildAgentPage() {
         QPointer<MainWindow> cloudPresenter(this);
         registerDesktopCloudDriveTools(
             registry, videoCircleAccessProvider_, this,
-            [cloudPresenter](const QString& path, bool isImage) {
+            [cloudPresenter](const QString& path, bool isImage,
+                             std::shared_ptr<MaiCloudVod> cloudSource) {
               if (cloudPresenter.isNull()) return false;
               if (isImage) {
                 if (cloudPresenter->imagePreviewDialog_) return false;
@@ -4381,10 +4380,8 @@ void MainWindow::rebuildAgentPage() {
                                  cloudPresenter.data(), [path] { QFile::remove(path); });
                 return true;
               }
-              if (!cloudPresenter->openDockedVideo(path)) return false;
-              if (cloudPresenter->videoDialog_)
-                QObject::connect(cloudPresenter->videoDialog_, &QObject::destroyed,
-                                 cloudPresenter.data(), [path] { QFile::remove(path); });
+              if (!cloudPresenter->openDockedVideo(path, {}, 0,
+                                                    std::move(cloudSource))) return false;
               return true;
             });
         registerDesktopRemoteSessionTools(
@@ -5800,21 +5797,38 @@ bool MainWindow::composerTextPrecedesFirstAttachment(
 }
 
 bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlist,
-                                 int64_t startPositionUs) {
+                                 int64_t startPositionUs,
+                                 std::shared_ptr<MaiCloudVod> cloudSource) {
 #if defined(MAICHAT_HAS_FFPLAY)
-  if (!videoDockSlot_ || !QFileInfo(path).isFile()) return false;
+  if (!videoDockSlot_ || (!cloudSource && !QFileInfo(path).isFile())) return false;
+  const bool cloud = static_cast<bool>(cloudSource);
   if (auto active = MaiFfplayVideoDialog::activeDialog()) active->close();
-  auto *dialog = new MaiFfplayVideoDialog(path, this, startPositionUs);
+  auto *dialog = cloudSource ?
+      new MaiFfplayVideoDialog(path, std::move(cloudSource), this) :
+      new MaiFfplayVideoDialog(path, this, startPositionUs);
   dialog->setObjectName(QStringLiteral("dockedVideoPlayer"));
   dialog->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
   dialog->setMinimumSize(0, 0);
   dialog->setDocked(true);
-  dialog->setPlaylist(playlist);
-  dialog->setForwardAction([this](const QString &currentPath) {
-    forwardLocalVideo(currentPath);
-  });
+  if (!cloud) {
+    dialog->setPlaylist(playlist);
+    dialog->setForwardAction([this](const QString &currentPath) {
+      forwardLocalVideo(currentPath);
+    });
+  }
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->installEventFilter(this);
+  if (cloud && maiChatAccountIdProvider_) {
+    const QString ownerAccount = maiChatAccountIdProvider_();
+    auto* accountGuard = new QTimer(dialog);
+    accountGuard->setInterval(500);
+    connect(accountGuard, &QTimer::timeout, dialog,
+            [this, dialog, ownerAccount] {
+      if (!maiChatAccountIdProvider_ ||
+          maiChatAccountIdProvider_() != ownerAccount) dialog->close();
+    });
+    accountGuard->start();
+  }
   videoDialog_ = dialog;
   connect(dialog, &QObject::destroyed, this, [this] {
     if (!videoDialog_ && videoDockSlot_) videoDockSlot_->hide();
@@ -5831,6 +5845,7 @@ bool MainWindow::openDockedVideo(const QString &path, const QStringList &playlis
   Q_UNUSED(path);
   Q_UNUSED(playlist);
   Q_UNUSED(startPositionUs);
+  Q_UNUSED(cloudSource);
   return false;
 #endif
 }

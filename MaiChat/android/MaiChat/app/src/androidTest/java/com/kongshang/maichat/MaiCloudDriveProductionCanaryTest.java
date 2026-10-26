@@ -311,8 +311,9 @@ public final class MaiCloudDriveProductionCanaryTest {
                 boolean playing = false;
                 do {
                     MaiFfplayVideoView player = MaiFfplayVideoView.activeView();
-                    playing = player != null && player.currentVideoPath() != null &&
-                        player.currentVideoPath().contains("cloud-drive-playback");
+                    playing = player != null && player.hasPresentedFrame() &&
+                        player.currentVideoPath() != null &&
+                        player.currentVideoPath().startsWith("maicloud-vod-");
                     if (playing) break;
                     Thread.sleep(100);
                 } while (System.currentTimeMillis() < deadline);

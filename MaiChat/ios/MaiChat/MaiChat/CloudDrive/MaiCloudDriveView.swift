@@ -109,6 +109,7 @@ private struct MaiCloudPhotoMedia: Transferable, Sendable {
 private struct MaiCloudDrivePreview: Identifiable {
     let url: URL
     let isImage: Bool
+    let vod: MaiCloudVodSession?
     var id: String { url.path }
 }
 
@@ -207,6 +208,8 @@ struct MaiCloudDriveView: View {
     @State private var preview: MaiCloudDrivePreview?
     @State private var openingID: String?
     @State private var playbackTask: Task<Void, Never>?
+    @State private var savingID: String?
+    @State private var saveTask: Task<Void, Never>?
     @State private var loadedThumbnailIDs = Set<String>()
 
     var body: some View {
@@ -396,11 +399,15 @@ struct MaiCloudDriveView: View {
         }
         .onChange(of: appState.maiChatAccountID) { _ in
             playbackTask?.cancel()
+            saveTask?.cancel()
             closePreview()
             MaiCloudThumbnailCache.shared.clear()
             loadedThumbnailIDs.removeAll()
         }
-        .onDisappear { playbackTask?.cancel() }
+        .onDisappear {
+            playbackTask?.cancel()
+            saveTask?.cancel()
+        }
         .fullScreenCover(item: $preview) { item in
             if item.isImage {
                 ZStack(alignment: .topTrailing) {
@@ -419,7 +426,9 @@ struct MaiCloudDriveView: View {
                     .accessibilityIdentifier("cloud-drive-image-close")
                 }
             } else {
-                MaiFfplayVideoScreen(path: item.url.path) { closePreview() }
+                MaiFfplayVideoScreen(path: item.url.path, vod: item.vod) {
+                    closePreview()
+                }
                     .ignoresSafeArea()
                     .statusBarHidden()
             }
@@ -556,7 +565,7 @@ struct MaiCloudDriveView: View {
                                             if ready { loadedThumbnailIDs.insert(media.id) }
                                             else { loadedThumbnailIDs.remove(media.id) }
                                         }))
-                    if openingID == media.id {
+                    if openingID == media.id || savingID == media.id {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(.black.opacity(0.45))
                         ProgressView().tint(.white)
@@ -578,6 +587,12 @@ struct MaiCloudDriveView: View {
             Spacer(minLength: 0)
             Menu {
                 Button(media.isImage ? "查看图片" : "播放视频") { open(media) }
+                if !media.isImage {
+                    Button("保存到相册", systemImage: "square.and.arrow.down") {
+                        saveVideo(media)
+                    }
+                    .disabled(savingID != nil)
+                }
                 Button("删除", role: .destructive) { deletingID = media.id }
             } label: {
                 Image(systemName: "ellipsis")
@@ -597,12 +612,24 @@ struct MaiCloudDriveView: View {
         playbackTask = Task {
             defer { openingID = nil }
             do {
-                let url = try await MaiCloudDriveClient.shared.downloadForPreview(media)
-                guard !Task.isCancelled, expectedAccount == appState.maiChatAccountID else {
-                    try? FileManager.default.removeItem(at: url)
-                    return
+                if media.isImage {
+                    let url = try await MaiCloudDriveClient.shared.downloadForPreview(media)
+                    guard !Task.isCancelled, expectedAccount == appState.maiChatAccountID else {
+                        try? FileManager.default.removeItem(at: url)
+                        return
+                    }
+                    preview = MaiCloudDrivePreview(url: url, isImage: true, vod: nil)
+                } else {
+                    let vod = try await MaiCloudDriveClient.shared.openVod(
+                        videoID: media.id,
+                        extensionName: media.contentType == "video/quicktime" ? "mov" : "mp4")
+                    guard !Task.isCancelled, expectedAccount == appState.maiChatAccountID else {
+                        vod.cancel()
+                        return
+                    }
+                    preview = MaiCloudDrivePreview(
+                        url: URL(fileURLWithPath: vod.displayPath), isImage: false, vod: vod)
                 }
-                preview = MaiCloudDrivePreview(url: url, isImage: media.isImage)
             } catch {
                 if !Task.isCancelled { model.showError(error.localizedDescription) }
             }
@@ -610,8 +637,36 @@ struct MaiCloudDriveView: View {
     }
 
     private func closePreview() {
-        if let url = preview?.url { try? FileManager.default.removeItem(at: url) }
+        preview?.vod?.cancel()
+        if let preview, preview.isImage {
+            try? FileManager.default.removeItem(at: preview.url)
+        }
         preview = nil
+    }
+
+    private func saveVideo(_ media: MaiCloudDriveVideo) {
+        guard savingID == nil, !media.isImage else { return }
+        let expectedAccount = appState.maiChatAccountID
+        savingID = media.id
+        saveTask = Task {
+            defer { savingID = nil }
+            do {
+                let file = try await MaiCloudDriveClient.shared.downloadForExplicitSave(media)
+                defer { try? FileManager.default.removeItem(at: file) }
+                guard !Task.isCancelled,
+                      expectedAccount == appState.maiChatAccountID else { return }
+                guard await MaiPhotoLibraryMediaWriter.requestAddAccess() else {
+                    model.showError("请允许 MaiChat 添加视频到相册")
+                    return
+                }
+                guard !Task.isCancelled,
+                      expectedAccount == appState.maiChatAccountID else { return }
+                try await MaiPhotoLibraryMediaWriter.saveVideo(at: file, createdAt: Date())
+                model.showNotice("已保存到相册")
+            } catch {
+                if !Task.isCancelled { model.showError(error.localizedDescription) }
+            }
+        }
     }
 
     private func formatBytes(_ bytes: UInt64) -> String {
@@ -908,14 +963,16 @@ struct MaiCloudDriveUITestRoot: View {
                             name: "maichat_cloud_drive_open_media",
                             argumentsJSON: payload)
                         guard played.errorCode == nil,
+                              let vod = appState.agentVideoPresentation?.vod,
                               let playbackPath = appState.agentVideoPresentation?.path else {
                             toolResult = "云盘工具播放失败：" +
                                 (played.errorCode ?? "没有播放器路径")
                             return
                         }
                         appState.agentVideoPresentation = nil
-                        guard !FileManager.default.fileExists(atPath: playbackPath) else {
-                            toolResult = "云盘工具播放缓存未清理"
+                        guard vod.displayPath == playbackPath,
+                              !FileManager.default.fileExists(atPath: playbackPath) else {
+                            toolResult = "云盘工具点播源异常"
                             return
                         }
                         let deleted = await host.execute(

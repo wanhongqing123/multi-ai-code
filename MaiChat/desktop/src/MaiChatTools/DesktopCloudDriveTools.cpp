@@ -2,7 +2,9 @@
 
 #include "MaiCloudDriveClient.h"
 #include "MaiCloudDriveTools.h"
+#include "MaiCloudVod.h"
 #include "MaiCurlDownload.h"
+#include "ui/DesktopCloudVod.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -458,7 +460,8 @@ MaiToolResult queueUpload(const DesktopVideoCircleAccess& access, const QString&
 
 void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<DesktopVideoCircleAccess()> accessProvider,
                                     QObject* presenter,
-                                    std::function<bool(const QString&, bool isImage)> openDownloadedMedia) {
+                                    std::function<bool(const QString&, bool isImage,
+                                                       std::shared_ptr<MaiCloudVod>)> openMedia) {
     QPointer<QObject> target(presenter);
     auto transfers = std::make_shared<ActiveTransfers>();
     if (presenter) {
@@ -475,7 +478,7 @@ void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<Des
     }
     registerMaiCloudDriveTools(
         registry,
-        [provider = std::move(accessProvider), target, open = std::move(openDownloadedMedia), transfers](
+        [provider = std::move(accessProvider), target, open = std::move(openMedia), transfers](
             const std::string& name, const std::string& argumentsJson, const MaiToolContext& context) -> MaiToolResult {
             const DesktopVideoCircleAccess access = provider ? provider() : DesktopVideoCircleAccess{};
             if (!access.isValid() || target.isNull())
@@ -598,6 +601,38 @@ void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<Des
                 const bool image = contentType.startsWith(QStringLiteral("image/"));
                 const QString mediaType = details.value(QStringLiteral("media_type")).toString();
                 const qint64 size = details.value(QStringLiteral("size_bytes")).toVariant().toLongLong();
+                if (!image) {
+                    if (!signedUrl.startsWith(QStringLiteral("https://")) || suffix.isEmpty() ||
+                        size <= 0 || quint64(size) > kMaxVideoBytes ||
+                        mediaType != QStringLiteral("video"))
+                        return failure(MaiErrorCode::Protocol, "cloud video link or type is invalid");
+                    auto vodCancel = std::shared_ptr<MaiCloudVodCancel>(
+                        mai_cloud_vod_cancel_create(), mai_cloud_vod_cancel_destroy);
+                    MaiCloudVodResult vodResult{};
+                    const DesktopCloudVod vod = desktopOpenCloudVod(
+                        access, mediaId, operation.cancel, vodCancel, &vodResult);
+                    if (!vod) {
+                        return failure(vodResult.status == MAI_CLOUD_VOD_CANCELED ?
+                            MaiErrorCode::Canceled : MaiErrorCode::Network,
+                            "cloud video-on-demand source could not open");
+                    }
+                    if (target.isNull() || provider().accountId != access.accountId)
+                        return failure(MaiErrorCode::Canceled, "MaiChat account changed before playback");
+                    bool opened = false;
+                    const QString displayName = QStringLiteral("云盘视频.") + suffix;
+                    const auto show = [&] {
+                        if (!target.isNull() && open) opened = open(displayName, false, vod);
+                    };
+                    if (QThread::currentThread() == target->thread()) show();
+                    else QMetaObject::invokeMethod(target.data(), show,
+                                                   Qt::BlockingQueuedConnection);
+                    if (!opened)
+                        return failure(MaiErrorCode::Internal, "the video viewer could not open the stream");
+                    return MaiToolResult::success(QJsonDocument(QJsonObject{
+                        {QStringLiteral("opened"), true}, {QStringLiteral("media_id"), mediaId},
+                        {QStringLiteral("media_type"), QStringLiteral("video")}})
+                        .toJson(QJsonDocument::Compact).toStdString());
+                }
                 const QString directory = playbackDirectory();
                 if (!signedUrl.startsWith(QStringLiteral("https://")) || directory.isEmpty() ||
                     suffix.isEmpty() || size <= 0 || quint64(size) > (image ? kMaxImageBytes : kMaxVideoBytes) ||
@@ -629,7 +664,7 @@ void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<Des
                 }
                 bool opened = false;
                 const auto show = [&] {
-                    if (!target.isNull() && open) opened = open(path, image);
+                    if (!target.isNull() && open) opened = open(path, true, {});
                 };
                 if (QThread::currentThread() == target->thread())
                     show();

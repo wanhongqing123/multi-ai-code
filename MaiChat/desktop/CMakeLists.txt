@@ -2,7 +2,7 @@
 # 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 2.2.26 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 2.2.27 LANGUAGES C CXX)
 if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
   # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
   # records no header dependencies, so changing a public header leaves stale objects.
@@ -545,7 +545,7 @@ target_link_libraries(remote_im_desktop_ui PUBLIC remote_im_desktop_app remote_i
   maichat_pdf_preview)
 target_link_libraries(remote_im_desktop_ui PRIVATE Qt5::Concurrent CURL::libcurl)
 target_link_libraries(remote_im_desktop_ui PRIVATE mai_video_circle_client
-  mai_cloud_drive_client mai_curl_download)
+  mai_cloud_drive_client mai_curl_download mai_cloud_vod)
 if(APPLE AND TARGET maiagent_embedded_fftools)
   target_sources(remote_im_desktop_ui PRIVATE
     ../Media/MaiImageDecode.cpp ../Media/MaiImageEncode.cpp
@@ -1013,7 +1013,8 @@ add_executable(cloud_drive_agent_tools_test
   ../MaiChatTools/MaiCloudDriveTools.cpp)
 target_include_directories(cloud_drive_agent_tools_test PRIVATE
   ../MaiChatTools ../Network ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
-target_link_libraries(cloud_drive_agent_tools_test PRIVATE maiagent mai_cloud_drive_client)
+target_link_libraries(cloud_drive_agent_tools_test PRIVATE maiagent mai_cloud_drive_client
+  mai_cloud_vod)
 add_test(NAME cloud_drive_agent_tools COMMAND cloud_drive_agent_tools_test)
 
 add_executable(cloud_drive_agent_tools_integration_test
@@ -1114,6 +1115,30 @@ if(APPLE AND TARGET maiagent_obs_metal)
     $<TARGET_FILE:maiagent_obs_metal>
     ${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data
     ${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv)
+  add_executable(MaiFfplayCustomInputTests
+    ../Media/tests/MaiFfplayCustomInputTests.cpp)
+  target_include_directories(MaiFfplayCustomInputTests PRIVATE
+    ../Media/FfplayCompat)
+  target_link_libraries(MaiFfplayCustomInputTests PRIVATE maichat_ffplay_hosted)
+  add_test(NAME MaiFfplayCustomInputTests COMMAND MaiFfplayCustomInputTests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/Graphics/tests/fixtures/tiny-red.mp4)
+  find_program(MAICHAT_FFMPEG_TEST_CLI ffmpeg)
+  if(MAICHAT_FFMPEG_TEST_CLI)
+    add_executable(MaiFfplayVodPlaybackMacTests
+      ../Media/tests/MaiFfplayVodPlaybackMacTests.mm)
+    target_include_directories(MaiFfplayVodPlaybackMacTests PRIVATE
+      ../Media ../Media/FfplayCompat ../Network)
+    target_link_libraries(MaiFfplayVodPlaybackMacTests PRIVATE
+      maichat_ffplay_hosted mai_cloud_vod remote_im_desktop_ui
+      maiagent_graphics "-framework AppKit" "-framework QuartzCore")
+    add_test(NAME MaiFfplayVodPlaybackMacTests COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/run_cloud_vod_ffplay_local_tls.py"
+      "$<TARGET_FILE:MaiFfplayVodPlaybackMacTests>"
+      "$<TARGET_FILE:maiagent_obs_metal>"
+      "${CMAKE_CURRENT_BINARY_DIR}/maiagent/Graphics/data"
+      "${MAICHAT_FFMPEG_TEST_CLI}")
+  endif()
   add_executable(MaiFfplayVideoDialogTest tests/MaiFfplayVideoDialogTest.cpp)
   target_compile_definitions(MaiFfplayVideoDialogTest PRIVATE
     MAICHAT_FFPLAY_VIDEO_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../Media/tests/fixtures/ffplay-av-subtitles.mkv"

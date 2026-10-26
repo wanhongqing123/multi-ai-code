@@ -8,6 +8,7 @@ import Foundation
     private let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mai-cloud-drive-agent-playback", isDirectory: true)
     private var activeFile: URL?
+    private var activeVod: MaiCloudVodSession?
     private var activeAccountID = ""
 
     private init() {}
@@ -20,7 +21,19 @@ import Foundation
         return true
     }
 
+    func adoptVod(_ vod: MaiCloudVodSession, accountID: String) -> Bool {
+        guard !accountID.isEmpty else { return false }
+        releaseActive()
+        activeVod = vod
+        activeAccountID = accountID
+        return true
+    }
+
     func presentationChanged(to path: String?) {
+        if let activeVod, activeVod.displayPath != path {
+            releaseActive()
+            return
+        }
         guard let activeFile, !isImage(activeFile) else { return }
         guard activeFile.path != path else { return }
         releaseActive()
@@ -38,7 +51,8 @@ import Foundation
 
     /// Returns true when switching accounts should also dismiss the player.
     func accountChanged(to accountID: String) -> Bool {
-        guard activeFile != nil, activeAccountID != accountID else { return false }
+        guard (activeFile != nil || activeVod != nil),
+              activeAccountID != accountID else { return false }
         releaseActive()
         return true
     }
@@ -52,6 +66,8 @@ import Foundation
     }
 
     private func releaseActive() {
+        activeVod?.cancel()
+        activeVod = nil
         if let activeFile, owns(activeFile) {
             try? FileManager.default.removeItem(at: activeFile)
         }

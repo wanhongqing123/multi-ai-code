@@ -13,6 +13,7 @@
 #include <thread>
 #include <atomic>
 #include <functional>
+#include <memory>
 
 #include "MaiFfplayEntry.h"
 
@@ -23,6 +24,7 @@ class QLabel;
 class QTimer;
 class QWidget;
 class QEvent;
+struct MaiCloudVod;
 
 class MaiFfplayVideoDialog final : public QDialog {
     Q_OBJECT
@@ -30,6 +32,9 @@ class MaiFfplayVideoDialog final : public QDialog {
 public:
     explicit MaiFfplayVideoDialog(const QString& path, QWidget* parent = nullptr,
                                   int64_t startPositionUs = 0);
+    MaiFfplayVideoDialog(const QString& displayName,
+                         std::shared_ptr<MaiCloudVod> source,
+                         QWidget* parent = nullptr);
     ~MaiFfplayVideoDialog() override;
 
     static QPointer<MaiFfplayVideoDialog> activeDialog();
@@ -59,17 +64,20 @@ private:
                              const MaiVideoSubtitle* subtitle);
     static bool presentRgba(void* userData, const uint8_t* pixels,
                             uint32_t width, uint32_t height, uint32_t stride);
+    static int readCloudInput(void* userData, uint64_t offset,
+                              uint8_t* output, int capacity);
     static void setTitle(void* userData, const char* title);
     static void setSize(void* userData, int width, int height);
     static void setPosition(void* userData, int x, int y);
     static void setFullscreen(void* userData, int enabled);
     static void showWindow(void* userData);
     bool startPlayback();
-    void stopPlayback();
+    void stopPlayback(bool cancelCloudSource = false);
     void saveCopy();
     void forwardVideo();
 
     QString path_;
+    std::shared_ptr<MaiCloudVod> cloudSource_;
     QStringList playlist_;
     int playlistIndex_ = 0;
     QWidget* surface_ = nullptr;

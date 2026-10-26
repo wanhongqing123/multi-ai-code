@@ -11,16 +11,19 @@
 #include "MaiFfplayEntry.h"
 #include "MaiFfplayAudioSession.h"
 #include "MaiGraphicsPresenter.h"
+#include "../MaiCloudVodAndroid.h"
 
 namespace {
 
 struct PlaybackSession {
     uint64_t viewId = 0;
     std::string path;
+    void* vod = nullptr; // Borrowed until nativeStop has joined the worker.
     double speed = 1.0;
     int64_t startPositionUs = 0;
     MaiFfplayHost host{};
     std::thread worker;
+    std::atomic<bool> stopRequested{false};
     std::atomic<bool> finished{false};
     std::atomic<int> result{0};
 };
@@ -39,18 +42,24 @@ bool presentRgba(void* user, const uint8_t* pixels,
                                          height, stride, false);
 }
 
+int readVodAt(void* user, uint64_t offset, uint8_t* output, int capacity) {
+    auto* session = static_cast<PlaybackSession*>(user);
+    return maiCloudVodAndroidReadAt(session->vod, offset, output, capacity);
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_kongshang_maichat_MaiFfplayVideoView_nativeCreate(
     JNIEnv* env, jclass, jlong viewId, jstring path, jdouble speed,
-    jlong startPositionUs) {
+    jlong startPositionUs, jlong vodHandle) {
     if (viewId <= 0 || !path) return 0;
     const char* value = env->GetStringUTFChars(path, nullptr);
     if (!value) return 0;
     auto* session = new PlaybackSession;
     session->viewId = static_cast<uint64_t>(viewId);
     session->path = value;
+    session->vod = reinterpret_cast<void*>(vodHandle);
     session->speed = speed;
     session->startPositionUs = startPositionUs;
     env->ReleaseStringUTFChars(path, value);
@@ -62,8 +71,20 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativeCreate(
     session->host.graphics_view_id = session->viewId;
     session->host.present_video = presentVideo;
     session->host.present_rgba = presentRgba;
+    if (session->vod) {
+        session->host.read_input_at = readVodAt;
+        session->host.input_size_bytes = maiCloudVodAndroidSize(session->vod);
+        if (session->host.input_size_bytes == 0) {
+            delete session;
+            return 0;
+        }
+    }
     try {
         session->worker = std::thread([session] {
+            if (session->stopRequested) {
+                session->finished = true;
+                return;
+            }
             char name[] = "ffplay";
             std::string input = session->path;
             char* arguments[] = {name, &input[0]};
@@ -120,6 +141,8 @@ Java_com_kongshang_maichat_MaiFfplayVideoView_nativeDestroy(
     JNIEnv*, jclass, jlong handle) {
     auto* session = reinterpret_cast<PlaybackSession*>(handle);
     if (!session) return;
+    session->stopRequested = true;
+    if (session->vod) maiCloudVodAndroidInterruptRead(session->vod);
     for (int attempt = 0; attempt < 100 && !session->finished; ++attempt) {
         if (maiFfplaySendCommand("close") == 1) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));

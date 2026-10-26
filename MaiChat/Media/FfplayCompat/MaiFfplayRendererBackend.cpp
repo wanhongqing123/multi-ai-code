@@ -1,6 +1,7 @@
 // 文件作用：实现 ffplay 视频帧提交到宿主渲染后端的桥接入口。
 // 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiFfplayEntry.h"
+#include "MaiFfplayCustomInput.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -56,13 +57,31 @@ bool encodeAmbient(const AVAmbientViewingEnvironment* ambient, uint8_t (&bytes)[
 
 }  // namespace
 
-extern "C" MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSource(
-    const char* path, MaiFfplayHdrSourceInfo* info) {
+static int probeHdrSource(const char* path, const MaiFfplayHost* host,
+                          MaiFfplayHdrSourceInfo* info) {
     if (!info) return 0;
     *info = {};
-    if (!path || !*path) return 0;
+    if ((!path || !*path) && !host) return 0;
+    MaiFfplayCustomInput* custom = nullptr;
     AVFormatContext* input = nullptr;
-    if (avformat_open_input(&input, path, nullptr, nullptr) < 0) return 0;
+    if (host) {
+        if (!host->read_input_at || !host->input_size_bytes) return 0;
+        input = avformat_alloc_context();
+        custom = maiFfplayCustomInputCreate(host);
+        if (!input || !custom) {
+            avformat_free_context(input);
+            maiFfplayCustomInputDestroy(&custom);
+            return 0;
+        }
+        input->pb = custom->avio;
+        input->flags |= AVFMT_FLAG_CUSTOM_IO;
+        path = "maicloud-vod.mp4";
+    }
+    if (avformat_open_input(&input, path, nullptr, nullptr) < 0) {
+        avformat_close_input(&input);
+        maiFfplayCustomInputDestroy(&custom);
+        return 0;
+    }
     const bool hasStreams = avformat_find_stream_info(input, nullptr) >= 0;
     bool hdr = false;
     bool subtitles = false;
@@ -93,9 +112,20 @@ extern "C" MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSource(
         }
     }
     avformat_close_input(&input);
+    maiFfplayCustomInputDestroy(&custom);
     info->native_frame_eligible = hdr && !subtitles ? 1 : 0;
     if (!info->native_frame_eligible) info->hlg = info->has_ambient = 0;
     return 1;
+}
+
+extern "C" MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSource(
+    const char* path, MaiFfplayHdrSourceInfo* info) {
+    return probeHdrSource(path, nullptr, info);
+}
+
+extern "C" MAI_FFPLAY_EXPORT int maiFfplayProbeHdrSourceFromHost(
+    const MaiFfplayHost* host, MaiFfplayHdrSourceInfo* info) {
+    return probeHdrSource(nullptr, host, info);
 }
 
 extern "C" MAI_FFPLAY_EXPORT int maiFfplaySourceHasHdrWithoutSubtitles(const char* path) {

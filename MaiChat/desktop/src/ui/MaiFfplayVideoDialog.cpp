@@ -2,6 +2,7 @@
 // 主要入口：setForwardAction、forwardVideo、saveCopy、activeDialog。
 // 直接依赖：MaiGraphicsPresenter.h；实现与这些接口协作。
 #include "ui/MaiFfplayVideoDialog.h"
+#include "MaiCloudVod.h"
 #include "ui/DesktopMusicPlayerDialog.h"
 
 #include <QCloseEvent>
@@ -202,6 +203,9 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent,
     progressTimer_ = new QTimer(this);
     progressTimer_->setInterval(250);
     connect(progressTimer_, &QTimer::timeout, this, [this] {
+        if (cloudSource_ && sPresentedFrames.load() > 0 &&
+            errorLabel_->text() == QStringLiteral("正在缓冲视频…"))
+            errorLabel_->hide();
         MaiFfplayPlaybackStatus status{};
         if (!maiFfplayGetPlaybackStatus(&status) || status.duration_us <= 0) return;
         const auto position = std::clamp(status.position_us, int64_t{0}, status.duration_us);
@@ -264,6 +268,7 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent,
     connect(save, &QPushButton::clicked, this, &MaiFfplayVideoDialog::saveCopy);
     actions->addWidget(save);
     auto* more = new QPushButton(QStringLiteral("⋯"), controlParent);
+    more->setObjectName(QStringLiteral("videoMoreButton"));
     more->setToolTip(QStringLiteral("更多操作"));
     more->setStyleSheet(forward->styleSheet());
     connect(more, &QPushButton::clicked, this, [this, more] {
@@ -344,11 +349,26 @@ MaiFfplayVideoDialog::MaiFfplayVideoDialog(const QString& path, QWidget* parent,
 #endif
 }
 
+MaiFfplayVideoDialog::MaiFfplayVideoDialog(
+    const QString& displayName, std::shared_ptr<MaiCloudVod> source, QWidget* parent)
+    : MaiFfplayVideoDialog(displayName, parent, 0) {
+    cloudSource_ = std::move(source);
+    setWindowTitle(QFileInfo(displayName).fileName());
+    for (const char* name : {"videoForwardButton", "videoSaveButton", "videoMoreButton"}) {
+        if (auto* button = findChild<QPushButton*>(QString::fromLatin1(name))) button->hide();
+    }
+}
+
 void MaiFfplayVideoDialog::setForwardAction(std::function<void(const QString&)> action) {
     forwardAction_ = std::move(action);
 }
 
 void MaiFfplayVideoDialog::forwardVideo() {
+    if (cloudSource_) {
+        QMessageBox::information(this, QStringLiteral("云盘视频"),
+                                 QStringLiteral("此视频正在按需播放。请返回云盘列表点“保存”，再转发文件。"));
+        return;
+    }
     if (forwardAction_) {
         forwardAction_(path_);
         return;
@@ -361,6 +381,11 @@ void MaiFfplayVideoDialog::forwardVideo() {
 }
 
 void MaiFfplayVideoDialog::saveCopy() {
+    if (cloudSource_) {
+        QMessageBox::information(this, QStringLiteral("云盘视频"),
+                                 QStringLiteral("此视频正在按需播放。请返回云盘列表点“保存”。"));
+        return;
+    }
     const QString target = QFileDialog::getSaveFileName(
         this, QStringLiteral("保存视频"), QFileInfo(path_).fileName(),
         QStringLiteral("视频文件 (*.mp4 *.mov *.m4v);;所有文件 (*)"));
@@ -387,7 +412,7 @@ void MaiFfplayVideoDialog::saveCopy() {
     QMessageBox::information(this, QStringLiteral("已保存"), QStringLiteral("视频副本已保存。"));
 }
 
-MaiFfplayVideoDialog::~MaiFfplayVideoDialog() { stopPlayback(); }
+MaiFfplayVideoDialog::~MaiFfplayVideoDialog() { stopPlayback(true); }
 
 QPointer<MaiFfplayVideoDialog> MaiFfplayVideoDialog::activeDialog() {
     return sActiveDialog;
@@ -409,6 +434,16 @@ bool MaiFfplayVideoDialog::presentRgba(void* userData, const uint8_t* pixels,
     const auto* dialog = static_cast<MaiFfplayVideoDialog*>(userData);
     return maiGraphicsPresenterShowFrame(dialog->viewId_, pixels, width, height,
                                          stride, false);
+}
+
+int MaiFfplayVideoDialog::readCloudInput(void* userData, uint64_t offset,
+                                         uint8_t* output, int capacity) {
+    auto* dialog = static_cast<MaiFfplayVideoDialog*>(userData);
+    if (!dialog || !dialog->cloudSource_ || !output || capacity <= 0) return -1;
+    size_t bytes = 0;
+    MaiCloudVodResult result{};
+    return mai_cloud_vod_read_at(dialog->cloudSource_.get(), offset, output,
+                                size_t(capacity), &bytes, &result) ? int(bytes) : -1;
 }
 
 void MaiFfplayVideoDialog::setTitle(void* userData, const char* title) {
@@ -458,11 +493,17 @@ void MaiFfplayVideoDialog::showWindow(void* userData) {
 
 // 作用：验证文件并启动 FFplay，同时同步播放控件状态。
 bool MaiFfplayVideoDialog::startPlayback() {
-    if (started_ || !QFileInfo(path_).isFile()) {
+    if (started_ || (cloudSource_ ? mai_cloud_vod_size(cloudSource_.get()) == 0 :
+                                   !QFileInfo(path_).isFile())) {
         qWarning() << "FFplay popup has no readable video file:" << path_;
         return false;
     }
-    errorLabel_->hide();
+    if (cloudSource_) {
+        errorLabel_->setText(QStringLiteral("正在缓冲视频…"));
+        errorLabel_->show();
+    } else {
+        errorLabel_->hide();
+    }
     DesktopMusicPlayerDialog::closeActive();
     if (!sActiveDialog.isNull() && sActiveDialog != this) sActiveDialog->close();
     const QString backend = bundledResource(
@@ -520,7 +561,10 @@ bool MaiFfplayVideoDialog::startPlayback() {
     host_.set_position = setPosition;
     host_.set_fullscreen = setFullscreen;
     host_.show_window = showWindow;
-    const QByteArray sourcePath = QFileInfo(path_).absoluteFilePath().toUtf8();
+    host_.read_input_at = cloudSource_ ? readCloudInput : nullptr;
+    host_.input_size_bytes = cloudSource_ ? mai_cloud_vod_size(cloudSource_.get()) : 0;
+    const QByteArray sourcePath = cloudSource_ ? path_.toUtf8() :
+        QFileInfo(path_).absoluteFilePath().toUtf8();
     sPresentedFrames = 0;
     started_ = true;
     progressTimer_->start();
@@ -543,9 +587,13 @@ bool MaiFfplayVideoDialog::startPlayback() {
     return true;
 }
 
-void MaiFfplayVideoDialog::stopPlayback() {
+void MaiFfplayVideoDialog::stopPlayback(bool cancelCloudSource) {
     if (!started_) return;
     progressTimer_->stop();
+    if (cloudSource_) {
+        if (cancelCloudSource) mai_cloud_vod_cancel(cloudSource_.get());
+        else mai_cloud_vod_interrupt_read(cloudSource_.get());
+    }
     for (int attempt = 0; attempt < 100 && !playbackFinished_; ++attempt) {
         if (maiFfplaySendCommand("close") == 1) break;
         QThread::msleep(10);
@@ -676,7 +724,7 @@ void MaiFfplayVideoDialog::showEvent(QShowEvent* event) {
 }
 
 void MaiFfplayVideoDialog::closeEvent(QCloseEvent* event) {
-    stopPlayback();
+    stopPlayback(true);
     QDialog::closeEvent(event);
 }
 

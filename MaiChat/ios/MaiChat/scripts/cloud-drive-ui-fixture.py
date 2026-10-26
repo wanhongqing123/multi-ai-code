@@ -67,6 +67,17 @@ def main():
             certificate = source.read()
         cloud = CORE.Fixture(("127.0.0.1", 18448))
         cloud.RequestHandlerClass = IOSCloudHandler
+        local_hlg = os.environ.get("MAICHAT_IOS_CLOUD_HLG_SOURCE")
+        if local_hlg:
+            source = Path(local_hlg)
+            payload = source.read_bytes()
+            if not 0 < len(payload) <= 2_000_000_000:
+                raise ValueError("local HLG fixture is outside cloud video limits")
+            cloud.part_bytes = {1: payload}
+            cloud.status = "ready"
+            cloud.name = source.name
+            cloud.content_type = "video/quicktime"
+            cloud.size = len(payload)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cert, key)
         cloud.socket = context.wrap_socket(cloud.socket, server_side=True)

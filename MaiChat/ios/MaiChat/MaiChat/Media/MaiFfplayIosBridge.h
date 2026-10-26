@@ -10,10 +10,15 @@ extern "C" {
 #endif
 
 typedef struct MaiFfplayIosSession MaiFfplayIosSession;
+typedef struct MaiCloudVod MaiCloudVod;
 
 MaiFfplayIosSession* maiFfplayIosStart(uint64_t view_id, const char* path);
 MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t view_id, const char* path,
                                               double speed, int64_t start_position_us);
+MaiFfplayIosSession* maiFfplayIosStartVodAtSpeed(uint64_t view_id,
+                                                 MaiCloudVod* source,
+                                                 double speed,
+                                                 int64_t start_position_us);
 int maiFfplayIosCommand(MaiFfplayIosSession* session, const char* command);
 int maiFfplayIosSeekAbsoluteUs(MaiFfplayIosSession* session, int64_t position_us);
 int maiFfplayIosSeekPercent(MaiFfplayIosSession* session, double fraction);

@@ -360,23 +360,38 @@ final class AIMobileHostToolProvider {
                 return .failure(code: "invalid_input", message: "media_id is required")
             }
             do {
-                let preview = try await MaiCloudDriveClient.shared.downloadForAgentPreview(
+                let preview = try await MaiCloudDriveClient.shared.openForAgentPreview(
                     mediaID: mediaID)
-                let file = preview.url
-                guard appState.maiChatAccountID == accountID,
-                      MaiCloudDriveAgentPlaybackCache.shared.adopt(
-                        file, accountID: accountID) else {
-                    try? FileManager.default.removeItem(at: file)
+                guard appState.maiChatAccountID == accountID else {
+                    switch preview {
+                    case let .image(file): try? FileManager.default.removeItem(at: file)
+                    case let .video(vod): vod.cancel()
+                    }
                     return .failure(code: "not_configured",
                                     message: "MaiChat account changed while opening media")
                 }
-                if preview.isImage {
+                let mediaType: String
+                switch preview {
+                case let .image(file):
+                    guard MaiCloudDriveAgentPlaybackCache.shared.adopt(
+                        file, accountID: accountID) else {
+                        try? FileManager.default.removeItem(at: file)
+                        return .failure(code: "internal", message: "image preview failed")
+                    }
                     AIAssistantModel.shared.previewImage = AIImagePreview(filePath: file.path)
-                } else {
-                    appState.agentVideoPresentation = MaiFfplayPresentation(path: file.path)
+                    mediaType = "image"
+                case let .video(vod):
+                    guard MaiCloudDriveAgentPlaybackCache.shared.adoptVod(
+                        vod, accountID: accountID) else {
+                        vod.cancel()
+                        return .failure(code: "internal", message: "video playback failed")
+                    }
+                    appState.agentVideoPresentation = MaiFfplayPresentation(
+                        path: vod.displayPath, vod: vod)
+                    mediaType = "video"
                 }
                 return Self.jsonSuccess(["opened": true, "media_id": mediaID,
-                                         "media_type": preview.isImage ? "image" : "video"])
+                                         "media_type": mediaType])
             } catch {
                 return Self.cloudDriveFailure(error)
             }

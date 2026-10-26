@@ -162,26 +162,25 @@ public final class MaiCloudDriveImageProductionCanaryTest {
                 assertFalse("Private image cache survived viewer close", preview.exists());
 
                 clickText("播放");
-                File playing = null;
+                String playing = null;
                 deadline = System.currentTimeMillis() + 30_000;
                 while (System.currentTimeMillis() < deadline) {
                     MaiFfplayVideoView active = MaiFfplayVideoView.activeView();
-                    if (active != null && active.currentVideoPath() != null &&
-                        active.currentVideoPath().contains("cloud-drive-playback")) {
-                        playing = new File(active.currentVideoPath());
-                        if (playing.isFile()) break;
+                    if (active != null && active.hasPresentedFrame() &&
+                        active.currentVideoPath() != null &&
+                        active.currentVideoPath().startsWith("maicloud-vod-")) {
+                        playing = active.currentVideoPath();
+                        break;
                     }
                     Thread.sleep(100);
                 }
                 assertNotNull("Cloud video did not open", playing);
+                assertFalse("Cloud VOD unexpectedly wrote a media file",
+                    new File(playing).exists());
                 screen.onActivity(activity -> {
                     assertTrue(activity.commandAgentVideo("close", 0, 0, 0));
                     activity.currentCloudDriveDialog().dismiss();
                 });
-                deadline = System.currentTimeMillis() + 5000;
-                while (playing.exists() && System.currentTimeMillis() < deadline)
-                    Thread.sleep(100);
-                assertFalse("Private video cache survived viewer close", playing.exists());
             }
         } finally {
             for (String id : created) {

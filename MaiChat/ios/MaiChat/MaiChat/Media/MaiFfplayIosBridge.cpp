@@ -10,12 +10,16 @@
 #include <string>
 #include <thread>
 
+#include <os/log.h>
+
 #include "../../../../Media/FfplayCompat/MaiFfplayEntry.h"
 #include "../../../../Media/MaiGraphicsPresenter.h"
+#include "../../../../Network/MaiCloudVod.h"
 
 struct MaiFfplayIosSession {
     uint64_t viewId = 0;
     std::string path;
+    MaiCloudVod* vod = nullptr; // Borrowed until the player worker has stopped.
     double speed = 1.0;
     int64_t startPositionUs = 0;
     MaiFfplayHost host{};
@@ -81,21 +85,38 @@ bool presentRgba(void* user, const uint8_t* pixels,
     return true;
 }
 
-}  // namespace
+int readVodAt(void* user, uint64_t offset, uint8_t* output, int capacity) {
+    auto* session = static_cast<MaiFfplayIosSession*>(user);
+    if (!session || !session->vod || !output || capacity <= 0) return -1;
+    size_t bytes = 0;
+    MaiCloudVodResult result{};
+    return mai_cloud_vod_read_at(session->vod, offset, output,
+                                static_cast<size_t>(capacity), &bytes, &result)
+        ? static_cast<int>(bytes) : -1;
+}
 
-extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const char* path,
-                                                             double speed,
-                                                             int64_t startPositionUs) {
-    if (!viewId || !path || !*path) return nullptr;
+MaiFfplayIosSession* startSession(uint64_t viewId, const char* path,
+                                  MaiCloudVod* vod, double speed,
+                                  int64_t startPositionUs) {
+    if (!viewId || (!vod && (!path || !*path))) return nullptr;
     auto* session = new MaiFfplayIosSession;
     session->viewId = viewId;
-    session->path = path;
+    session->path = vod ? "maicloud-vod.mp4" : path;
+    session->vod = vod;
     session->speed = speed;
     session->startPositionUs = startPositionUs;
     session->host.user_data = session;
     session->host.graphics_view_id = viewId;
     session->host.present_video = presentVideo;
     session->host.present_rgba = presentRgba;
+    if (vod) {
+        session->host.read_input_at = readVodAt;
+        session->host.input_size_bytes = mai_cloud_vod_size(vod);
+        if (session->host.input_size_bytes == 0) {
+            delete session;
+            return nullptr;
+        }
+    }
     try {
         session->worker = std::thread([session] {
             char name[] = "ffplay";
@@ -103,18 +124,28 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const 
             char hardwareDecode[] = "-hwaccel";
             char videoToolbox[] = "videotoolbox";
             std::string input = session->path;
-            session->host.present_native_frames = input.find("://") == std::string::npos &&
-                maiFfplayProbeHdrSource(input.c_str(), &session->sourceInfo) &&
+            const bool hdrProbed = session->vod
+                ? maiFfplayProbeHdrSourceFromHost(&session->host, &session->sourceInfo)
+                : (input.find("://") == std::string::npos &&
+                   maiFfplayProbeHdrSource(input.c_str(), &session->sourceInfo));
+            if (session->stopRequested) {
+                session->finished = true;
+                return;
+            }
+            session->host.present_native_frames = hdrProbed &&
                 session->sourceInfo.native_frame_eligible ? 1 : 0;
+            if (session->vod) {
+                os_log_info(OS_LOG_DEFAULT,
+                            "[CloudVODHDR] native=%d hlg=%d ambient=%d",
+                            session->host.present_native_frames,
+                            session->sourceInfo.hlg, session->sourceInfo.has_ambient);
+            }
             if (session->host.present_native_frames) {
                 char* arguments[] = {name, nativeRenderer, hardwareDecode,
                                      videoToolbox, &input[0]};
                 session->result = maiFfplayRunAtSpeed(&session->host, 5, arguments,
                                                        session->speed,
                                                        session->startPositionUs);
-                // FFplay reports some pre-first-frame filter failures through a
-                // quit event whose exit code is zero. The absence of a frame is
-                // the reliable signal that this decoder/render path did not open.
                 if (!session->stopRequested && session->presentedFrames == 0) {
                     if (session->hlgOutputRequested.exchange(false))
                         maiGraphicsPresenterSetHlgOutput(session->viewId, false, nullptr, 0);
@@ -139,6 +170,20 @@ extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const 
         return nullptr;
     }
     return session;
+}
+
+}  // namespace
+
+extern "C" MaiFfplayIosSession* maiFfplayIosStartAtSpeed(uint64_t viewId, const char* path,
+                                                             double speed,
+                                                             int64_t startPositionUs) {
+    return startSession(viewId, path, nullptr, speed, startPositionUs);
+}
+
+extern "C" MaiFfplayIosSession* maiFfplayIosStartVodAtSpeed(
+    uint64_t viewId, MaiCloudVod* source, double speed,
+    int64_t startPositionUs) {
+    return startSession(viewId, nullptr, source, speed, startPositionUs);
 }
 
 extern "C" MaiFfplayIosSession* maiFfplayIosStart(uint64_t viewId, const char* path) {
@@ -173,6 +218,7 @@ extern "C" int maiFfplayIosExitCode(const MaiFfplayIosSession* session) {
 extern "C" void maiFfplayIosStop(MaiFfplayIosSession* session) {
     if (!session) return;
     session->stopRequested = true;
+    if (session->vod) mai_cloud_vod_interrupt_read(session->vod);
     // A close may land between the hardware attempt and its software retry,
     // when SDL has already cleared the old event queue. Keep asking until the
     // worker exits so the retry cannot outlive its view.

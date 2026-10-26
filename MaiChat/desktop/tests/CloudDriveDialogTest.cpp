@@ -1,4 +1,5 @@
 #include "ui/CloudDriveDialog.h"
+#include "MaiCloudVod.h"
 #include "ui/ImagePreviewDialog.h"
 
 #include <QApplication>
@@ -127,10 +128,15 @@ int main(int argc, char** argv) {
     disabled.authBaseUrl = base + QStringLiteral("/disabled");
     require(CloudDriveDialog::availability(disabled) == 0,
             "cloud feature gate exposed a disabled API");
-    QString playedPath;
+    QString playedName;
+    std::shared_ptr<MaiCloudVod> playedVod;
     CloudDriveDialog dialog([access] { return access; },
         [] { return QStringLiteral("author"); },
-        [&playedPath](const QString& path) { playedPath = path; });
+        [&playedName, &playedVod](std::shared_ptr<MaiCloudVod> source,
+                                  const QString& name) {
+            playedVod = std::move(source);
+            playedName = name;
+        });
     dialog.openDrive();
     require(waitForLabel(dialog, QStringLiteral("cloudDriveQuota"),
         QStringLiteral("10.00 GB")), "10 GB cloud quota did not load");
@@ -159,19 +165,22 @@ int main(int argc, char** argv) {
     dialog.openDrive(source);
     require(waitForButton(dialog, QStringLiteral("cloudDrivePlay")),
             "video did not upload and appear in the list");
+    require(visibleButton(dialog, QStringLiteral("cloudDriveSaveVideo")),
+            "explicit save action disappeared after switching playback to VOD");
     require(waitForThumbnail(dialog), "signed thumbnail did not load for video");
     require(dialog.grab().save(screenshots + QStringLiteral("/cloud-uploaded.png")),
             "failed to save uploaded screenshot");
     visibleButton(dialog, QStringLiteral("cloudDrivePlay"))->click();
     QElapsedTimer playback;
     playback.start();
-    while (playedPath.isEmpty() && playback.elapsed() < 15000) {
+    while (!playedVod && playback.elapsed() < 15000) {
         QApplication::processEvents();
         QThread::msleep(20);
     }
-    require(!playedPath.isEmpty() && QFileInfo(playedPath).size() == QFileInfo(source).size(),
-            "cloud playback did not download the original bytes");
-    QFile::remove(playedPath);
+    require(playedVod && mai_cloud_vod_size(playedVod.get()) ==
+                quint64(QFileInfo(source).size()) && !QFileInfo(playedName).exists(),
+            "cloud playback did not open a seekable stream without a local video file");
+    playedVod.reset();
 
     confirmation.start();
     require(waitForButton(dialog, QStringLiteral("cloudDriveDelete")),
@@ -227,7 +236,8 @@ int main(int argc, char** argv) {
     DesktopVideoCircleAccess mutableAccess = access;
     mutableAccess.accountId = authorId;
     CloudDriveDialog switching([&] { return mutableAccess; },
-        [&] { return currentAccount; }, [](const QString&) {});
+        [&] { return currentAccount; },
+        [](std::shared_ptr<MaiCloudVod>, const QString&) {});
     confirmation.start();
     switching.openDrive(largeFile);
     const QString key = QString::fromLatin1(QCryptographicHash::hash(
@@ -273,7 +283,8 @@ int main(int argc, char** argv) {
     DesktopVideoCircleAccess restored = access;
     restored.accountId = authorId;
     CloudDriveDialog resumed([restored] { return restored; },
-        [authorId] { return authorId; }, [](const QString&) {}, nullptr,
+        [authorId] { return authorId; },
+        [](std::shared_ptr<MaiCloudVod>, const QString&) {}, nullptr,
         [&movedFile](const QString&) { return movedFile; });
     resumed.openDrive();
     require(waitForButton(resumed, QStringLiteral("cloudDriveResume")),

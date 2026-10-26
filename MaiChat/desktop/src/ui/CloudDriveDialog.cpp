@@ -1,12 +1,14 @@
 #include "ui/CloudDriveDialog.h"
 
 #include "MaiCloudDriveClient.h"
+#include "MaiCloudVod.h"
 #include "MaiCurlDownload.h"
 #if defined(MAICHAT_FFMPEG_IMAGE_DECODE)
 #include "MaiImageDecode.h"
 #endif
 #include "ui/AppMessageDialog.h"
 #include "ui/ImagePreviewDialog.h"
+#include "ui/DesktopCloudVod.h"
 
 #include <QCloseEvent>
 #include <QColorSpace>
@@ -81,13 +83,6 @@ QString accountDirectory(const QString& account) {
     const QString key = QString::fromLatin1(QCryptographicHash::hash(
         account.toUtf8(), QCryptographicHash::Sha256).toHex());
     const QString dir = QDir(base).filePath(QStringLiteral("CloudDrive/") + key);
-    return QDir().mkpath(dir) ? dir : QString();
-}
-
-QString cacheDirectory() {
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
-    if (base.isEmpty()) return {};
-    const QString dir = QDir(base).filePath(QStringLiteral("CloudDrivePlayback"));
     return QDir().mkpath(dir) ? dir : QString();
 }
 
@@ -189,6 +184,7 @@ struct CloudDriveDialog::Reply {
     long http = 0;
     QJsonObject body;
     QString error;
+    DesktopCloudVod vod;
     bool ok() const { return status == MAI_CLOUD_DRIVE_OK && http >= 200 && http < 300; }
 };
 
@@ -381,11 +377,13 @@ void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
 void CloudDriveDialog::cancelPending() {
     if (requestCancel_) mai_cloud_drive_cancel_request(requestCancel_.get());
     if (downloadCancel_) mai_download_cancel_request(downloadCancel_.get());
+    if (vodCancel_) mai_cloud_vod_cancel_request(vodCancel_.get());
     if (thumbnailRequestCancel_)
         mai_cloud_drive_cancel_request(thumbnailRequestCancel_.get());
     if (thumbnailDownloadCancel_)
         mai_download_cancel_request(thumbnailDownloadCancel_.get());
-    if (busy_) setStatus(QStringLiteral("正在暂停，已确认的分片会保留…"));
+    if (busy_) setStatus(vodCancel_ ? QStringLiteral("正在停止点播…") :
+                         QStringLiteral("正在暂停，已确认的分片会保留…"));
 }
 
 void CloudDriveDialog::closeEvent(QCloseEvent* event) {
@@ -651,11 +649,18 @@ void CloudDriveDialog::renderVideos(const QJsonArray& videos, bool append) {
         auto* open = new QPushButton(image ? QStringLiteral("查看") : QStringLiteral("播放"), row);
         open->setObjectName(image ? QStringLiteral("cloudDriveViewImage") :
                                     QStringLiteral("cloudDrivePlay"));
-        connect(open, &QPushButton::clicked, this, [this, id, image] {
+        connect(open, &QPushButton::clicked, this, [this, id, name, image] {
             if (image) startImagePreview(id);
-            else startPlayback(id);
+            else startPlayback(id, name);
         });
         layout->addWidget(open);
+        if (!image) {
+            auto* save = new QPushButton(QStringLiteral("保存"), row);
+            save->setObjectName(QStringLiteral("cloudDriveSaveVideo"));
+            connect(save, &QPushButton::clicked, this,
+                    [this, id, name] { saveVideo(id, name); });
+            layout->addWidget(save);
+        }
         auto* remove = new QPushButton(QStringLiteral("删除"), row);
         remove->setObjectName(QStringLiteral("cloudDriveDelete"));
         connect(remove, &QPushButton::clicked, this,
@@ -768,61 +773,113 @@ void CloudDriveDialog::startUpload(const QString& sourcePath,
     }));
 }
 
-void CloudDriveDialog::startPlayback(const QString& videoId) {
+void CloudDriveDialog::startPlayback(const QString& videoId, const QString& name) {
     if (busy_ || !sameAccount()) return;
-    const QString dir = cacheDirectory();
-    if (dir.isEmpty()) { setStatus(QStringLiteral("无法建立播放缓存目录。"), true); return; }
-    const QString target = QDir(dir).filePath(QUuid::createUuid().toString(QUuid::WithoutBraces) +
-                                               QStringLiteral(".mp4"));
+    const DesktopVideoCircleAccess access = accessProvider_();
+    const auto cancel = std::shared_ptr<MaiCloudDriveCancel>(
+        mai_cloud_drive_cancel_create(), mai_cloud_drive_cancel_destroy);
+    const auto vodCancel = std::shared_ptr<MaiCloudVodCancel>(
+        mai_cloud_vod_cancel_create(), mai_cloud_vod_cancel_destroy);
+    if (!cancel || !vodCancel) {
+        setStatus(QStringLiteral("无法准备视频点播，请重试。"), true);
+        return;
+    }
+    requestCancel_ = cancel;
+    vodCancel_ = vodCancel;
+    const unsigned generation = ++generation_;
+    setBusy(true, QStringLiteral("正在连接视频，获取开头片段…"));
+    progress_->setRange(0, 0);
+    auto* watcher = new QFutureWatcher<Reply>(this);
+    connect(watcher, &QFutureWatcher<Reply>::finished, this,
+            [this, watcher, generation, name] {
+        const Reply reply = watcher->result();
+        watcher->deleteLater();
+        if (generation != generation_) return;
+        requestCancel_.reset();
+        vodCancel_.reset();
+        setBusy(false);
+        if (!sameAccount() || !isVisible()) return;
+        if (!reply.ok() || !reply.vod) {
+            setStatus(reply.error.isEmpty() ? QStringLiteral("无法打开云盘视频，请重试。") :
+                reply.error, true);
+            return;
+        }
+        setStatus(QString());
+        if (play_) play_(reply.vod, name);
+    });
+    watcher->setFuture(QtConcurrent::run([access, videoId, cancel, vodCancel] {
+        Reply reply;
+        MaiCloudVodResult result{};
+        reply.vod = desktopOpenCloudVod(access, videoId, cancel, vodCancel, &result);
+        reply.status = reply.vod ? MAI_CLOUD_DRIVE_OK :
+            (result.status == MAI_CLOUD_VOD_CANCELED ? MAI_CLOUD_DRIVE_CANCELED :
+             MAI_CLOUD_DRIVE_NETWORK_ERROR);
+        reply.http = reply.vod ? 206 : result.http_status;
+        if (!reply.vod)
+            reply.error = result.status == MAI_CLOUD_VOD_CANCELED ?
+                QStringLiteral("已取消播放。") : QStringLiteral("视频点播失败，请重试。");
+        return reply;
+    }));
+}
+
+void CloudDriveDialog::saveVideo(const QString& videoId, const QString& name) {
+    if (busy_ || !sameAccount()) return;
+    const QString fileName = QFileInfo(name).fileName();
+    const QString target = QFileDialog::getSaveFileName(
+        this, QStringLiteral("保存云盘视频"),
+        fileName.isEmpty() ? QStringLiteral("云盘视频.mp4") : fileName,
+        QStringLiteral("视频文件 (*.mp4 *.mov *.m4v);;所有文件 (*)"));
+    if (target.isEmpty()) return;
     const DesktopVideoCircleAccess access = accessProvider_();
     const auto cancel = std::shared_ptr<MaiCloudDriveCancel>(
         mai_cloud_drive_cancel_create(), mai_cloud_drive_cancel_destroy);
     const auto downloadCancel = std::shared_ptr<MaiDownloadCancel>(
         mai_download_cancel_create(), mai_download_cancel_destroy);
+    if (!cancel || !downloadCancel) {
+        setStatus(QStringLiteral("无法准备保存，请重试。"), true);
+        return;
+    }
     requestCancel_ = cancel;
     downloadCancel_ = downloadCancel;
     const unsigned generation = ++generation_;
-    setBusy(true, QStringLiteral("正在准备播放，视频下载完成后自动打开…"));
+    setBusy(true, QStringLiteral("正在保存云盘视频…"));
     progress_->setRange(0, 0);
     auto* watcher = new QFutureWatcher<Reply>(this);
     connect(watcher, &QFutureWatcher<Reply>::finished, this,
             [this, watcher, generation, target] {
         const Reply reply = watcher->result();
         watcher->deleteLater();
-        if (generation != generation_) { QFile::remove(target); return; }
+        if (generation != generation_) return;
         requestCancel_.reset();
         downloadCancel_.reset();
         setBusy(false);
-        if (!sameAccount() || !isVisible()) { QFile::remove(target); return; }
-        if (!reply.ok()) { QFile::remove(target); setStatus(reply.error, true); return; }
-        setStatus(QString());
-        if (play_) play_(target);
-        else QFile::remove(target);
+        if (!sameAccount() || !isVisible()) return;
+        setStatus(reply.ok() ? QStringLiteral("已保存到 %1").arg(target) :
+            (reply.error.isEmpty() ? QStringLiteral("保存失败，请重试。") : reply.error),
+            !reply.ok());
     });
     watcher->setFuture(QtConcurrent::run([access, videoId, target, cancel, downloadCancel] {
         Reply reply = request(access, MAI_CLOUD_DRIVE_PLAY_LINK,
             {{QStringLiteral("video_id"), videoId}}, cancel.get());
         if (!reply.ok()) return reply;
-        const QByteArray url = reply.body.value(QStringLiteral("read_url")).toString().toUtf8();
-        const QByteArray path = target.toUtf8();
-        const QByteArray proxy = access.proxyUrl.toUtf8();
-        const QByteArray roots = cloudDriveTrustedRoots(access);
-        MaiDownloadOptions options{};
-        options.url_utf8 = url.constData();
-        options.target_path_utf8 = path.constData();
-        options.max_bytes = kMaxVideoBytes;
-        options.transfer_timeout_ms = 2 * 60 * 60 * 1000;
-        options.ca_pem = roots.isEmpty() ? nullptr : roots.constData();
-        options.ca_pem_length = size_t(roots.size());
-        options.proxy_url_utf8 = access.proxyUrl.isNull() ? nullptr : proxy.constData();
-        MaiDownloadResult downloaded{};
-        mai_download_file(&options, downloadCancel.get(), &downloaded);
+        const QString signedUrl = reply.body.value(QStringLiteral("read_url")).toString();
+        const qint64 size = reply.body.value(QStringLiteral("size_bytes")).toVariant().toLongLong();
+        const QString type = reply.body.value(QStringLiteral("media_type")).toString();
+        if (!signedUrl.startsWith(QStringLiteral("https://")) ||
+            size <= 0 || quint64(size) > kMaxVideoBytes || type != QStringLiteral("video")) {
+            reply.status = MAI_CLOUD_DRIVE_INVALID_ARGUMENT;
+            reply.error = QStringLiteral("云盘文件信息无效，无法保存。");
+            return reply;
+        }
+        const MaiDownloadResult downloaded = downloadCloudFile(
+            access, signedUrl, target, kMaxVideoBytes, 2 * 60 * 60 * 1000,
+            downloadCancel.get());
         if (downloaded.status != MAI_DOWNLOAD_OK) {
             reply.status = downloaded.status == MAI_DOWNLOAD_CANCELED ?
                 MAI_CLOUD_DRIVE_CANCELED : MAI_CLOUD_DRIVE_NETWORK_ERROR;
             reply.http = downloaded.http_status;
             reply.error = downloaded.status == MAI_DOWNLOAD_CANCELED ?
-                QStringLiteral("已取消播放下载。") : QStringLiteral("视频下载失败，请重试。");
+                QStringLiteral("已取消保存。") : QStringLiteral("保存失败，请重试。");
         }
         return reply;
     }));

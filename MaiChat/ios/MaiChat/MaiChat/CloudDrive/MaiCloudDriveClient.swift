@@ -32,8 +32,66 @@ private struct MaiCloudDrivePlayLink: Decodable, Sendable {
     let mediaType: String?
 }
 
+enum MaiCloudDriveAgentPreview {
+    case image(URL)
+    case video(MaiCloudVodSession)
+}
+
 private struct MaiCloudDriveThumbnailLink: Decodable, Sendable {
     let thumbnailUrl: String
+}
+
+private final class MaiCloudVodCancelToken: @unchecked Sendable {
+    let pointer: OpaquePointer
+    private let lock = NSLock()
+    private var canceled = false
+    init?() {
+        guard let pointer = mai_cloud_vod_cancel_create() else { return nil }
+        self.pointer = pointer
+    }
+    deinit { mai_cloud_vod_cancel_destroy(pointer) }
+    var isCanceled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return canceled
+    }
+    func cancel() {
+        lock.lock()
+        canceled = true
+        lock.unlock()
+        mai_cloud_vod_cancel_request(pointer)
+    }
+}
+
+/// A read-only cloud video source. Only bounded chunks live in the shared C++ cache.
+/// Keep this object alive until the FFplay worker has stopped reading it.
+final class MaiCloudVodSession: @unchecked Sendable {
+    let pointer: OpaquePointer
+    let displayPath: String
+    private let vodCancel: MaiCloudVodCancelToken
+    private let accountCancel: MaiCloudDriveCancelToken
+    private let proxyContext: MaiChatAttachmentProxyContext
+
+    fileprivate init(pointer: OpaquePointer, extensionName: String,
+                     vodCancel: MaiCloudVodCancelToken,
+                     accountCancel: MaiCloudDriveCancelToken,
+                     proxyContext: MaiChatAttachmentProxyContext) {
+        self.pointer = pointer
+        displayPath = "maicloud-vod-\(UUID().uuidString).\(extensionName)"
+        self.vodCancel = vodCancel
+        self.accountCancel = accountCancel
+        self.proxyContext = proxyContext
+    }
+
+    func cancel() {
+        mai_cloud_vod_cancel(pointer)
+        vodCancel.cancel()
+        accountCancel.cancel()
+    }
+
+    deinit {
+        mai_cloud_vod_close(pointer)
+    }
 }
 
 struct MaiCloudDriveError: LocalizedError, Sendable {
@@ -244,6 +302,77 @@ struct MaiCloudDriveClient: Sendable {
                                        payload: ["video_id": videoID])).readUrl
     }
 
+    func openVod(videoID: String,
+                 extensionName: String = "mp4") async throws -> MaiCloudVodSession {
+        guard let access = try await MaiChatAuthClient.shared.cloudDriveAccessIfAvailable(),
+              let vodCancel = MaiCloudVodCancelToken(),
+              let accountCancel = MaiCloudDriveCancelToken() else {
+            throw MaiChatAuthError.sessionExpired
+        }
+        let certificate = try Self.certificate()
+        let proxy = MaiChatAttachmentProxyContext()
+        let signedHost = access.authBaseURL.contains("localhost") ||
+            access.authBaseURL.contains("127.0.0.1") ? "localhost" : "aliyuncs.com"
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<MaiCloudVodSession, Error>) in
+                DispatchQueue.global(qos: .utility).async {
+                    var result = MaiCloudVodResult()
+                    let source = access.authBaseURL.withCString { auth in
+                        access.accountToken.withCString { token in
+                            certificate.path.withCString { ca in
+                                signedHost.withCString { host in
+                                    videoID.withCString { id in
+                                        var options = MaiCloudDriveOptions()
+                                        options.auth_base_url_utf8 = auth
+                                        options.account_token_utf8 = token
+                                        options.ca_path_utf8 = ca
+                                        options.signed_upload_host_suffix_utf8 = host
+                                        options.proxy_resolver = maiChatAttachmentProxyResolver
+                                        options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                        if let pem = certificate.pem {
+                                            return pem.withUnsafeBytes { bytes in
+                                                options.ca_pem = bytes.baseAddress?
+                                                    .assumingMemoryBound(to: CChar.self)
+                                                options.ca_pem_length = bytes.count
+                                                options.ca_path_utf8 = nil
+                                                return mai_cloud_vod_open_cloud_drive(
+                                                    &options, id, accountCancel.pointer,
+                                                    vodCancel.pointer, &result)
+                                            }
+                                        }
+                                        return mai_cloud_vod_open_cloud_drive(
+                                            &options, id, accountCancel.pointer,
+                                            vodCancel.pointer, &result)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    guard let source else {
+                        continuation.resume(throwing: MaiCloudDriveError(
+                            status: Int32(result.status.rawValue),
+                            httpStatus: Int(result.http_status),
+                            detail: "云盘视频点播失败，请重试"))
+                        return
+                    }
+                    if vodCancel.isCanceled {
+                        mai_cloud_vod_close(source)
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    continuation.resume(returning: MaiCloudVodSession(
+                        pointer: source, extensionName: extensionName,
+                        vodCancel: vodCancel, accountCancel: accountCancel,
+                        proxyContext: proxy))
+                }
+            }
+        } onCancel: {
+            accountCancel.cancel()
+            vodCancel.cancel()
+        }
+    }
+
     func thumbnailData(videoID: String) async throws -> Data {
         let link = try decode(MaiCloudDriveThumbnailLink.self,
                               from: await request(action: MAI_CLOUD_DRIVE_THUMBNAIL_LINK,
@@ -259,7 +388,7 @@ struct MaiCloudDriveClient: Sendable {
     func downloadForPreview(_ media: MaiCloudDriveVideo) async throws -> URL {
         let signedURL = try await playLink(videoID: media.id)
         guard let info = Self.contentInfo(media.contentType),
-              media.isImage == info.isImage else {
+              media.isImage, info.isImage else {
             throw MaiCloudDriveError(status: 0, httpStatus: 0,
                                      detail: "云盘文件格式无效")
         }
@@ -270,8 +399,24 @@ struct MaiCloudDriveClient: Sendable {
                                   timeoutMilliseconds: 600_000)
     }
 
-    func downloadForAgentPreview(mediaID: String) async throws ->
-        (url: URL, isImage: Bool) {
+    // A full download is allowed only for an explicit save request. Point-of-demand
+    // playback always uses openVod and never calls this method.
+    func downloadForExplicitSave(_ media: MaiCloudDriveVideo) async throws -> URL {
+        guard !media.isImage, let info = Self.contentInfo(media.contentType),
+              !info.isImage, media.sizeBytes > 0,
+              media.sizeBytes <= info.maxBytes else {
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "云盘视频信息无效")
+        }
+        let signedURL = try await playLink(videoID: media.id)
+        return try await download(signedURL: signedURL,
+                                  fileExtension: info.extensionName,
+                                  maxBytes: info.maxBytes,
+                                  folderName: "mai-cloud-drive-explicit-saves",
+                                  timeoutMilliseconds: 2 * 60 * 60 * 1000)
+    }
+
+    func openForAgentPreview(mediaID: String) async throws -> MaiCloudDriveAgentPreview {
         let link = try decode(MaiCloudDrivePlayLink.self,
                               from: await request(action: MAI_CLOUD_DRIVE_PLAY_LINK,
                                                   payload: ["video_id": mediaID]))
@@ -282,22 +427,16 @@ struct MaiCloudDriveClient: Sendable {
             throw MaiCloudDriveError(status: 0, httpStatus: 0,
                                      detail: "云盘文件格式或大小无效")
         }
+        if !info.isImage {
+            return .video(try await openVod(videoID: mediaID,
+                                            extensionName: info.extensionName))
+        }
         let url = try await download(signedURL: link.readUrl,
                                      fileExtension: info.extensionName,
                                      maxBytes: info.maxBytes,
                                      folderName: "mai-cloud-drive-agent-playback",
                                      timeoutMilliseconds: 600_000)
-        return (url, info.isImage)
-    }
-
-    func downloadForPlayback(videoID: String,
-                             agentScoped: Bool = false) async throws -> URL {
-        let signedURL = try await playLink(videoID: videoID)
-        return try await download(signedURL: signedURL, fileExtension: "mp4",
-                                  maxBytes: 2_000_000_000,
-                                  folderName: agentScoped ? "mai-cloud-drive-agent-playback"
-                                                          : "mai-cloud-drive-playback",
-                                  timeoutMilliseconds: 600_000)
+        return .image(url)
     }
 
     private func download(signedURL: String, fileExtension: String,

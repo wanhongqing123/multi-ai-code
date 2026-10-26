@@ -1,4 +1,5 @@
 #include "MaiChatTools/DesktopCloudDriveTools.h"
+#include "MaiCloudVod.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -60,12 +61,16 @@ int main(int argc, char** argv) {
     MaiToolRegistry registry;
     QString playedPath;
     bool openedAsImage = false;
+    std::shared_ptr<MaiCloudVod> playedVod;
     registerDesktopCloudDriveTools(
         registry, [access] { return access; }, &presenter,
-        [&playedPath, &openedAsImage](const QString& path, bool image) {
+        [&playedPath, &openedAsImage, &playedVod](
+            const QString& path, bool image, std::shared_ptr<MaiCloudVod> vod) {
             playedPath = path;
             openedAsImage = image;
-            return QFileInfo(path).isFile();
+            playedVod = std::move(vod);
+            return image ? QFileInfo(path).isFile() :
+                playedVod && mai_cloud_vod_size(playedVod.get()) > 0;
         });
     MaiToolContext context;
     context.root = QFileInfo(source).absolutePath().toUtf8().toStdString();
@@ -80,7 +85,8 @@ int main(int argc, char** argv) {
     disabled.authBaseUrl = QString::fromUtf8(argv[1]) + QStringLiteral("/disabled");
     MaiToolRegistry disabledRegistry;
     registerDesktopCloudDriveTools(
-        disabledRegistry, [disabled] { return disabled; }, &presenter, [](const QString&, bool) { return false; });
+        disabledRegistry, [disabled] { return disabled; }, &presenter,
+        [](const QString&, bool, std::shared_ptr<MaiCloudVod>) { return false; });
     require(disabledRegistry.findForModel("maichat_cloud_drive_list_media")->execute("{}", context).error().code() ==
                 MaiErrorCode::NotConfigured,
             "disabled account gate was advertised as usable");
@@ -126,10 +132,11 @@ int main(int argc, char** argv) {
         QJsonDocument(QJsonObject{{QStringLiteral("media_id"), videoId}}).toJson(QJsonDocument::Compact);
     const QJsonObject opened =
         output(registry.findForModel("maichat_cloud_drive_open_media")->execute(idArgs.toStdString(), context));
-    require(opened.value(QStringLiteral("opened")) == true && QFileInfo(playedPath).isFile(),
-            "cloud video did not open from a private download");
+    require(opened.value(QStringLiteral("opened")) == true && playedVod &&
+                !QFileInfo(playedPath).exists(),
+            "cloud video did not open as a seekable in-memory source");
     require(!openedAsImage, "video opened through the image viewer");
-    QFile::remove(playedPath);
+    playedVod.reset();
 
     MaiTool* remove = registry.findForModel("maichat_cloud_drive_delete_media");
     require(remove && remove->requiresPerCallApproval("{}"), "delete lost per-call approval");

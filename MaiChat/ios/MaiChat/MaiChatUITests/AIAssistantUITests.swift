@@ -73,7 +73,12 @@ final class AIAssistantUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
             certificate.base64EncodedString()
         app.launch()
-        let start = app.buttons["cloud-drive-upload-sample"]
+        let directStart = app.buttons["cloud-drive-upload-sample"]
+        if !directStart.exists {
+            let more = app.buttons["OverflowBarButtonItem"]
+            if more.waitForExistence(timeout: 10) { more.tap() }
+        }
+        let start = directStart.exists ? directStart : app.buttons["上传样本"]
         XCTAssertTrue(start.waitForExistence(timeout: 30))
         start.tap()
         XCTAssertTrue(app.buttons[
@@ -85,6 +90,12 @@ final class AIAssistantUITests: XCTestCase {
             NSPredicate(format: "label BEGINSWITH %@", "云盘工具")).firstMatch
         XCTAssertTrue(success.waitForExistence(timeout: 30),
                       "工具状态：\(status.exists ? status.label : "缺失")")
+        let (rangeData, _) = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:18449/test/state")!)
+        let rangeState = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: rangeData) as? [String: Any])
+        XCTAssertGreaterThan(rangeState["range_requests"] as? Int ?? 0, 0,
+                             "Agent 云盘视频应通过 HTTP Range 点播")
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 15))
         app.terminate()
         #else
@@ -403,8 +414,19 @@ final class AIAssistantUITests: XCTestCase {
             "https://localhost:18448"
         app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
             certificate.base64EncodedString()
+        addUIInterruptionMonitor(withDescription: "允许保存云盘视频") { alert in
+            let allow = alert.buttons.matching(NSPredicate(
+                format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Allow", "允许")).firstMatch
+            if allow.exists { allow.tap(); return true }
+            return false
+        }
         app.launch()
-        let upload = app.buttons["cloud-drive-upload-sample"]
+        let directUpload = app.buttons["cloud-drive-upload-sample"]
+        if !directUpload.exists {
+            let more = app.buttons["OverflowBarButtonItem"]
+            if more.waitForExistence(timeout: 10) { more.tap() }
+        }
+        let upload = directUpload.exists ? directUpload : app.buttons["上传样本"]
         XCTAssertTrue(upload.waitForExistence(timeout: 30))
         upload.tap()
         let item = app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
@@ -415,9 +437,30 @@ final class AIAssistantUITests: XCTestCase {
         add(uploaded)
         item.tap()
         XCTAssertTrue(app.buttons["ffplay-close"].waitForExistence(timeout: 60))
+        let (rangeData, _) = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:18449/test/state")!)
+        let rangeState = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: rangeData) as? [String: Any])
+        XCTAssertGreaterThan(rangeState["range_requests"] as? Int ?? 0, 0,
+                             "云盘视频应通过 HTTP Range 分片点播")
+        let streaming = XCTAttachment(screenshot: app.screenshot())
+        streaming.name = "cloud-drive-local-range-playback"
+        streaming.lifetime = .keepAlways
+        add(streaming)
         app.buttons["ffplay-close"].tap()
         let menu = app.buttons["cloud-drive-video-menu-123e4567-e89b-42d3-a456-426614174000"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let saveMenu = XCTAttachment(screenshot: app.screenshot())
+        saveMenu.name = "cloud-drive-explicit-save-menu"
+        saveMenu.lifetime = .keepAlways
+        add(saveMenu)
+        app.buttons["保存到相册"].tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if springboard.alerts.firstMatch.waitForExistence(timeout: 2) {
+            app.tap() // Trigger the first-use Photos interruption monitor.
+        }
+        XCTAssertTrue(app.staticTexts["已保存到相册"].waitForExistence(timeout: 60))
         menu.tap()
         app.buttons["删除"].tap()
         app.buttons["删除文件"].tap()
@@ -425,6 +468,58 @@ final class AIAssistantUITests: XCTestCase {
         app.terminate()
         #else
         throw XCTSkip("云盘 UI 用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveLocalHlgVodPlayback() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        let (certificate, response) = try await URLSession.shared.data(from: control)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let (initialStateData, _) = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:18449/test/state")!)
+        let initialState = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: initialStateData) as? [String: Any])
+        guard initialState["status"] as? String == "ready",
+              (initialState["size"] as? Int ?? 0) > 10_000_000 else {
+            throw XCTSkip("仅在本地 TLS fixture 显式加载 HLG 原片时运行")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] =
+            "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] =
+            "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] =
+            certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        let item = app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
+        XCTAssertTrue(item.waitForExistence(timeout: 30))
+        item.tap()
+        let close = app.buttons["ffplay-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 30))
+        try await Task.sleep(for: .seconds(3))
+        XCTAssertTrue(app.buttons["ffplay-pause"].exists)
+        let speed = app.buttons["ffplay-speed"]
+        speed.tap()
+        app.buttons["ffplay-speed-1.5"].tap()
+        XCTAssertEqual(speed.label, "播放倍速 1.5×")
+        try await Task.sleep(for: .seconds(2))
+        let playing = XCTAttachment(screenshot: app.screenshot())
+        playing.name = "cloud-drive-local-hlg-vod-frame"
+        playing.lifetime = .keepAlways
+        add(playing)
+        close.tap()
+        let (stateData, _) = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:18449/test/state")!)
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: stateData) as? [String: Any])
+        XCTAssertGreaterThan(state["range_requests"] as? Int ?? 0, 0)
+        #else
+        throw XCTSkip("HLG VOD 用例只运行于隔离模拟器")
         #endif
     }
 
@@ -447,7 +542,12 @@ final class AIAssistantUITests: XCTestCase {
             certificate.base64EncodedString()
         app.launch()
         defer { app.terminate() }
-        let upload = app.buttons["cloud-drive-upload-image-sample"]
+        let directUpload = app.buttons["cloud-drive-upload-image-sample"]
+        if !directUpload.exists {
+            let more = app.buttons["OverflowBarButtonItem"]
+            if more.waitForExistence(timeout: 10) { more.tap() }
+        }
+        let upload = directUpload.exists ? directUpload : app.buttons["上传图片样本"]
         XCTAssertTrue(upload.waitForExistence(timeout: 30))
         upload.tap()
         let id = "123e4567-e89b-42d3-a456-426614174000"

@@ -537,6 +537,18 @@ final class MaiCloudDrive {
         return testPem == null ? SystemCertificateBundle.currentPem() : testPem;
     }
 
+    MaiCloudVod.Session openVodBlocking(String mediaID, String extension,
+                                       MaiCloudVod.Opening opening) throws Exception {
+        MaiChatAuthClient.CloudDriveAccess access = auth.cloudDriveAccess();
+        if (access == null || auth.accountId().isEmpty())
+            throw new IOException("请先登录 MaiChat");
+        return MaiCloudVod.openBlocking(
+            testBase == null ? access.authBaseUrl : testBase,
+            access.accountToken, trustPem(),
+            testBase == null ? null : "localhost",
+            mediaID, extension, opening);
+    }
+
     private static String proxyForUrl(String url) throws IOException {
         MaiChatAuthTransport.ProxyRoute route =
             MaiChatAuthTransport.selectedProxy(new URL(url));

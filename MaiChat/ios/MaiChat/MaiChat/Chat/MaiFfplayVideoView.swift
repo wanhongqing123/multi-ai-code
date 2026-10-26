@@ -57,6 +57,7 @@ struct MaiFfplayPresentation: Identifiable {
     let startSeconds: Double
     let sequence: MaiMediaSequence
     let entryDirection: Int
+    let vod: MaiCloudVodSession?
 
     var groupID: UUID { sequence.groupID }
     var path: String { sequence.current.path }
@@ -65,21 +66,24 @@ struct MaiFfplayPresentation: Identifiable {
 
     init(path: String, startSeconds: Double = 0, playlist: [String] = [],
          id: UUID = UUID(),
-         groupID: UUID = UUID(), entryDirection: Int = 0) {
+         groupID: UUID = UUID(), entryDirection: Int = 0,
+         vod: MaiCloudVodSession? = nil) {
         self.id = id
         self.startSeconds = startSeconds
         self.entryDirection = entryDirection
+        self.vod = vod
         sequence = MaiMediaSequence(selected: MaiMediaItem(kind: .video, path: path),
                                     items: playlist.map { MaiMediaItem(kind: .video, path: $0) },
                                     groupID: groupID)
     }
 
     init(sequence: MaiMediaSequence, startSeconds: Double = 0, id: UUID = UUID(),
-         entryDirection: Int = 0) {
+         entryDirection: Int = 0, vod: MaiCloudVodSession? = nil) {
         self.id = id
         self.startSeconds = startSeconds
         self.sequence = sequence
         self.entryDirection = entryDirection
+        self.vod = vod
     }
 
     func updatingPlaylist(_ paths: [String]) -> MaiFfplayPresentation {
@@ -90,7 +94,7 @@ struct MaiFfplayPresentation: Identifiable {
     func updatingMediaItems(_ items: [MaiMediaItem]) -> MaiFfplayPresentation {
         MaiFfplayPresentation(sequence: sequence.updatingItems(items),
                               startSeconds: startSeconds, id: id,
-                              entryDirection: entryDirection)
+                              entryDirection: entryDirection, vod: vod)
     }
 
     func adjacent(_ direction: Int) -> MaiFfplayPresentation? {
@@ -274,6 +278,7 @@ private final class MaiFfplayMetalView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
 
     var videoPath = ""
+    var vod: MaiCloudVodSession?
     var startPositionUs: Int64 = 0
     var onError: ((String) -> Void)?
     private var viewID: UInt64 = 0
@@ -345,9 +350,7 @@ private final class MaiFfplayMetalView: UIView {
             return
         }
         resetAudioObservation()
-        session = videoPath.withCString { path in
-            maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, startPositionUs)
-        }
+        session = startPlayback(at: startPositionUs)
         if session == nil {
             maiGraphicsPresenterDetach(viewID)
             viewID = 0
@@ -384,6 +387,16 @@ private final class MaiFfplayMetalView: UIView {
         didLogAudioOutput = false
     }
 
+    private func startPlayback(at position: Int64) -> OpaquePointer? {
+        if let vod {
+            return maiFfplayIosStartVodAtSpeed(viewID, vod.pointer,
+                                               playbackSpeed, position)
+        }
+        return videoPath.withCString {
+            maiFfplayIosStartAtSpeed(viewID, $0, playbackSpeed, position)
+        }
+    }
+
     func sendCommand(_ action: String) -> Bool {
         guard let session else { return false }
         return action.withCString { maiFfplayIosCommand(session, $0) == 1 }
@@ -408,9 +421,7 @@ private final class MaiFfplayMetalView: UIView {
         guard activatePlaybackAudioSession() else { return false }
         startPositionUs = 0
         resetAudioObservation()
-        session = videoPath.withCString { path in
-            maiFfplayIosStartAtSpeed(viewID, path, playbackSpeed, 0)
-        }
+        session = startPlayback(at: 0)
         return session != nil
     }
 
@@ -424,9 +435,7 @@ private final class MaiFfplayMetalView: UIView {
         guard activatePlaybackAudioSession() else { return false }
         playbackSpeed = speed
         resetAudioObservation()
-        session = videoPath.withCString { path in
-            maiFfplayIosStartAtSpeed(viewID, path, speed, position)
-        }
+        session = startPlayback(at: position)
         return session != nil
     }
 
@@ -481,6 +490,7 @@ private final class MaiFfplayMetalView: UIView {
 @MainActor
 final class MaiFfplayVideoController: UIViewController {
     private let path: String
+    private let vod: MaiCloudVodSession?
     private let startSeconds: Double
     private let entryDirection: Int
     private let onClose: () -> Void
@@ -505,8 +515,10 @@ final class MaiFfplayVideoController: UIViewController {
     init(path: String, startSeconds: Double = 0,
          entryDirection: Int = 0, navigate: ((Int) -> Bool)? = nil,
          onPlaybackReady: (() -> Void)? = nil,
+         vod: MaiCloudVodSession? = nil,
          close: @escaping () -> Void) {
         self.path = path
+        self.vod = vod
         self.startSeconds = startSeconds
         self.entryDirection = entryDirection
         onNavigate = navigate
@@ -525,6 +537,7 @@ final class MaiFfplayVideoController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         metalView.videoPath = path
+        metalView.vod = vod
         metalView.startPositionUs = Int64((startSeconds * 1_000_000).rounded())
         metalView.onError = { [weak self] message in
             self?.errorLabel.text = message
@@ -603,6 +616,11 @@ final class MaiFfplayVideoController: UIViewController {
 
         let copyButton = actionButton("doc.on.doc", label: "复制文件路径",
                                       identifier: "ffplay-copy-path", action: #selector(copyPathTapped))
+        if vod != nil {
+            shareButton.isHidden = true
+            saveButton.isHidden = true
+            copyButton.isHidden = true
+        }
         let actions = UIStackView(arrangedSubviews: [shareButton, saveButton, speedButton, copyButton])
         actions.axis = .horizontal
         actions.spacing = 12
@@ -842,6 +860,7 @@ final class MaiFfplayVideoController: UIViewController {
     }
 
     @objc private func shareTapped() {
+        if vod != nil { showStatus("云盘视频正在点播，无法直接转发") ; return }
         let sheet = UIActivityViewController(activityItems: [URL(fileURLWithPath: path)],
                                              applicationActivities: nil)
         sheet.popoverPresentationController?.sourceView = view
@@ -851,6 +870,7 @@ final class MaiFfplayVideoController: UIViewController {
     }
 
     @objc private func saveTapped() {
+        if vod != nil { showStatus("云盘视频正在点播，未下载到相册") ; return }
         guard !saving else { return }
         saving = true
         saveButton.isEnabled = false
@@ -892,6 +912,7 @@ final class MaiFfplayVideoController: UIViewController {
     }
 
     @objc private func copyPathTapped() {
+        if vod != nil { showStatus("云盘视频没有本地文件路径") ; return }
         UIPasteboard.general.string = path
         showStatus("已复制文件路径")
     }
@@ -899,6 +920,7 @@ final class MaiFfplayVideoController: UIViewController {
 
 struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     let path: String
+    let vod: MaiCloudVodSession?
     let startSeconds: Double
     let entryDirection: Int
     let navigate: ((Int) -> Bool)?
@@ -908,8 +930,10 @@ struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
     init(path: String, startSeconds: Double = 0,
          entryDirection: Int = 0, navigate: ((Int) -> Bool)? = nil,
          onPlaybackReady: (() -> Void)? = nil,
+         vod: MaiCloudVodSession? = nil,
          close: @escaping () -> Void) {
         self.path = path
+        self.vod = vod
         self.startSeconds = startSeconds
         self.entryDirection = entryDirection
         self.navigate = navigate
@@ -922,7 +946,7 @@ struct MaiFfplayVideoScreen: UIViewControllerRepresentable {
         let controller = MaiFfplayVideoController(
             path: path, startSeconds: startSeconds,
             entryDirection: entryDirection, navigate: navigate,
-            onPlaybackReady: onPlaybackReady, close: close)
+            onPlaybackReady: onPlaybackReady, vod: vod, close: close)
         // 嵌入式播放器不一定触发全屏控制器的 viewDidAppear；创建时先绑定 Agent 工具。
         if let previous = MaiFfplayMobilePlayer.active, previous !== controller {
             previous.stop()

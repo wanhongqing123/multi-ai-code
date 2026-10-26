@@ -146,7 +146,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private RemoteIMMediaStore mediaStore;
     private AIAssistantPanel aiAssistant;
     private Dialog videoDialog;
-    private final Map<Dialog, File> cloudPlayerFiles = new HashMap<>();
+    private final Map<Dialog, MaiCloudVod.Session> cloudPlayerStreams = new HashMap<>();
     private String cloudPlayerOwner = "";
     private final Map<Dialog, File> cloudImageFiles = new HashMap<>();
     private String cloudImageOwner = "";
@@ -157,6 +157,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private MaiGraphicsImageView galleryImageView;
     private String galleryImagePath;
     private String pendingVideoSavePath;
+    private Runnable pendingVideoSaveCompletion;
     private String pendingImageSavePath;
     private Runnable pendingGalleryAction;
     private RemoteIMTab activeTab = RemoteIMTab.MESSAGES;
@@ -619,9 +620,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         if (requestCode == REQUEST_SAVE_VIDEO_PERMISSION) {
             String path = pendingVideoSavePath;
+            Runnable completion = pendingVideoSaveCompletion;
             pendingVideoSavePath = null;
-            if (granted && path != null) savePreviewVideo(path);
-            else if (!granted) toast("没有存储权限，无法保存视频");
+            pendingVideoSaveCompletion = null;
+            if (granted && path != null) savePreviewVideo(path, completion);
+            else {
+                if (!granted) toast("没有存储权限，无法保存视频");
+                if (completion != null) completion.run();
+            }
             return;
         }
         if (requestCode == REQUEST_SAVE_IMAGE_PERMISSION) {
@@ -810,7 +816,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     // 切换页面时同步 Agent 前后台状态与输入草稿，避免重建页面时丢失原有会话内容。
     private void render() {
         if (destroyed) return;
-        if (videoDialog != null && cloudPlayerFiles.containsKey(videoDialog) &&
+        if (videoDialog != null && cloudPlayerStreams.containsKey(videoDialog) &&
             !cloudPlayerOwner.equals(MaiChatAuthClient.shared(this).accountId()))
             videoDialog.dismiss();
         if (imageDialog != null && cloudImageFiles.containsKey(imageDialog) &&
@@ -4195,6 +4201,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     // 图片交给视频时保留旧帧，待新播放器首帧呈现后再移除。
     private void openVideoPlayer(String path, long startPositionUs,
                                  List<GalleryItem> candidates, int entryDirection) {
+        openVideoPlayer(path, startPositionUs, candidates, entryDirection, null);
+    }
+
+    private void openVideoPlayer(String path, long startPositionUs,
+                                 List<GalleryItem> candidates, int entryDirection,
+                                 MaiCloudVod.Session cloudVod) {
         if (videoDialog != null) videoDialog.dismiss();
         String previousImagePath = galleryImagePath;
         Bitmap handoffFrame = entryDirection != 0 && galleryImageView != null
@@ -4212,7 +4224,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         MaiFfplayVideoView video = new MaiFfplayVideoView(this);
-        video.setControlsBottomInset(72);
+        video.setControlsBottomInset(cloudVod == null ? 72 : 0);
+        if (cloudVod != null) video.setCloudVodHandle(cloudVod.handle());
         video.setVideoPath(path, startPositionUs);
         TextView mediaName = MaiChatTheme.text(this, "", 12, Color.WHITE);
         mediaName.setGravity(Gravity.CENTER);
@@ -4304,26 +4317,36 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         actions.setPadding(dp(16), 0, dp(18), dp(10));
         TextView share = videoAction("↗", "转发或分享");
-        share.setOnClickListener(view -> sharePreviewVideo(currentPath[0]));
+        share.setOnClickListener(view -> {
+            if (cloudVod != null) toast("云盘视频正在点播，无法直接转发");
+            else sharePreviewVideo(currentPath[0]);
+        });
         actions.addView(share, new LinearLayout.LayoutParams(dp(50), dp(50)));
         TextView save = videoAction("↓", "保存到相册");
-        save.setOnClickListener(view -> savePreviewVideo(currentPath[0]));
+        save.setOnClickListener(view -> {
+            if (cloudVod != null) toast("云盘视频正在点播，未下载到相册");
+            else savePreviewVideo(currentPath[0]);
+        });
         LinearLayout.LayoutParams actionSpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
         actionSpacing.leftMargin = dp(12);
         actions.addView(save, actionSpacing);
         TextView copyPath = videoAction("⧉", "复制文件路径");
-        copyPath.setOnClickListener(view -> copyToClipboard(currentPath[0]));
+        copyPath.setOnClickListener(view -> {
+            if (cloudVod != null) toast("云盘视频没有本地文件路径");
+            else copyToClipboard(currentPath[0]);
+        });
         LinearLayout.LayoutParams copySpacing = new LinearLayout.LayoutParams(dp(50), dp(50));
         copySpacing.leftMargin = dp(12);
         actions.addView(copyPath, copySpacing);
-        frame.addView(actions, new FrameLayout.LayoutParams(
+        if (cloudVod == null) frame.addView(actions, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(72), Gravity.BOTTOM));
 
         dialog.setOnDismissListener(d -> {
+            MaiCloudVod.Session stream = cloudPlayerStreams.remove(dialog);
+            if (stream != null) stream.cancel();
             video.stop();
-            File cloudFile = cloudPlayerFiles.remove(dialog);
-            if (cloudFile != null) {
-                cloudFile.delete();
+            if (stream != null) {
+                stream.close();
                 cloudPlayerOwner = "";
             }
             if (videoDialog == dialog) {
@@ -4455,17 +4478,42 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void savePreviewVideo(String path) {
+        savePreviewVideo(path, null);
+    }
+
+    public void saveCloudDriveVideo(String path, Runnable completion) {
+        try {
+            File source = new File(path).getCanonicalFile();
+            File cache = getCacheDir().getCanonicalFile();
+            if (!source.getPath().startsWith(cache.getPath() + File.separator)) {
+                toast("云盘保存路径无效");
+                if (completion != null) completion.run();
+                return;
+            }
+            savePreviewVideo(source.getAbsolutePath(), completion);
+        } catch (IOException failure) {
+            toast("云盘保存路径无效");
+            if (completion != null) completion.run();
+        }
+    }
+
+    private void savePreviewVideo(String path, Runnable completion) {
         File source = new File(path);
-        if (!source.isFile()) { toast("视频文件已丢失"); return; }
+        if (!source.isFile()) {
+            toast("视频文件已丢失");
+            if (completion != null) completion.run();
+            return;
+        }
         if (Build.VERSION.SDK_INT < 29) {
             if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
                 pendingVideoSavePath = path;
+                pendingVideoSaveCompletion = completion;
                 requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
                     REQUEST_SAVE_VIDEO_PERMISSION);
                 return;
             }
-            saveLegacyPreviewVideo(source);
+            saveLegacyPreviewVideo(source, completion);
             return;
         }
         mediaExecutor.execute(() -> {
@@ -4500,11 +4548,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             } catch (Exception error) {
                 if (target != null) getContentResolver().delete(target, null, null);
                 runOnUiThread(() -> toast("保存视频失败"));
+            } finally {
+                if (completion != null) completion.run();
             }
         });
     }
 
-    private void saveLegacyPreviewVideo(File source) {
+    private void saveLegacyPreviewVideo(File source, Runnable completion) {
         mediaExecutor.execute(() -> {
             File destination = null;
             try {
@@ -4532,6 +4582,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             } catch (Exception error) {
                 if (destination != null) destination.delete();
                 runOnUiThread(() -> toast("保存视频失败"));
+            } finally {
+                if (completion != null) completion.run();
             }
         });
     }
@@ -4663,24 +4715,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return true;
     }
 
-    public boolean openCloudDriveVideo(String path) {
-        if (destroyed || path == null) return false;
-        try {
-            String account = MaiChatAuthClient.shared(this).accountId();
-            if (account.isEmpty()) return false;
-            File source = new File(path).getCanonicalFile();
-            File cache = getCacheDir().getCanonicalFile();
-            if (!source.isFile() || !source.getPath().startsWith(cache.getPath() + File.separator))
-                return false;
-            openVideoPlayer(source.getAbsolutePath(), 0,
-                Collections.singletonList(new GalleryItem(source.getAbsolutePath(), true)));
-            if (videoDialog == null) return false;
-            cloudPlayerFiles.put(videoDialog, source);
-            cloudPlayerOwner = account;
-            return true;
-        } catch (IOException failure) {
-            return false;
-        }
+    public boolean openCloudDriveVideo(MaiCloudVod.Session source) {
+        if (destroyed || source == null || source.handle() == 0) return false;
+        String account = MaiChatAuthClient.shared(this).accountId();
+        if (account.isEmpty()) return false;
+        openVideoPlayer(source.displayPath, 0, Collections.emptyList(), 0, source);
+        if (videoDialog == null) return false;
+        cloudPlayerStreams.put(videoDialog, source);
+        cloudPlayerOwner = account;
+        return true;
     }
 
     public boolean openCloudDriveImage(String path) {

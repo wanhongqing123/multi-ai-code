@@ -414,7 +414,7 @@ function createHandler(options = {}) {
         if (cloudAction === '/cloud-drive/thumbnail') {
           const transform = type.startsWith('image/')
             ? 'image/resize,m_lfit,w_320,h_320/format,jpg'
-            : 'video/snapshot,t_0,f_jpg,w_320';
+            : 'video/snapshot,t_0,f_jpg,w_320,ar_auto';
           // Processing must be in the V4 signature. Appending it to an
           // ordinary read URL would allow signature rejection or bypass.
           const url = await storage.signatureUrlV4('GET',CLOUD_READ_TTL_SECONDS,

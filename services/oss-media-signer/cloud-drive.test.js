@@ -125,7 +125,7 @@ test('image uploads and thumbnails use fixed private OSS processing parameters',
   assert.equal((await call(handler,'thumbnail',
     { object_key:KEY })).statusCode,200);
   assert.deepEqual(seen.at(-1).slice(1,4),['GET',60,{ headers:{},
-    queries:{ 'x-oss-process':'video/snapshot,t_0,f_jpg,w_320' } }]);
+    queries:{ 'x-oss-process':'video/snapshot,t_0,f_jpg,w_320,ar_auto' } }]);
 });
 
 test('real ali-oss V4 thumbnail URL signs its processing query', async () => {
@@ -139,6 +139,12 @@ test('real ali-oss V4 thumbnail URL signs its processing query', async () => {
   assert.equal(url.searchParams.get('x-oss-expires'),'60');
   assert.match(url.searchParams.get('x-oss-signature'),/^[a-f0-9]+$/);
   assert.equal(parse(reply).thumbnail_url.includes('local-secret'),false);
+  const videoReply = await call(handler,'thumbnail',{ object_key:KEY });
+  assert.equal(videoReply.statusCode,200);
+  const videoURL = new URL(parse(videoReply).thumbnail_url);
+  assert.equal(videoURL.searchParams.get('x-oss-process'),
+    'video/snapshot,t_0,f_jpg,w_320,ar_auto');
+  assert.match(videoURL.searchParams.get('x-oss-signature'),/^[a-f0-9]+$/);
 });
 
 test('cloud multipart endpoints are off by default and completion accepts 2 GB part manifest', async () => {

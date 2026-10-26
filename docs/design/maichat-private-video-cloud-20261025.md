@@ -10,7 +10,7 @@
 
 - `MaiChat/Network/MaiCloudDriveClient` 是三端共用的 C++/libcurl 核心，负责账号 API、8 MiB OSS 分片 PUT、逐片 MD5、全文件 SHA-256、重试、取消、进度与原子检查点。可随机读取的来源用宿主传入的 `read_at` 回调；非随机读取来源由同一核心暂存到账号私有目录并检查剩余空间。检查点不写 Bearer 或 OSS 签名 URL。
 - 账号服务只保存本人元数据、10 GB 原子配额预留、未完成 upload ID 与清理状态；原始图片、视频字节从客户端直达私有 OSS。分片签名短时有效，服务端从 OSS 权威 `ListParts` 核对大小和 ETag 后完成上传，不相信客户端提交的 ETag。上传任务 7 天过期，运营清理中断的 multipart 与孤儿对象。
-- 保持现有 `/v1/cloud-drive/videos` 作为本轮唯一传输接口，以免已安装客户端的视频上传失效；图片走同一分片、配额、账号隔离、清理逻辑。上传创建、完成及列表增加 `media_type: image|video`，继续使用既有 `video_id`、`videos` 字段。`GET /v1/cloud-drive/videos/:id/thumbnail-link` 按账号验证所属关系后返回有效期 60 秒的私有签名处理 URL。图片用 `image/resize,m_lfit,w_320,h_320/format,jpg`，视频用 `video/snapshot,t_0,f_jpg,w_320`，处理参数包含在 V4 签名内；客户端不得在 URL 签名后附加参数。缩略图只在用户查看列表时按需生成，不新增持久副本，不占用户空间，也不经过账号服务器转发媒体字节。
+- 保持现有 `/v1/cloud-drive/videos` 作为本轮唯一传输接口，以免已安装客户端的视频上传失效；图片走同一分片、配额、账号隔离、清理逻辑。上传创建、完成及列表增加 `media_type: image|video`，继续使用既有 `video_id`、`videos` 字段。`GET /v1/cloud-drive/videos/:id/thumbnail-link` 按账号验证所属关系后返回有效期 60 秒的私有签名处理 URL。图片用 `image/resize,m_lfit,w_320,h_320/format,jpg`，视频用 `video/snapshot,t_0,f_jpg,w_320,ar_auto`，处理参数包含在 V4 签名内；客户端不得在 URL 签名后附加参数。缩略图只在用户查看列表时按需生成，不新增持久副本，不占用户空间，也不经过账号服务器转发媒体字节。
 - [OSS 视频截帧](https://www.alibabacloud.com/help/en/oss/user-guide/video-snapshots)只支持 H.264/H.265，且按截帧计费；其他编码或处理失败时界面应显示稳定的媒体占位图。图片缩图也受 OSS 源图片像素数及尺寸限制；失败时可让用户打开原图，但不能把私有原图 URL 公开缓存。客户端只在可见卡片取缩略图并复用未过期结果，避免重复截帧收费。
 - 平台宿主只处理账号令牌、系统文件权限、每账号检查点目录、视频选择、界面与播放器。Android 持久化 SAF URI 并优先按 FD 随机读取；iOS 为文件保存安全作用域书签、相册临时文件落到账号私有持久目录；Desktop 原路径移动后提示重新选文件并核对哈希。
 - 普通页面直接调用共享核心；Agent 侧用共享工具 schema/参数校验和薄宿主适配复用同一核心。三端提供列视频、列待续传任务、上传、暂停、续传、放弃、播放、删除共八个 Agent 工具。上传、续传、放弃与删除每次调用需要批准。

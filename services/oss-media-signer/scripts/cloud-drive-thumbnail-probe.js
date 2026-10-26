@@ -165,7 +165,7 @@ async function run(input = process.argv.slice(2),log = line => process.stdout.wr
           url.searchParams.get('x-oss-process') !==
             (asset.contentType.startsWith('image/')
               ? 'image/resize,m_lfit,w_320,h_320/format,jpg'
-              : 'video/snapshot,t_0,f_jpg,w_320'))
+              : 'video/snapshot,t_0,f_jpg,w_320,ar_auto'))
         throw new ProbeError('Thumbnail signature omitted its fixed transform');
       const preview = await signedPreview(signed.thumbnail_url);
       log(`${asset.contentType} private thumbnail: HTTP 200 JPEG ${preview.bytes} B`);

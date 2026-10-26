@@ -124,6 +124,7 @@ final class MobilePermissionTools {
             case "location": required = new String[]{Manifest.permission.ACCESS_COARSE_LOCATION};
                 break;
             case "contacts": required = new String[]{Manifest.permission.READ_CONTACTS}; break;
+            case "phone_call": required = new String[]{Manifest.permission.CALL_PHONE}; break;
             case "phone_number":
                 required = new String[]{Manifest.permission.READ_PHONE_NUMBERS}; break;
             case "sms":
@@ -141,7 +142,7 @@ final class MobilePermissionTools {
                 required = new String[]{Manifest.permission.POST_NOTIFICATIONS};
                 break;
             default: throw new IllegalArgumentException(
-                "支持的权限：photos、camera、microphone、location、contacts、calendar、notifications、phone_number、sms");
+                "支持的权限：photos、camera、microphone、location、contacts、phone_call、calendar、notifications、phone_number、sms");
         }
         boolean prompted = !hasAll(required);
         if (prompted) {

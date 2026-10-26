@@ -39,15 +39,6 @@ struct ContactsView: View {
                     groupActionName: $groupActionName
                 )
                 .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(action: showAddContact) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 17, weight: .semibold))
-                        }
-                        .accessibilityLabel("添加好友")
-                    }
-                }
                 .toolbarBackground(RemoteIMStyle.panelBackground, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
                 .task {

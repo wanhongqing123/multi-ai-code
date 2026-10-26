@@ -343,7 +343,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     // permission 只允许列出的系统能力；Android 比 iOS 多号码和短信两项。
     constexpr const char* permissionSchema =
         R"({"type":"object","properties":{"permission":{"type":"string","enum":["photos","camera","microphone",)"
-            R"("location","contacts","calendar","notifications","phone_number","sms"]}},"required":["permission"],)"
+            R"("location","contacts","phone_call","calendar","notifications",)"
+            R"("phone_number","sms"]}},"required":["permission"],)"
             R"("additionalProperties":false})";
 #else
     constexpr const char* permissionSchema =
@@ -398,14 +399,24 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Requires contacts permission and returns only name, phone numbers, and email addresses.",
         // id 来自 mobile_list_contacts，不接受随意构造的联系人字段组合。
         R"({"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false})");
-#if defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
-    // iOS 公开接口只允许打开系统确认界面；工具返回值不能表示已拨通或已送达。
+#if defined(__ANDROID__) || defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
+    // Android 拨号需单独授予 CALL_PHONE；iOS 仍由系统确认，返回值不代表已接通。
     add("mobile_dial_phone",
+#if defined(__ANDROID__)
+        "Place a regular phone call on Android only when the user explicitly asks. "
+        "For a named contact, use the contacts tools to find its number first. "
+        "If a contact has multiple phone numbers, ask which one to use. "
+        "The first call may request Android's CALL_PHONE permission; later calls reuse the grant "
+        "without another MaiChat approval. A call_requested status does not prove connection.",
+#else
         "Open iOS Phone confirmation for one number only when the user explicitly asks to call. "
         "The user confirms the call in iOS. Opening the confirmation does not mean the call was placed.",
+#endif
         R"({"type":"object","properties":{"phone_number":{"type":"string","minLength":3,)"
             R"("maxLength":32}},"required":["phone_number"],"additionalProperties":false})",
         false);
+#endif
+#if defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
     add("mobile_compose_sms",
         "Open the iOS Messages composer with recipients and body only when the user explicitly "
         "asks to send an SMS. The user reviews and taps Send in the system composer. "

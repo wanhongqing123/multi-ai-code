@@ -454,6 +454,40 @@ void test_transient_http_failure_retries_before_streaming() {
     CHECK(fake.requestCount.load() == 2);
 }
 
+void test_chat_completions_requires_done_before_reporting_success() {
+    FakeServer fake;
+    fake.script =
+        text_delta("partial") +
+        sse(json{{"choices",
+                  json::array({json{{"delta", json::object()}, {"finish_reason", "stop"}}})}});
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "test-model";
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.code == MaiErrorCode::Protocol);
+    CHECK(result.error.find("without a terminal [DONE]") != std::string::npos);
+    CHECK(result.text == "partial");
+    CHECK(result.calls.empty());
+    CHECK(fake.requestCount.load() == 1);
+}
+
+void test_chat_completions_does_not_release_tools_without_done() {
+    FakeServer fake;
+    fake.script = tool_delta(0, "call_abc", "read", "{\"path\":\"a.txt\"}") +
+                  sse(json{{"choices", json::array({json{{"delta", json::object()},
+                                                         {"finish_reason", "tool_calls"}}})}});
+    fake.start();
+
+    MaiModelRequest request;
+    request.model = "test-model";
+    const Collected result = runAgainst(fake, request);
+    CHECK(result.code == MaiErrorCode::Protocol);
+    CHECK(result.error.find("without a terminal [DONE]") != std::string::npos);
+    CHECK(result.calls.empty());
+    CHECK(fake.requestCount.load() == 1);
+}
+
 void test_heartbeats_do_not_extend_model_inactivity() {
     FakeServer fake;
     fake.sendOnlyHeartbeats = true;
@@ -522,6 +556,7 @@ void test_done_ends_stream_without_waiting_for_socket_close() {
     const MaiError result = client->stream(request, sink, cancel);
     CHECK(!result);
     CHECK(output == "complete");
+    CHECK(fake.requestCount.load() == 1);
     CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(2));
 }
 
@@ -548,6 +583,7 @@ void test_cancel_interrupts_silent_model_stream() {
     cancel.store(true);
     worker.join();
     CHECK(result.code() == MaiErrorCode::Canceled);
+    CHECK(fake.requestCount.load() == 1);
     CHECK(std::chrono::steady_clock::now() - canceledAt < std::chrono::seconds(2));
 }
 
@@ -1188,6 +1224,8 @@ int main() {
     test_finish_reason_length_is_not_reported_as_success();
     test_final_unterminated_sse_line_is_processed();
     test_transient_http_failure_retries_before_streaming();
+    test_chat_completions_requires_done_before_reporting_success();
+    test_chat_completions_does_not_release_tools_without_done();
     test_heartbeats_do_not_extend_model_inactivity();
     test_real_model_progress_extends_idle_deadline();
     test_done_ends_stream_without_waiting_for_socket_close();

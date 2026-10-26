@@ -571,6 +571,10 @@ public:
             }
             if (!context.error.empty())
                 return MaiError::make(MaiErrorCode::Protocol, context.error);
+            if (!context.done)
+                return MaiError::make(
+                    MaiErrorCode::Protocol,
+                    "Chat Completions stream ended without a terminal [DONE] event");
             if (context.finishReason == "length")
                 return MaiError::make(MaiErrorCode::Protocol,
                                       "模型输出达到长度上限，回答可能不完整。");

@@ -217,6 +217,18 @@ void LocalMessageDatabase::migrate() {
 
     query.exec(QStringLiteral(
         "CREATE INDEX IF NOT EXISTS idx_messages_peer_time ON messages(peer, created_at)"));
+    query.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS im_groups ("
+        "group_id TEXT PRIMARY KEY, name TEXT NOT NULL, member_count INTEGER NOT NULL,"
+        "pending_activation INTEGER NOT NULL DEFAULT 0)"));
+    query.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS im_group_messages ("
+        "id TEXT PRIMARY KEY, group_id TEXT NOT NULL, sender_id TEXT NOT NULL,"
+        "text TEXT NOT NULL, created_at INTEGER NOT NULL, seq INTEGER NOT NULL DEFAULT 0,"
+        "from_self INTEGER NOT NULL, pending INTEGER NOT NULL, failed INTEGER NOT NULL)"));
+    query.exec(QStringLiteral(
+        "CREATE INDEX IF NOT EXISTS idx_im_group_messages_page "
+        "ON im_group_messages(group_id, created_at, id)"));
 }
 
 void LocalMessageDatabase::loadInto(ChatState& state) const {
@@ -544,5 +556,117 @@ void LocalMessageDatabase::updateMessageTime(const QString& messageId, qint64 cr
     query.addBindValue(createdAtMillis);
     query.addBindValue(messageId);
     query.addBindValue(createdAtMillis);
+    query.exec();
+}
+
+QList<RemoteIMGroup> LocalMessageDatabase::groups() const {
+    QList<RemoteIMGroup> result;
+    if (!db_.isOpen()) return result;
+    QSqlQuery query(db_);
+    query.exec(QStringLiteral("SELECT group_id, name, member_count, pending_activation FROM im_groups"));
+    while (query.next()) result.append({query.value(0).toString(), query.value(1).toString(),
+                                        query.value(2).toInt(), query.value(3).toBool()});
+    return result;
+}
+
+void LocalMessageDatabase::upsertGroup(const RemoteIMGroup& group) {
+    if (!db_.isOpen() || group.groupId.isEmpty()) return;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO im_groups(group_id, name, member_count, pending_activation) VALUES(?,?,?,?) "
+        "ON CONFLICT(group_id) DO UPDATE SET name=excluded.name, "
+        "member_count=excluded.member_count, pending_activation=excluded.pending_activation"));
+    query.addBindValue(group.groupId);
+    query.addBindValue(group.name);
+    query.addBindValue(group.memberCount);
+    query.addBindValue(group.pendingActivation ? 1 : 0);
+    query.exec();
+}
+
+void LocalMessageDatabase::removeGroup(const QString& groupId) {
+    if (!db_.isOpen() || groupId.isEmpty()) return;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral("DELETE FROM im_groups WHERE group_id = ?"));
+    query.addBindValue(groupId);
+    query.exec();
+}
+
+QList<RemoteIMGroupMessage> LocalMessageDatabase::groupMessagesBefore(
+    const QString& groupId, qint64 beforeCreatedAt, const QString& beforeId, int limit) const {
+    QList<RemoteIMGroupMessage> result;
+    if (!db_.isOpen() || groupId.isEmpty() || limit <= 0) return result;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral(
+        "SELECT id, group_id, sender_id, text, created_at, seq, from_self, pending, failed "
+        "FROM im_group_messages WHERE group_id = ? "
+        "AND (created_at < ? OR (created_at = ? AND id < ?)) "
+        "ORDER BY created_at DESC, id DESC LIMIT ?"));
+    query.addBindValue(groupId);
+    query.addBindValue(beforeCreatedAt);
+    query.addBindValue(beforeCreatedAt);
+    query.addBindValue(beforeId);
+    query.addBindValue(limit);
+    if (!query.exec()) return result;
+    while (query.next()) result.prepend({query.value(0).toString(), query.value(1).toString(),
+                                        query.value(2).toString(), query.value(3).toString(),
+                                        query.value(4).toLongLong(), query.value(5).toLongLong(),
+                                        query.value(6).toBool(), query.value(7).toBool(),
+                                        query.value(8).toBool()});
+    return result;
+}
+
+int LocalMessageDatabase::groupMessageCount(const QString& groupId) const {
+    if (!db_.isOpen() || groupId.isEmpty()) return 0;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM im_group_messages WHERE group_id = ?"));
+    query.addBindValue(groupId);
+    return query.exec() && query.next() ? query.value(0).toInt() : 0;
+}
+
+bool LocalMessageDatabase::insertGroupMessageIfAbsent(const RemoteIMGroupMessage& message) {
+    if (!db_.isOpen() || message.id.isEmpty() || message.groupId.isEmpty()) return false;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO im_group_messages "
+        "(id,group_id,sender_id,text,created_at,seq,from_self,pending,failed) "
+        "VALUES(?,?,?,?,?,?,?,?,?)"));
+    query.addBindValue(message.id);
+    query.addBindValue(message.groupId);
+    query.addBindValue(message.senderId);
+    query.addBindValue(message.text);
+    query.addBindValue(message.createdAtMillis);
+    query.addBindValue(message.sequence);
+    query.addBindValue(message.fromSelf ? 1 : 0);
+    query.addBindValue(message.pending ? 1 : 0);
+    query.addBindValue(message.failed ? 1 : 0);
+    return query.exec() && query.numRowsAffected() > 0;
+}
+
+void LocalMessageDatabase::adoptGroupMessageId(const QString& oldId, const QString& remoteId,
+                                                qint64 createdAtMillis, qint64 sequence) {
+    if (!db_.isOpen() || oldId.isEmpty()) return;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral(
+        "UPDATE OR IGNORE im_group_messages SET id=?, created_at=?, seq=?, pending=0 "
+        "WHERE id=?"));
+    query.addBindValue(remoteId.isEmpty() ? oldId : remoteId);
+    query.addBindValue(createdAtMillis);
+    query.addBindValue(sequence);
+    query.addBindValue(oldId);
+    query.exec();
+    if (!remoteId.isEmpty() && remoteId != oldId) {
+        query.prepare(QStringLiteral("DELETE FROM im_group_messages WHERE id=?"));
+        query.addBindValue(oldId);
+        query.exec();
+    }
+}
+
+void LocalMessageDatabase::updateGroupMessageStatus(const QString& id, bool pending, bool failed) {
+    if (!db_.isOpen() || id.isEmpty()) return;
+    QSqlQuery query(db_);
+    query.prepare(QStringLiteral("UPDATE im_group_messages SET pending=?, failed=? WHERE id=?"));
+    query.addBindValue(pending ? 1 : 0);
+    query.addBindValue(failed ? 1 : 0);
+    query.addBindValue(id);
     query.exec();
 }

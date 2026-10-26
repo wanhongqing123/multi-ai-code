@@ -48,11 +48,25 @@ public final class RemoteIMSessionController {
         void onFinished(MaiChatAuthClient.SocialLoginResult result, String error);
     }
 
+    public interface GroupCreationCompletion {
+        void onFinished(RemoteIMGroup group, boolean activated,
+                        boolean newlyCreated, String error);
+    }
+
+    public interface GroupSendCompletion {
+        void onFinished(RemoteIMGroupMessage message, String error);
+    }
+
+    public interface GroupHistoryCompletion {
+        void onFinished(String error);
+    }
+
     private final LocalSettingsStore settingsStore;
     private final MaiChatAuthClient authClient;
     private final LocalChatHistoryStore legacyHistoryStore;
     private final AndroidChatHistoryStore historyStore;
     private final TencentIMClient client;
+    private final RemoteIMGroupCreationCoordinator groupCreation;
     private final RemoteDesktopController remoteDesktop;
     private final Listener listener;
     private final Handler mainHandler;
@@ -82,6 +96,20 @@ public final class RemoteIMSessionController {
     private final Map<String, String> friendAccountByIm = new HashMap<>();
     private final Map<String, String> friendDisplayByIm = new HashMap<>();
     private final Map<String, String> friendRequestIdByIm = new HashMap<>();
+    private final Map<String, RemoteIMGroup> groupsById = new java.util.LinkedHashMap<>();
+    private final Map<String, List<RemoteIMGroupMessage>> groupMessagesById = new HashMap<>();
+    private final Map<String, Integer> unreadByGroupId = new HashMap<>();
+    private final Map<String, Boolean> hasEarlierByGroupId = new HashMap<>();
+    private final Map<String, String> groupHistoryCursorById = new HashMap<>();
+    private final java.util.Set<String> loadingGroupIds = new java.util.HashSet<>();
+    private final Map<String, Integer> groupPageRequests = new HashMap<>();
+    private final Map<String, String> groupSenderNames = new HashMap<>();
+    private final java.util.Set<String> requestedGroupSenderNames = new java.util.HashSet<>();
+    private final java.util.Set<String> synchronizedGroupIds = new java.util.HashSet<>();
+    private final Map<String, List<GroupHistoryCompletion>> groupHistoryWaiters = new HashMap<>();
+    private final Map<String, GroupSendCompletion> groupSendWaiters = new HashMap<>();
+    private String visibleGroupId = "";
+    private int groupMembershipRequest;
     private interface IOAction { void run() throws Exception; }
 
     private TencentIMClient.ConnectionState connectionState = TencentIMClient.ConnectionState.DISCONNECTED;
@@ -129,6 +157,7 @@ public final class RemoteIMSessionController {
         this.legacyHistoryStore = historyStore;
         this.historyStore = null;
         this.client = null;
+        this.groupCreation = null;
         this.remoteDesktop = null;
         this.listener = null;
         this.mainHandler = null;
@@ -154,6 +183,16 @@ public final class RemoteIMSessionController {
             reportError(message);
         }));
         this.client = new TencentIMClient(applicationContext, new ClientListener());
+        this.groupCreation = new RemoteIMGroupCreationCoordinator((name,members,completion) ->
+            client.createGroup(name,members,new TencentIMClient.GroupCreationCompletion() {
+                @Override public void onCreated(RemoteIMGroup group,boolean activated,
+                                                 String activationError) {
+                    runOnMain(() -> completion.onCreated(group,activated,activationError));
+                }
+                @Override public void onError(int code,String message) {
+                    runOnMain(() -> completion.onError(code,message));
+                }
+            }));
         this.remoteDesktop = new RemoteDesktopController(
             applicationContext,
             client,
@@ -178,9 +217,14 @@ public final class RemoteIMSessionController {
             }
             RemoteIMSettings accountToRestore = restoredSettings;
             ChatState restored = readProductionChatState(accountToRestore);
+            List<RemoteIMGroup> restoredGroups = accountToRestore.requiresLogin()
+                ? Collections.emptyList() : historyStore.loadGroups(accountToRestore.loginUserId());
+            List<RemoteIMGroupMessage> groupSummaries = accountToRestore.requiresLogin()
+                ? Collections.emptyList() : historyStore.loadGroupSummaries(accountToRestore.loginUserId());
             runOnMain(() -> {
                 if (generation != accountGeneration) return;
                 settings = accountToRestore; chatState = restored; restoringAccount = false;
+                restoreGroupCache(restoredGroups, groupSummaries);
                 AIAssistantController.configureAccount(accountToRestore.loginUserId());
                 notifyStateChanged();
                 if (!requiresLogin()) connect();
@@ -230,6 +274,20 @@ public final class RemoteIMSessionController {
         oldestLoadedCreatedAtByUserId.clear(); oldestLoadedMessageIdByUserId.clear();
         loadingPeers.clear(); pageRequests.clear(); peerEpochs.clear(); pendingVideoMedia.clear(); mediaRevision++;
         visibleConversationUserId = "";
+        visibleGroupId = "";
+        groupsById.clear(); groupMessagesById.clear(); unreadByGroupId.clear();
+        hasEarlierByGroupId.clear(); groupHistoryCursorById.clear();
+        loadingGroupIds.clear(); groupPageRequests.clear();
+        synchronizedGroupIds.clear();
+        groupSenderNames.clear(); requestedGroupSenderNames.clear();
+        for (List<GroupHistoryCompletion> waiters : groupHistoryWaiters.values())
+            for (GroupHistoryCompletion completion : waiters) completion.onFinished("账号已切换");
+        groupHistoryWaiters.clear();
+        for (GroupSendCompletion completion : groupSendWaiters.values())
+            completion.onFinished(null,"账号已切换");
+        groupSendWaiters.clear();
+        groupMembershipRequest++;
+        if (groupCreation != null) groupCreation.reset();
         restoringAccount = !next.requiresLogin();
         scheduleSessionValidation();
         if (next.requiresLogin()) {
@@ -242,9 +300,12 @@ public final class RemoteIMSessionController {
             settingsStore.save(next);
             if (next.requiresLogin()) return;
             ChatState restored = readProductionChatState(next);
+            List<RemoteIMGroup> restoredGroups = historyStore.loadGroups(next.loginUserId());
+            List<RemoteIMGroupMessage> groupSummaries = historyStore.loadGroupSummaries(next.loginUserId());
             runOnMain(() -> {
                 if (generation != accountGeneration) return;
                 chatState = restored; restoringAccount = false;
+                restoreGroupCache(restoredGroups, groupSummaries);
                 connect(); notifyStateChanged();
                 scheduleSessionValidation();
             });
@@ -356,6 +417,352 @@ public final class RemoteIMSessionController {
         for (RemoteIMContact contact : chatState.contacts())
             if (acceptedFriendUserIds.contains(contact.userId())) result.add(contact);
         return result;
+    }
+
+    private void restoreGroupCache(List<RemoteIMGroup> groups,
+                                   List<RemoteIMGroupMessage> summaries) {
+        groupsById.clear(); groupMessagesById.clear();
+        for (RemoteIMGroup group : groups) groupsById.put(group.groupId(), group);
+        for (RemoteIMGroupMessage message : summaries) {
+            if (!groupsById.containsKey(message.groupId())) continue;
+            if (message.status() == RemoteIMGroupMessage.Status.PENDING) {
+                message.updateDelivery("",RemoteIMGroupMessage.Status.FAILED);
+                persistGroupMessage(message);
+            }
+            mergeGroupMessage(message);
+        }
+    }
+
+    public List<RemoteIMGroup> groups() {
+        return new ArrayList<>(groupsById.values());
+    }
+
+    public RemoteIMGroup group(String groupId) { return groupsById.get(clean(groupId)); }
+
+    public boolean groupTransportReady() {
+        return productionMode && !requiresLogin()
+            && connectionState == TencentIMClient.ConnectionState.CONNECTED
+            && client.isLoggedIn();
+    }
+
+    public String groupSenderName(String userId) {
+        for (RemoteIMContact contact : chatState.contacts())
+            if (contact.userId().equals(userId)) return contact.displayName();
+        return groupSenderNames.getOrDefault(userId,userId);
+    }
+
+    private void refreshGroupSenderNames(List<RemoteIMGroupMessage> messages) {
+        if (!productionMode || connectionState != TencentIMClient.ConnectionState.CONNECTED) return;
+        List<String> missing = new ArrayList<>();
+        for (RemoteIMGroupMessage message : messages) {
+            String sender = message.senderId();
+            if (sender.equals(chatState.ownerUserId()) || groupSenderNames.containsKey(sender)
+                || !requestedGroupSenderNames.add(sender)) continue;
+            boolean known = false;
+            for (RemoteIMContact contact : chatState.contacts())
+                if (contact.userId().equals(sender)) { known = true; break; }
+            if (!known) missing.add(sender);
+        }
+        if (missing.isEmpty()) return;
+        int generation = accountGeneration;
+        client.groupSenderProfiles(missing,names -> runOnMain(() -> {
+            if (generation != accountGeneration) return;
+            groupSenderNames.putAll(names);
+            for (String sender : missing) if (!names.containsKey(sender))
+                requestedGroupSenderNames.remove(sender);
+            notifyStateChanged();
+        }));
+    }
+
+    public List<RemoteIMGroupMessage> groupMessages(String groupId) {
+        return Collections.unmodifiableList(new ArrayList<>(
+            groupMessagesById.getOrDefault(clean(groupId), Collections.emptyList())));
+    }
+
+    public RemoteIMGroupMessage latestGroupMessage(String groupId) {
+        List<RemoteIMGroupMessage> messages = groupMessagesById.get(clean(groupId));
+        return messages == null || messages.isEmpty() ? null : messages.get(messages.size() - 1);
+    }
+
+    public int groupUnreadCount(String groupId) {
+        return unreadByGroupId.getOrDefault(clean(groupId), 0);
+    }
+
+    public boolean hasEarlierGroupMessages(String groupId) {
+        return hasEarlierByGroupId.getOrDefault(clean(groupId), false);
+    }
+
+    public boolean isLoadingGroupMessages(String groupId) {
+        return loadingGroupIds.contains(clean(groupId));
+    }
+
+    public void setGroupConversationVisible(String groupId, boolean visible) {
+        String id = clean(groupId);
+        if (visible) {
+            visibleGroupId = id;
+            unreadByGroupId.remove(id);
+        } else if (visibleGroupId.equals(id)) visibleGroupId = "";
+        notifyStateChanged();
+    }
+
+    public void refreshJoinedGroups() {
+        if (!groupTransportReady()) return;
+        int generation = accountGeneration;
+        int request = ++groupMembershipRequest;
+        String owner = chatState.ownerUserId();
+        client.joinedGroups(new TencentIMClient.GroupsCompletion() {
+            @Override public void onSuccess(List<RemoteIMGroup> groups) {
+                runOnMain(() -> {
+                    if (generation != accountGeneration || request != groupMembershipRequest
+                        || !owner.equals(chatState.ownerUserId())) return;
+                    java.util.Set<String> joined = new java.util.HashSet<>();
+                    for (RemoteIMGroup group : groups) {
+                        joined.add(group.groupId());
+                        RemoteIMGroup existing = groupsById.get(group.groupId());
+                        groupsById.put(group.groupId(), existing != null && existing.pendingActivation()
+                            ? group.withPendingActivation(true) : group);
+                    }
+                    for (RemoteIMGroup pending : new ArrayList<>(groupsById.values()))
+                        if (pending.pendingActivation()) joined.add(pending.groupId());
+                    groupsById.keySet().removeIf(groupId -> !joined.contains(groupId));
+                    groupMessagesById.keySet().removeIf(groupId -> !joined.contains(groupId));
+                    unreadByGroupId.keySet().removeIf(groupId -> !joined.contains(groupId));
+                    if (!joined.contains(visibleGroupId)) visibleGroupId = "";
+                    List<RemoteIMGroup> snapshot = new ArrayList<>(groupsById.values());
+                    enqueueIO(() -> historyStore.replaceGroups(owner, snapshot));
+                    notifyStateChanged();
+                    int requested = 0;
+                    for (RemoteIMGroup group : groups) {
+                        if (requested >= 20) break;
+                        if (synchronizedGroupIds.add(group.groupId())) {
+                            loadGroupMessages(group.groupId(), true);
+                            requested++;
+                        }
+                    }
+                });
+            }
+            @Override public void onError(int code, String message) {
+                android.util.Log.w("MaiChat.im", "joined group refresh failed: " + code);
+            }
+        });
+    }
+
+    public void createGroup(String name, List<String> memberUserIds,
+                            GroupCreationCompletion completion) {
+        if (!productionMode || groupCreation == null) {
+            completion.onFinished(null,false,false,"IM 尚未连接"); return;
+        }
+        int generation = accountGeneration;
+        String owner = chatState.ownerUserId();
+        groupCreation.create(name,memberUserIds,acceptedFriendUserIds,owner,
+            groupTransportReady(),
+            groupsById.values(),(group,activated,newlyCreated,error) -> {
+                if (generation != accountGeneration || !owner.equals(chatState.ownerUserId())) {
+                    completion.onFinished(null,false,false,"账号已切换");
+                    return;
+                }
+                if (group != null && newlyCreated) {
+                    groupMembershipRequest++;
+                    groupsById.put(group.groupId(),group);
+                    enqueueIO(() -> historyStore.upsertGroup(owner,group));
+                    notifyStateChanged();
+                }
+                completion.onFinished(group,activated,newlyCreated,error);
+            });
+    }
+
+    public RemoteIMGroupMessage sendGroupText(String groupId, String text) {
+        return sendGroupText(groupId,text,null);
+    }
+
+    public RemoteIMGroupMessage sendGroupText(String groupId, String text,
+                                               GroupSendCompletion completion) {
+        String id = clean(groupId), body = clean(text);
+        if (!groupsById.containsKey(id) || body.isEmpty() || !groupTransportReady()) {
+            reportError("群聊未连接或消息为空");
+            if (completion != null) completion.onFinished(null,"群聊未连接或消息为空");
+            return null;
+        }
+        int generation = accountGeneration;
+        String owner = chatState.ownerUserId();
+        RemoteIMGroupMessage queued = new RemoteIMGroupMessage(null, "", id, owner,
+            body, System.currentTimeMillis(), RemoteIMGroupMessage.Status.PENDING);
+        if (completion != null) groupSendWaiters.put(queued.id(),completion);
+        mergeGroupMessage(queued);
+        persistGroupMessage(queued);
+        notifyStateChanged();
+        client.sendGroupText(id, body, new TencentIMClient.SendCompletion() {
+            @Override public void onSuccess(String remoteId, long createdAtMillis) {
+                runOnMain(() -> {
+                    GroupSendCompletion waiter = groupSendWaiters.remove(queued.id());
+                    if (generation != accountGeneration || !owner.equals(chatState.ownerUserId())) return;
+                    List<RemoteIMGroupMessage> messages = groupMessagesById.get(id);
+                    if (messages == null) {
+                        queued.updateDelivery(remoteId,RemoteIMGroupMessage.Status.SENT);
+                        if (waiter != null) enqueueIO(() -> waiter.onFinished(queued,null));
+                        return;
+                    }
+                    if (!remoteId.isEmpty() && messages.stream().anyMatch(message ->
+                        !message.id().equals(queued.id()) && remoteId.equals(message.remoteId()))) {
+                        messages.removeIf(message -> message.id().equals(queued.id()));
+                        enqueueIO(() -> historyStore.deleteGroupMessage(owner,queued.id()));
+                    } else {
+                        queued.updateDelivery(remoteId, RemoteIMGroupMessage.Status.SENT);
+                        persistGroupMessage(queued);
+                    }
+                    RemoteIMGroup group = groupsById.get(id);
+                    if (group != null && group.pendingActivation()) {
+                        RemoteIMGroup activatedGroup = group.withPendingActivation(false);
+                        groupsById.put(id, activatedGroup);
+                        enqueueIO(() -> historyStore.upsertGroup(owner,activatedGroup));
+                    }
+                    notifyStateChanged();
+                    if (waiter != null) {
+                        RemoteIMGroupMessage delivered = queued;
+                        for (RemoteIMGroupMessage message : messages)
+                            if (!remoteId.isEmpty() && remoteId.equals(message.remoteId())) {
+                                delivered = message; break;
+                            }
+                        RemoteIMGroupMessage receipt = delivered;
+                        // The Agent response may end this Activity immediately. Drain the
+                        // per-account DB queue before claiming the SDK-acknowledged send.
+                        enqueueIO(() -> waiter.onFinished(receipt,null));
+                    }
+                });
+            }
+            @Override public void onError(int code, String message) {
+                runOnMain(() -> {
+                    GroupSendCompletion waiter = groupSendWaiters.remove(queued.id());
+                    if (generation != accountGeneration || !owner.equals(chatState.ownerUserId())) return;
+                    queued.updateDelivery("", RemoteIMGroupMessage.Status.FAILED);
+                    persistGroupMessage(queued);
+                    notifyStateChanged();
+                    reportError(message);
+                    if (waiter != null) enqueueIO(() -> waiter.onFinished(queued,message));
+                });
+            }
+        });
+        return queued;
+    }
+
+    public void loadGroupMessages(String groupId, boolean initial) {
+        loadGroupMessages(groupId, initial, null);
+    }
+
+    public void loadGroupMessages(String groupId, boolean initial,
+                                  GroupHistoryCompletion completion) {
+        String id = clean(groupId);
+        if (!groupsById.containsKey(id)) {
+            if (completion != null) completion.onFinished("找不到此群聊");
+            return;
+        }
+        if (completion != null) groupHistoryWaiters.computeIfAbsent(id,
+            ignored -> new ArrayList<>()).add(completion);
+        if (loadingGroupIds.contains(id)) return;
+        int generation = accountGeneration;
+        String owner = chatState.ownerUserId();
+        int request = groupPageRequests.getOrDefault(id, 0) + 1;
+        groupPageRequests.put(id, request);
+        loadingGroupIds.add(id);
+        notifyStateChanged();
+        if (initial) {
+            enqueueIO(() -> {
+                List<RemoteIMGroupMessage> cached = historyStore.loadGroupPage(owner,id,null,null,20);
+                runOnMain(() -> {
+                    if (generation != accountGeneration || groupPageRequests.getOrDefault(id,0) != request) return;
+                    for (RemoteIMGroupMessage message : cached) mergeGroupMessage(message);
+                    if (!groupTransportReady()) {
+                        loadingGroupIds.remove(id);
+                        hasEarlierByGroupId.put(id,cached.size() == 20);
+                    }
+                    notifyStateChanged();
+                    if (!groupTransportReady())
+                        finishGroupHistoryWaiters(id,null);
+                });
+            });
+        }
+        if (!groupTransportReady()) {
+            if (!initial) loadEarlierCachedGroupMessages(id, owner, generation, request);
+            return;
+        }
+        String cursor = initial ? null : groupHistoryCursorById.get(id);
+        if (!initial && (cursor == null || cursor.isEmpty())) {
+            loadingGroupIds.remove(id);
+            hasEarlierByGroupId.put(id, false);
+            notifyStateChanged();
+            finishGroupHistoryWaiters(id,null);
+            return;
+        }
+        client.groupHistory(id, cursor, new TencentIMClient.GroupHistoryCompletion() {
+            @Override public void onSuccess(TencentIMClient.GroupHistoryPage page) {
+                runOnMain(() -> {
+                    if (generation != accountGeneration || groupPageRequests.getOrDefault(id,0) != request) return;
+                    loadingGroupIds.remove(id);
+                    for (RemoteIMGroupMessage message : page.messages()) {
+                        mergeGroupMessage(message); persistGroupMessage(message);
+                    }
+                    refreshGroupSenderNames(page.messages());
+                    groupHistoryCursorById.put(id, page.nextCursor() == null ? "" : page.nextCursor());
+                    hasEarlierByGroupId.put(id, page.hasMore());
+                    notifyStateChanged();
+                    finishGroupHistoryWaiters(id,null);
+                });
+            }
+            @Override public void onError(int code, String message) {
+                runOnMain(() -> {
+                    if (generation != accountGeneration || groupPageRequests.getOrDefault(id,0) != request) return;
+                    loadingGroupIds.remove(id);
+                    reportError(message);
+                    notifyStateChanged();
+                    finishGroupHistoryWaiters(id,message);
+                });
+            }
+        });
+    }
+
+    private void loadEarlierCachedGroupMessages(String groupId, String owner,
+                                                 int generation, int request) {
+        List<RemoteIMGroupMessage> loaded = groupMessagesById.getOrDefault(groupId,Collections.emptyList());
+        RemoteIMGroupMessage oldest = loaded.isEmpty() ? null : loaded.get(0);
+        enqueueIO(() -> {
+            List<RemoteIMGroupMessage> page = historyStore.loadGroupPage(owner,groupId,
+                oldest == null ? null : oldest.createdAtMillis(),oldest == null ? null : oldest.id(),20);
+            runOnMain(() -> {
+                if (generation != accountGeneration || groupPageRequests.getOrDefault(groupId,0) != request) return;
+                loadingGroupIds.remove(groupId);
+                for (RemoteIMGroupMessage message : page) mergeGroupMessage(message);
+                hasEarlierByGroupId.put(groupId,page.size() == 20);
+                notifyStateChanged();
+                finishGroupHistoryWaiters(groupId,null);
+            });
+        });
+    }
+
+    private void finishGroupHistoryWaiters(String groupId, String error) {
+        List<GroupHistoryCompletion> waiters = groupHistoryWaiters.remove(groupId);
+        if (waiters != null) for (GroupHistoryCompletion completion : waiters)
+            completion.onFinished(error);
+    }
+
+    private boolean mergeGroupMessage(RemoteIMGroupMessage incoming) {
+        List<RemoteIMGroupMessage> messages = groupMessagesById.computeIfAbsent(incoming.groupId(),
+            ignored -> new ArrayList<>());
+        for (RemoteIMGroupMessage current : messages) {
+            if (current.id().equals(incoming.id()) || (!incoming.remoteId().isEmpty()
+                && incoming.remoteId().equals(current.remoteId()))) return false;
+        }
+        messages.add(incoming);
+        messages.sort((left,right) -> {
+            int byTime = Long.compare(left.createdAtMillis(),right.createdAtMillis());
+            return byTime == 0 ? left.id().compareTo(right.id()) : byTime;
+        });
+        return true;
+    }
+
+    private void persistGroupMessage(RemoteIMGroupMessage message) {
+        if (!productionMode) return;
+        String owner = chatState.ownerUserId();
+        enqueueIO(() -> historyStore.upsertGroupMessage(owner,message));
     }
 
     public ChatState chatState() {
@@ -1239,6 +1646,7 @@ public final class RemoteIMSessionController {
     public int totalUnreadCount() {
         int total = 0;
         for (int count : unreadByUserId.values()) total += count;
+        for (int count : unreadByGroupId.values()) total += count;
         return total;
     }
 
@@ -1724,6 +2132,7 @@ public final class RemoteIMSessionController {
             runOnMain(() -> {
                 if (state != TencentIMClient.ConnectionState.CONNECTED) {
                     resetActivities();
+                    synchronizedGroupIds.clear();
                     if (listener != null) listener.onActivityChanged(visibleConversationUserId);
                 }
                 connectionState = state;
@@ -1740,6 +2149,7 @@ public final class RemoteIMSessionController {
                         AvatarImageLoader.prefetch(contact.avatarUrl());
                     refreshContactMetadata();
                     refreshAcceptedFriends();
+                    refreshJoinedGroups();
                 }
                 notifyStateChanged();
             });
@@ -1782,6 +2192,25 @@ public final class RemoteIMSessionController {
         @Override
         public void onIncomingMessage(RemoteIMMessage message) {
             runOnMain(() -> receive(message));
+        }
+
+        @Override public void onGroupMembershipChanged() {
+            runOnMain(RemoteIMSessionController.this::refreshJoinedGroups);
+        }
+
+        @Override public void onIncomingGroupText(String ownerUserId, RemoteIMGroupMessage message) {
+            runOnMain(() -> {
+                if (requiresLogin() || !ownerUserId.equals(chatState.ownerUserId())) return;
+                boolean inserted = mergeGroupMessage(message);
+                if (!inserted) return;
+                persistGroupMessage(message);
+                refreshGroupSenderNames(Collections.singletonList(message));
+                if (!message.senderId().equals(chatState.ownerUserId())
+                    && !message.groupId().equals(visibleGroupId))
+                    unreadByGroupId.put(message.groupId(),groupUnreadCount(message.groupId()) + 1);
+                if (!groupsById.containsKey(message.groupId())) refreshJoinedGroups();
+                notifyStateChanged();
+            });
         }
 
         @Override

@@ -24,6 +24,26 @@ public:
                             const QString& jsonMessage,
                             TimSdkCompletion completion) = 0;
     virtual int getConversationList(TimSdkCompletion completion) = 0;
+    virtual int createGroup(const QString& request, TimSdkCompletion completion) {
+        Q_UNUSED(request);
+        if (completion) completion(-1, QStringLiteral("Group API unavailable"), {});
+        return -1;
+    }
+    virtual int getJoinedGroupList(TimSdkCompletion completion) {
+        if (completion) completion(-1, QStringLiteral("Group API unavailable"), {});
+        return -1;
+    }
+    virtual int getGroupInfoList(const QString& request, TimSdkCompletion completion) {
+        Q_UNUSED(request);
+        if (completion) completion(-1, QStringLiteral("Group detail API unavailable"), {});
+        return -1;
+    }
+    virtual int cleanConversationUnread(const QString& conversationId,
+                                        TimSdkCompletion completion) {
+        Q_UNUSED(conversationId);
+        if (completion) completion(-1, QStringLiteral("Read-state API unavailable"), {});
+        return -1;
+    }
     virtual int getFriendList(TimSdkCompletion completion) = 0;
     virtual int getUserProfiles(const QString& request, TimSdkCompletion completion) {
         Q_UNUSED(request);

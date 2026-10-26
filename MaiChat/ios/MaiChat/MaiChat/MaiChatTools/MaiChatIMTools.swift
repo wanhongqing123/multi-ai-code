@@ -68,6 +68,110 @@ extension AIMobileHostToolProvider {
         return jsonSuccess(["contacts": Array(contacts), "count": contacts.count])
     }
 
+    static func listGroups(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) -> AIMaiChatHostToolExecution {
+        let query = string(arguments, key: "query")
+        let limit = boundedLimit(arguments)
+        let groups = appState.groups.lazy.filter { group in
+            query.isEmpty || group.groupID.localizedCaseInsensitiveContains(query)
+                || group.name.localizedCaseInsensitiveContains(query)
+        }.prefix(limit).map { group in
+            [
+                "group_id": group.groupID,
+                "name": group.name,
+                "member_count": group.memberCount,
+                "unread_count": appState.unreadCountByGroupID[group.groupID] ?? 0,
+                "pending_activation": appState.groupCreationRecovery?.groupID == group.groupID,
+            ] as [String: Any]
+        }
+        return jsonSuccess(["groups": Array(groups), "count": groups.count])
+    }
+
+    func createGroup(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        guard appState.connectionState == .connected else {
+            return .failure(code: "not_configured", message: "MaiChat IM is not connected")
+        }
+        if let pending = appState.groupCreationRecovery {
+            return Self.jsonSuccess([
+                "created": false,
+                "group_id": pending.groupID,
+                "name": pending.name,
+                "member_count": pending.memberCount,
+                "pending_activation": true,
+                "next_step": "Open this existing group and send one text message; do not create it again.",
+            ])
+        }
+        let name = Self.string(arguments, key: "name")
+        guard !name.isEmpty, name.count <= 30, name.lengthOfBytes(using: .utf8) <= 100,
+              let rawMembers = arguments["member_ids"] as? [String],
+              (1...19).contains(rawMembers.count) else {
+            return .failure(code: "invalid_input", message: "name and 1 to 19 member_ids are required")
+        }
+        let members = rawMembers.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard members.allSatisfy({ !$0.isEmpty && $0 != appState.maiChatAccountID }),
+              Set(members).count == members.count else {
+            return .failure(code: "invalid_input", message: "member_ids must be unique friends excluding the owner")
+        }
+        await appState.refreshAcceptedFriends()
+        guard members.allSatisfy(appState.acceptedFriendIMIDs.contains) else {
+            return .failure(code: "invalid_input", message: "every member_id must be an accepted MaiChat friend")
+        }
+        guard let group = await appState.createGroup(name: name, memberUserIDs: members) else {
+            if let pending = appState.groupCreationRecovery {
+                return Self.jsonSuccess([
+                    "created": true,
+                    "group_id": pending.groupID,
+                    "name": pending.name,
+                    "member_count": pending.memberCount,
+                    "pending_activation": true,
+                    "next_step": "Send one text message to this group to notify its members; do not create it again.",
+                ])
+            }
+            return .failure(code: "network",
+                            message: appState.errorMessage ?? "MaiChat group creation failed")
+        }
+        return Self.jsonSuccess([
+            "created": true,
+            "group_id": group.groupID,
+            "name": group.name,
+            "member_count": group.memberCount,
+            "pending_activation": false,
+        ])
+    }
+
+    func getGroupMessages(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let groupID = Self.string(arguments, key: "group_id")
+        guard appState.groups.contains(where: { $0.groupID == groupID }) else {
+            return .failure(code: "not_found", message: "group_id is not a joined MaiChat group")
+        }
+        let limit = min(Self.boundedLimit(arguments, fallback: 20), 20)
+        let messages = await appState.groupMessagesForHostTool(groupID: groupID, limit: limit)
+        let values: [[String: Any]] = messages.map { message in
+            [
+                "id": message.id.uuidString,
+                "remote_id": message.remoteID ?? "",
+                "group_id": groupID,
+                "sender_id": message.fromUserID,
+                "direction": message.direction == .incoming ? "incoming" : "outgoing",
+                "text": message.text,
+                "created_at_ms": Int64((message.createdAt.timeIntervalSince1970 * 1_000).rounded()),
+                "status": message.status.rawValue,
+            ]
+        }
+        return Self.jsonSuccess(["group_id": groupID,
+                                 "messages": values, "count": values.count])
+    }
+
     static func listConversations(
         appState: RemoteIMAppState,
         arguments: [String: Any]
@@ -162,6 +266,32 @@ extension AIMobileHostToolProvider {
             "sent": true,
             "peer_id": peerID,
             "message_id": appState.locallyQueuedMessageID?.uuidString ?? "",
+        ])
+    }
+
+    func sendGroupText(
+        appState: RemoteIMAppState,
+        arguments: [String: Any]
+    ) async -> AIMaiChatHostToolExecution {
+        let groupID = Self.string(arguments, key: "group_id")
+        let text = Self.string(arguments, key: "text")
+        guard !text.isEmpty, appState.connectionState == .connected,
+              appState.groups.contains(where: { $0.groupID == groupID }) else {
+            return .failure(code: "invalid_input", message: "joined group_id and text are required")
+        }
+        var queuedID: UUID?
+        guard await appState.sendGroupText(text, to: groupID,
+                                           onQueued: { queuedID = $0 }) else {
+            return .failure(code: "network",
+                            message: appState.errorMessage ?? "MaiChat did not send the group message")
+        }
+        let sentMessage = queuedID.flatMap { appState.chatState.message(id: $0) }
+        return Self.jsonSuccess([
+            "queued": true,
+            "sent": true,
+            "group_id": groupID,
+            "message_id": sentMessage?.id.uuidString ?? "",
+            "remote_id": sentMessage?.remoteID ?? "",
         ])
     }
 

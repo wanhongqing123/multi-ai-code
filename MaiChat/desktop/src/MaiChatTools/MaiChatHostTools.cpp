@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
@@ -17,6 +18,7 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QThread>
+#include <QTimer>
 #include <QUuid>
 
 #include <algorithm>
@@ -43,6 +45,10 @@ enum class HostToolKind {
   SendMedia,
   ReplyMessage,
   BroadcastText,
+  ListGroups,
+  CreateGroup,
+  GetGroupMessages,
+  SendGroupText,
 };
 
 std::string toStdString(const QByteArray &bytes) {
@@ -166,6 +172,9 @@ public:
     QString parseError;
     if (!parseObject(argumentsJson, &arguments, &parseError))
       return invalidInput(parseError);
+    if ((mKind == HostToolKind::CreateGroup || mKind == HostToolKind::SendGroupText) &&
+        context.isCanceled())
+      return MaiToolResult::failure(MaiErrorCode::Canceled, "group operation was canceled");
     if (mKind == HostToolKind::SendMedia)
       return sendMedia(arguments, context);
     return onApplicationThread(mApp, [&](RemoteIMApplication &app) {
@@ -192,6 +201,14 @@ public:
         return replyMessage(app, arguments);
       case HostToolKind::BroadcastText:
         return broadcastText(app, arguments);
+      case HostToolKind::ListGroups:
+        return listGroups(app, arguments);
+      case HostToolKind::CreateGroup:
+        return createGroup(app, arguments);
+      case HostToolKind::GetGroupMessages:
+        return getGroupMessages(app, arguments);
+      case HostToolKind::SendGroupText:
+        return sendGroupText(app, arguments);
       }
       return MaiToolResult::failure(MaiErrorCode::Internal,
                                     "unknown MaiChat host tool");
@@ -341,6 +358,200 @@ private:
     }
     return jsonResult({{QStringLiteral("contacts"), contacts},
                        {QStringLiteral("count"), contacts.size()}});
+  }
+
+  static MaiToolResult listGroups(RemoteIMApplication &app,
+                                  const QJsonObject &arguments) {
+    const QString query = arguments.value(QStringLiteral("query")).toString().trimmed();
+    const int limit = boundedLimit(arguments);
+    QJsonArray values;
+    for (const RemoteIMGroup& group : app.groups()) {
+      if (!query.isEmpty() && !group.name.contains(query, Qt::CaseInsensitive) &&
+          !group.groupId.contains(query, Qt::CaseInsensitive)) continue;
+      values.append(QJsonObject{{QStringLiteral("group_id"), group.groupId},
+                                {QStringLiteral("name"), group.name},
+                                {QStringLiteral("member_count"), group.memberCount},
+                                {QStringLiteral("pending_activation"), group.pendingActivation},
+                                {QStringLiteral("unread_count"), app.groupUnreadCount(group.groupId)}});
+      if (values.size() >= limit) break;
+    }
+    return jsonResult({{QStringLiteral("groups"), values},
+                       {QStringLiteral("count"), values.size()}});
+  }
+
+  static MaiToolResult createGroup(RemoteIMApplication &app,
+                                   const QJsonObject &arguments) {
+    for (const RemoteIMGroup& group : app.groups()) {
+      if (!group.pendingActivation) continue;
+      return jsonResult({{QStringLiteral("created"), false},
+                         {QStringLiteral("group_id"), group.groupId},
+                         {QStringLiteral("name"), group.name},
+                         {QStringLiteral("member_count"), group.memberCount},
+                         {QStringLiteral("pending_activation"), true},
+                         {QStringLiteral("next_step"), QStringLiteral(
+                             "Open this existing group and send one text message; do not create it again.")}});
+    }
+    const QString name = arguments.value(QStringLiteral("name")).toString().trimmed();
+    const QJsonArray rawMembers = arguments.value(QStringLiteral("member_ids")).toArray();
+    if (name.isEmpty() || name.size() > 30 || name.toUtf8().size() > 100 || rawMembers.size() < 1 ||
+        rawMembers.size() > 19)
+      return invalidInput(QStringLiteral("name must be <=100 UTF-8 bytes and member_ids must contain 1..19 friends"));
+    QStringList members;
+    for (const QJsonValue& value : rawMembers) {
+      if (!value.isString()) return invalidInput(QStringLiteral("member_ids must contain strings"));
+      const QString id = value.toString().trimmed();
+      if (id.isEmpty() || id == app.chatState().ownerUserId() || members.contains(id) ||
+          !hasContact(app.chatState(), id) || !app.isAcceptedFriend(id))
+        return invalidInput(QStringLiteral("member_ids must be distinct accepted friends other than self"));
+      members.append(id);
+    }
+    if (!app.isConnected())
+      return MaiToolResult::failure(MaiErrorCode::NotConfigured, "MaiChat IM is disconnected");
+    struct Result {
+      bool done = false;
+      bool ok = false;
+      QString error;
+      RemoteIMGroup group;
+    };
+    auto result = std::make_shared<Result>();
+    QEventLoop loop;
+    QPointer<QEventLoop> waiting(&loop);
+    app.createGroup(name, members,
+        [result, waiting](bool ok, const QString& error, const RemoteIMGroup& group) {
+      result->done = true;
+      result->ok = ok;
+      result->error = error;
+      result->group = group;
+      if (waiting) waiting->quit();
+    });
+    if (!result->done) {
+      QTimer timer;
+      timer.setSingleShot(true);
+      QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+      timer.start(30000);
+      loop.exec();
+    }
+    if (!result->done)
+      return MaiToolResult::failure(MaiErrorCode::Internal,
+                                    "group creation status is unknown; list groups before retrying");
+    if (!result->ok && !result->group.groupId.isEmpty())
+      return jsonResult({{QStringLiteral("created"), true},
+                         {QStringLiteral("group_id"), result->group.groupId},
+                         {QStringLiteral("name"), result->group.name},
+                         {QStringLiteral("member_count"), result->group.memberCount},
+                         {QStringLiteral("pending_activation"), true},
+                         {QStringLiteral("next_step"), QStringLiteral(
+                             "Send one text message to this group; do not create it again.")},
+                         {QStringLiteral("error"), result->error}});
+    if (!result->ok)
+      return MaiToolResult::failure(MaiErrorCode::Internal,
+          toStdString((result->error.isEmpty() ? QStringLiteral("group creation failed") :
+                       result->error).toUtf8()));
+    return jsonResult({{QStringLiteral("created"), true},
+                       {QStringLiteral("group_id"), result->group.groupId},
+                       {QStringLiteral("name"), result->group.name},
+                       {QStringLiteral("member_count"), result->group.memberCount},
+                       {QStringLiteral("pending_activation"), result->group.pendingActivation}});
+  }
+
+  static MaiToolResult getGroupMessages(RemoteIMApplication &app,
+                                        const QJsonObject &arguments) {
+    const QString id = arguments.value(QStringLiteral("group_id")).toString().trimmed();
+    if (id.isEmpty()) return invalidInput(QStringLiteral("group_id is required"));
+    const auto groups = app.groups();
+    if (std::none_of(groups.cbegin(), groups.cend(), [&id](const auto& group) {
+          return group.groupId == id;
+        })) return invalidInput(QStringLiteral("group_id is not a joined MaiChat group"));
+    if (!app.hasLoadedGroupHistory(id)) {
+      if (!app.isConnected())
+        return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                      "MaiChat IM is disconnected and group history is not loaded");
+      QEventLoop loop;
+      bool finished = false;
+      bool succeeded = false;
+      QObject::connect(&app, &RemoteIMApplication::groupHistoryFinished, &loop,
+                       [&](const QString& groupId, bool ok) {
+        if (groupId != id) return;
+        finished = true;
+        succeeded = ok;
+        loop.quit();
+      });
+      app.ensureGroupHistory(id);
+      if (!app.hasLoadedGroupHistory(id) && !finished) {
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeout.start(30000);
+        loop.exec();
+      }
+      if (!app.hasLoadedGroupHistory(id) || (finished && !succeeded))
+        return MaiToolResult::failure(MaiErrorCode::Internal,
+                                      "group history is still loading or failed; retry this read later");
+    }
+    const int limit = std::clamp(arguments.value(QStringLiteral("limit")).toInt(20), 1, 20);
+    const auto all = app.groupMessages(id);
+    QJsonArray values;
+    for (int i = qMax(0, all.size() - limit); i < all.size(); ++i) {
+      const auto& message = all.at(i);
+      values.append(QJsonObject{{QStringLiteral("id"), message.id},
+                                {QStringLiteral("sender_id"), message.senderId},
+                                {QStringLiteral("direction"),
+                                 message.fromSelf ? QStringLiteral("outgoing") : QStringLiteral("incoming")},
+                                {QStringLiteral("text"), message.text},
+                                {QStringLiteral("remote_id"),
+                                 message.pending || message.failed ? QString() : message.id},
+                                {QStringLiteral("created_at_ms"),
+                                 static_cast<double>(message.createdAtMillis)}});
+    }
+    return jsonResult({{QStringLiteral("group_id"), id},
+                       {QStringLiteral("messages"), values},
+                       {QStringLiteral("count"), values.size()}});
+  }
+
+  static MaiToolResult sendGroupText(RemoteIMApplication &app,
+                                     const QJsonObject &arguments) {
+    const QString id = arguments.value(QStringLiteral("group_id")).toString().trimmed();
+    const QString text = arguments.value(QStringLiteral("text")).toString().trimmed();
+    if (id.isEmpty() || text.isEmpty())
+      return invalidInput(QStringLiteral("group_id and text are required"));
+    QSet<QString> beforeIds;
+    for (const auto& message : app.groupMessages(id)) beforeIds.insert(message.id);
+    if (!app.sendGroupText(id, text))
+      return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                    "MaiChat did not queue the group message");
+    auto findQueued = [&]() {
+      const auto messages = app.groupMessages(id);
+      for (int index = messages.size() - 1; index >= 0; --index) {
+        const auto& message = messages.at(index);
+        if (message.fromSelf && message.text == text && !beforeIds.contains(message.id))
+          return message;
+      }
+      return RemoteIMGroupMessage{};
+    };
+    RemoteIMGroupMessage message = findQueued();
+    const QString queuedId = message.id;
+    if (message.pending) {
+      QEventLoop loop;
+      QTimer timeout;
+      timeout.setSingleShot(true);
+      QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+      QObject::connect(&app, &RemoteIMApplication::groupsChanged, &loop, [&] {
+        message = findQueued();
+        if (!message.pending) loop.quit();
+      });
+      timeout.start(30000);
+      loop.exec();
+      message = findQueued();
+    }
+    if (message.failed)
+      return MaiToolResult::failure(MaiErrorCode::Internal, "group message delivery failed");
+    return jsonResult({{QStringLiteral("queued"), true},
+                       {QStringLiteral("sent"), !message.pending && !message.id.isEmpty()},
+                       {QStringLiteral("group_id"), id},
+                       {QStringLiteral("message_id"),
+                        message.id.isEmpty() ? queuedId : message.id},
+                       {QStringLiteral("remote_id"),
+                        message.pending ? QString() : message.id}});
   }
 
   static MaiToolResult listConversations(RemoteIMApplication &app,
@@ -569,8 +780,8 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
           app, true);
   addTool(
       registry, HostToolKind::ListConversations, "maichat_list_conversations",
-      "List MaiChat conversations ordered by latest message, including unread "
-      "counts.",
+      "List direct MaiChat contact conversations ordered by latest message and unread count. "
+      "Use maichat_list_groups for group conversations.",
       R"({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200}}})",
       app);
   addTool(
@@ -619,4 +830,20 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
       R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
           R"("maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
       app, true);
+  addTool(registry, HostToolKind::ListGroups, "maichat_list_groups",
+          "List joined MaiChat Work groups by name or group ID.",
+          R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false})",
+          app);
+  addTool(registry, HostToolKind::CreateGroup, "maichat_create_group",
+          "Create a MaiChat Work group with accepted friend IDs. Requires approval for each call.",
+          R"({"type":"object","properties":{"name":{"type":"string","minLength":1},"member_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":19,"uniqueItems":true}},"required":["name","member_ids"],"additionalProperties":false})",
+          app, true);
+  addTool(registry, HostToolKind::GetGroupMessages, "maichat_get_group_messages",
+          "Read up to 20 recent text messages from a joined MaiChat group.",
+          R"({"type":"object","properties":{"group_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["group_id"],"additionalProperties":false})",
+          app);
+  addTool(registry, HostToolKind::SendGroupText, "maichat_send_group_text",
+          "Send a text message to a joined MaiChat group. Requires approval for each call.",
+          R"({"type":"object","properties":{"group_id":{"type":"string"},"text":{"type":"string","minLength":1}},"required":["group_id","text"],"additionalProperties":false})",
+          app, true);
 }

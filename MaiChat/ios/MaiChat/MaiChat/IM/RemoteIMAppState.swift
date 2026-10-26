@@ -1740,6 +1740,48 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return Array(chatState.messages(inGroup: groupID).suffix(limit))
     }
 
+    /// Read a joined group's recent text without selecting it or clearing its unread count.
+    func groupMessagesForHostTool(groupID: String, limit: Int) async -> [RemoteIMMessage] {
+        let group = groupID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeLimit = min(max(limit, 1), 20)
+        let account = LocalChatHistoryAccount(
+            sdkAppID: chatHistorySDKAppID,
+            ownerUserID: chatState.ownerUserID
+        )
+        let accountGeneration = historyAccountGeneration
+        let identity = remoteDiagnosticsIdentity
+        guard !group.isEmpty, !account.ownerUserID.isEmpty,
+              groups.contains(where: { $0.groupID == group }) else { return [] }
+
+        if connectionState == .connected {
+            await synchronizeRecentGroupHistory(groupID: group, identity: identity)
+        }
+        _ = await flushHistoryPersistence()
+        guard remoteDiagnosticsIdentity == identity,
+              historyAccountGeneration == accountGeneration,
+              chatState.ownerUserID == account.ownerUserID,
+              chatHistorySDKAppID == account.sdkAppID else { return [] }
+
+        do {
+            let page = try await historyPersistence.loadGroupConversationPage(
+                sdkAppID: account.sdkAppID,
+                ownerUserID: account.ownerUserID,
+                groupID: group,
+                before: nil,
+                limit: safeLimit
+            )
+            guard remoteDiagnosticsIdentity == identity,
+                  historyAccountGeneration == accountGeneration,
+                  chatState.ownerUserID == account.ownerUserID,
+                  chatHistorySDKAppID == account.sdkAppID else { return [] }
+            chatState.mergeMessages(page.messages)
+            return page.messages
+        } catch {
+            recordHistoryLoadFailure(error, operation: "host-tool-group-messages")
+            return []
+        }
+    }
+
     func hasEarlierGroupMessages(groupID: String) -> Bool {
         guard groups.contains(where: { $0.groupID == groupID }) else { return false }
         return groupHistoryStateByID[groupID]?.hasEarlierMessages == true ||
@@ -1747,12 +1789,16 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     @discardableResult
-    func sendGroupText(_ text: String, to groupID: String) async -> Bool {
+    func sendGroupText(
+        _ text: String, to groupID: String,
+        onQueued: ((UUID) -> Void)? = nil
+    ) async -> Bool {
 #if targetEnvironment(simulator)
         if groupUIFixtureMode {
             guard groups.contains(where: { $0.groupID == groupID }) else { return false }
             do {
                 let queued = try chatState.queueOutgoingGroupText(to: groupID, text: text)
+                onQueued?(queued.id)
                 try chatState.updateMessageDelivery(
                     id: queued.id, remoteID: "sim-msg-\(UUID().uuidString)", createdAt: Date()
                 )
@@ -1789,6 +1835,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         do {
             let queued = try chatState.queueOutgoingGroupText(to: groupID, text: text)
             messageID = queued.id
+            onQueued?(queued.id)
             enqueueHistoryUpsert(queued)
             let receipt = try await client.sendGroupText(to: groupID, text: queued.text)
             guard remoteDiagnosticsIdentity == identity else { return false }

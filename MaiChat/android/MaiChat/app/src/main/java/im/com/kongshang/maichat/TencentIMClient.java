@@ -14,6 +14,9 @@ import com.tencent.imsdk.v2.V2TIMFriendApplication;
 import com.tencent.imsdk.v2.V2TIMFriendApplicationResult;
 import com.tencent.imsdk.v2.V2TIMFriendInfo;
 import com.tencent.imsdk.v2.V2TIMFriendOperationResult;
+import com.tencent.imsdk.v2.V2TIMCreateGroupMemberInfo;
+import com.tencent.imsdk.v2.V2TIMGroupInfo;
+import com.tencent.imsdk.v2.V2TIMGroupListener;
 import com.tencent.imsdk.v2.V2TIMImageElem;
 import com.tencent.imsdk.v2.V2TIMManager;
 import com.tencent.imsdk.v2.V2TIMMessage;
@@ -34,6 +37,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Map;
 import java.util.UUID;
@@ -60,6 +64,8 @@ public final class TencentIMClient {
                 String sender, String recipient, String remoteId, RemoteIMVideoAttachment attachment) {}
         void onProfilesUpdated(List<RemoteIMContact> contacts);
         void onPresenceUpdated(Map<String, PresenceStatus> statuses);
+        default void onGroupMembershipChanged() { }
+        default void onIncomingGroupText(String ownerUserId, RemoteIMGroupMessage message) { }
     }
 
     public interface SendCompletion {
@@ -82,6 +88,44 @@ public final class TencentIMClient {
         void onError(int code, String message);
     }
 
+    public interface GroupCreationCompletion {
+        void onCreated(RemoteIMGroup group, boolean activated, String activationError);
+        void onError(int code, String message);
+    }
+
+    public interface GroupsCompletion {
+        void onSuccess(List<RemoteIMGroup> groups);
+        void onError(int code, String message);
+    }
+
+    public interface GroupProfilesCompletion {
+        void onSuccess(Map<String, String> displayNames);
+    }
+
+    public interface GroupHistoryCompletion {
+        void onSuccess(GroupHistoryPage page);
+        void onError(int code, String message);
+    }
+
+    public static final class GroupHistoryPage {
+        private final List<RemoteIMGroupMessage> messages;
+        private final String nextCursor;
+        private final boolean hasMore;
+
+        GroupHistoryPage(List<RemoteIMGroupMessage> messages, String nextCursor, boolean hasMore) {
+            this.messages = Collections.unmodifiableList(messages);
+            this.nextCursor = nextCursor;
+            this.hasMore = hasMore;
+        }
+        public List<RemoteIMGroupMessage> messages() { return messages; }
+        public String nextCursor() { return nextCursor; }
+        public boolean hasMore() { return hasMore; }
+    }
+
+    // Exact iOS Work-group activation wire payload. It only wakes members' joined-group lists.
+    static final byte[] GROUP_ACTIVATION =
+        "{\"type\":\"maichat_group_activation\",\"v\":1}".getBytes(StandardCharsets.UTF_8);
+
     // 日志一律英文：logcat 在不同机器上的编码不一致，中文容易变成乱码，
     // 也不便直接贴进 issue 检索。桌面端 AppLog 用的是同一条约定。
     private static final String TAG = "MaiChat.im";
@@ -99,6 +143,27 @@ public final class TencentIMClient {
             String owner = currentUserId;
             sdkHandler.post(() -> { if (!closed && owner.equals(currentUserId)) handleIncomingMessage(message); });
         }
+    };
+    private final V2TIMGroupListener groupListener = new V2TIMGroupListener() {
+        private void changed() { listener.onGroupMembershipChanged(); }
+        @Override public void onGroupCreated(String groupId) { changed(); }
+        @Override public void onMemberEnter(String groupId,
+                List<com.tencent.imsdk.v2.V2TIMGroupMemberInfo> members) { changed(); }
+        @Override public void onMemberLeave(String groupId,
+                com.tencent.imsdk.v2.V2TIMGroupMemberInfo member) { changed(); }
+        @Override public void onMemberInvited(String groupId,
+                com.tencent.imsdk.v2.V2TIMGroupMemberInfo inviter,
+                List<com.tencent.imsdk.v2.V2TIMGroupMemberInfo> invitees) { changed(); }
+        @Override public void onMemberKicked(String groupId,
+                com.tencent.imsdk.v2.V2TIMGroupMemberInfo operator,
+                List<com.tencent.imsdk.v2.V2TIMGroupMemberInfo> members) { changed(); }
+        @Override public void onGroupDismissed(String groupId,
+                com.tencent.imsdk.v2.V2TIMGroupMemberInfo operator) { changed(); }
+        @Override public void onGroupRecycled(String groupId,
+                com.tencent.imsdk.v2.V2TIMGroupMemberInfo operator) { changed(); }
+        @Override public void onGroupInfoChanged(String groupId,
+                List<com.tencent.imsdk.v2.V2TIMGroupChangeInfo> changes) { changed(); }
+        @Override public void onQuitFromGroup(String groupId) { changed(); }
     };
     private final V2TIMSDKListener sdkListener = new V2TIMSDKListener() {
         @Override
@@ -137,6 +202,7 @@ public final class TencentIMClient {
 
     private Integer initializedSdkAppId;
     private volatile String currentUserId = "";
+    private volatile boolean loginAcknowledged;
     private String profileRequestKey = "";
     private String presenceRequestKey = "";
     private boolean presenceUnsupported;
@@ -162,12 +228,14 @@ public final class TencentIMClient {
             sdkHandler.post(() -> connect(sdkAppId, userId, userSig)); return;
         }
         String cleanUserId = clean(userId);
+        loginAcknowledged = false;
         mediaScope.cancel();
         mediaScope = new MaiChatAttachmentDownload.Scope();
         listener.onConnectionStateChanged(ConnectionState.CONNECTING, "连接中");
         if (initializedSdkAppId == null || initializedSdkAppId != sdkAppId) {
             if (initializedSdkAppId != null) {
                 V2TIMManager.getMessageManager().removeAdvancedMsgListener(messageListener);
+                V2TIMManager.getInstance().removeGroupListener(groupListener);
                 V2TIMManager.getInstance().removeIMSDKListener(sdkListener);
                 V2TIMManager.getInstance().unInitSDK();
             }
@@ -184,12 +252,15 @@ public final class TencentIMClient {
             initializedSdkAppId = sdkAppId;
             V2TIMManager.getInstance().addIMSDKListener(sdkListener);
             V2TIMManager.getMessageManager().addAdvancedMsgListener(messageListener);
+            V2TIMManager.getInstance().addGroupListener(groupListener);
         }
         currentUserId = cleanUserId;
         Log.i(TAG, "connect: sdkAppId=" + sdkAppId + " user=" + cleanUserId);
         V2TIMManager.getInstance().login(cleanUserId, userSig, new V2TIMCallback() {
             @Override
             public void onSuccess() {
+                if (!cleanUserId.equals(currentUserId)) return;
+                loginAcknowledged = true;
                 Log.i(TAG, "login ok: " + cleanUserId);
                 V2TIMUserFullInfo profile = new V2TIMUserFullInfo();
                 profile.setAllowType(V2TIMUserFullInfo.V2TIM_FRIEND_NEED_CONFIRM);
@@ -204,6 +275,7 @@ public final class TencentIMClient {
 
             @Override
             public void onError(int code, String description) {
+                loginAcknowledged = false;
                 Log.w(TAG, "login failed: code=" + code + " " + description);
                 listener.onConnectionStateChanged(
                     ConnectionState.FAILED,
@@ -215,6 +287,7 @@ public final class TencentIMClient {
 
     public void disconnect(OperationCompletion completion) {
         if (closed) return;
+        loginAcknowledged = false;
         mediaScope.cancel();
         if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
             sdkHandler.post(() -> disconnect(completion)); return;
@@ -225,15 +298,19 @@ public final class TencentIMClient {
 
     public void destroy() {
         closed = true; currentUserId = "";
+        loginAcknowledged = false;
         mediaScope.cancel();
         sdkHandler.post(() -> {
             if (initializedSdkAppId != null) {
                 V2TIMManager.getMessageManager().removeAdvancedMsgListener(messageListener);
+                V2TIMManager.getInstance().removeGroupListener(groupListener);
                 V2TIMManager.getInstance().removeIMSDKListener(sdkListener);
             }
             sdkThread.quitSafely();
         });
     }
+
+    public boolean isLoggedIn() { return loginAcknowledged; }
 
     public void sendText(
         String peerId,
@@ -638,6 +715,252 @@ public final class TencentIMClient {
         send(message, peerId, RemoteIMProtocolMetadata.encode(origin), completion);
     }
 
+    public void createGroup(String name, List<String> memberUserIds,
+                            GroupCreationCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> createGroup(name, memberUserIds, completion)); return;
+        }
+        String cleanedName = clean(name);
+        List<String> members = new ArrayList<>();
+        if (memberUserIds != null) for (String raw : memberUserIds) {
+            String userId = clean(raw);
+            if (!userId.isEmpty() && !userId.equals(currentUserId) && !members.contains(userId))
+                members.add(userId);
+        }
+        if (cleanedName.isEmpty() || cleanedName.getBytes(StandardCharsets.UTF_8).length > 100
+            || members.isEmpty() || members.size() > 19) {
+            completion.onError(-1, "群名称需在 100 字节内，且须选择 1 至 19 位成员");
+            return;
+        }
+        String owner = currentUserId;
+        V2TIMGroupInfo info = new V2TIMGroupInfo();
+        info.setGroupType("Work");
+        info.setGroupName(cleanedName);
+        List<V2TIMCreateGroupMemberInfo> sdkMembers = new ArrayList<>();
+        for (String userId : members) {
+            V2TIMCreateGroupMemberInfo member = new V2TIMCreateGroupMemberInfo();
+            member.setUserID(userId);
+            sdkMembers.add(member);
+        }
+        V2TIMManager.getGroupManager().createGroup(info, sdkMembers,
+            new V2TIMValueCallback<String>() {
+                @Override public void onSuccess(String groupId) {
+                    if (!owner.equals(currentUserId)) return;
+                    String id = clean(groupId);
+                    if (id.isEmpty()) {
+                        completion.onError(-1, "群组已创建，但 SDK 未返回群 ID");
+                        return;
+                    }
+                    RemoteIMGroup group = new RemoteIMGroup(id, cleanedName, members.size() + 1);
+                    V2TIMMessage activation = V2TIMManager.getMessageManager()
+                        .createCustomMessage(GROUP_ACTIVATION);
+                    if (activation == null) {
+                        completion.onCreated(group, false, "群成员通知创建失败");
+                        return;
+                    }
+                    activation.setExcludedFromUnreadCount(true);
+                    activation.setExcludedFromLastMessage(true);
+                    V2TIMManager.getMessageManager().sendMessage(activation, null, id,
+                        V2TIMMessage.V2TIM_PRIORITY_DEFAULT, false, null,
+                        new V2TIMSendCallback<V2TIMMessage>() {
+                            @Override public void onProgress(int progress) { }
+                            @Override public void onSuccess(V2TIMMessage ignored) {
+                                if (owner.equals(currentUserId)) completion.onCreated(group, true, "");
+                            }
+                            @Override public void onError(int code, String message) {
+                                if (owner.equals(currentUserId))
+                                    completion.onCreated(group, false, safeError(message, "群成员通知失败"));
+                            }
+                        });
+                }
+                @Override public void onError(int code, String message) {
+                    if (owner.equals(currentUserId)) completion.onError(code, safeError(message, "创建群聊失败"));
+                }
+            });
+    }
+
+    public void joinedGroups(GroupsCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> joinedGroups(completion)); return;
+        }
+        String owner = currentUserId;
+        V2TIMManager.getGroupManager().getJoinedGroupList(
+            new V2TIMValueCallback<List<V2TIMGroupInfo>>() {
+                @Override public void onSuccess(List<V2TIMGroupInfo> values) {
+                    if (!owner.equals(currentUserId)) return;
+                    List<RemoteIMGroup> groups = new ArrayList<>();
+                    if (values != null) for (V2TIMGroupInfo info : values) {
+                        if (info != null && "Work".equals(info.getGroupType())
+                            && !clean(info.getGroupID()).isEmpty())
+                            groups.add(new RemoteIMGroup(info.getGroupID(), info.getGroupName(),
+                                info.getMemberCount()));
+                    }
+                    completion.onSuccess(groups);
+                }
+                @Override public void onError(int code, String message) {
+                    if (owner.equals(currentUserId))
+                        completion.onError(code, safeError(message, "获取群聊失败"));
+                }
+            });
+    }
+
+    public void groupSenderProfiles(List<String> userIds, GroupProfilesCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> groupSenderProfiles(userIds, completion)); return;
+        }
+        List<String> cleaned = cleanUserIds(userIds);
+        if (cleaned.isEmpty()) { completion.onSuccess(Collections.emptyMap()); return; }
+        String owner = currentUserId;
+        V2TIMManager.getInstance().getUsersInfo(cleaned,
+            new V2TIMValueCallback<List<V2TIMUserFullInfo>>() {
+                @Override public void onSuccess(List<V2TIMUserFullInfo> users) {
+                    if (!owner.equals(currentUserId)) return;
+                    Map<String,String> names = new HashMap<>();
+                    if (users != null) for (V2TIMUserFullInfo user : users) {
+                        String id = clean(user.getUserID());
+                        if (!id.isEmpty()) names.put(id,
+                            clean(user.getNickName()).isEmpty() ? id : clean(user.getNickName()));
+                    }
+                    completion.onSuccess(names);
+                }
+                @Override public void onError(int code, String ignored) {
+                    if (owner.equals(currentUserId)) completion.onSuccess(Collections.emptyMap());
+                }
+            });
+    }
+
+    public void sendGroupText(String groupId, String text, SendCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> sendGroupText(groupId, text, completion)); return;
+        }
+        String id = clean(groupId);
+        if (id.isEmpty() || clean(text).isEmpty()) {
+            completion.onError(-1, "群 ID 或消息不能为空"); return;
+        }
+        V2TIMMessage message = V2TIMManager.getMessageManager().createTextMessage(text);
+        if (message == null) { completion.onError(-1, "消息创建失败"); return; }
+        message.setCloudCustomData(RemoteIMProtocolMetadata.encode(RemoteIMOrigin.HUMAN));
+        String owner = currentUserId;
+        V2TIMManager.getMessageManager().sendMessage(message, null, id,
+            V2TIMMessage.V2TIM_PRIORITY_DEFAULT, false, null,
+            new V2TIMSendCallback<V2TIMMessage>() {
+                @Override public void onProgress(int progress) { }
+                @Override public void onSuccess(V2TIMMessage sent) {
+                    if (!owner.equals(currentUserId)) return;
+                    V2TIMMessage result = sent == null ? message : sent;
+                    completion.onSuccess(clean(result.getMsgID()), result.getTimestamp() > 0
+                        ? result.getTimestamp() * 1000L : System.currentTimeMillis());
+                }
+                @Override public void onError(int code, String message) {
+                    if (owner.equals(currentUserId))
+                        completion.onError(code, safeError(message, "发送群消息失败"));
+                }
+            });
+    }
+
+    public void groupHistory(String groupId, String beforeRemoteId,
+                             GroupHistoryCompletion completion) {
+        if (closed) return;
+        if (android.os.Looper.myLooper() != sdkThread.getLooper()) {
+            sdkHandler.post(() -> groupHistory(groupId, beforeRemoteId, completion)); return;
+        }
+        String id = clean(groupId);
+        if (id.isEmpty()) { completion.onError(-1, "群 ID 不能为空"); return; }
+        String owner = currentUserId;
+        if (clean(beforeRemoteId).isEmpty()) {
+            fetchGroupHistory(id, null, owner, completion, new ArrayList<>(), 0);
+            return;
+        }
+        V2TIMManager.getMessageManager().findMessages(
+            Collections.singletonList(beforeRemoteId),
+            new V2TIMValueCallback<List<V2TIMMessage>>() {
+                @Override public void onSuccess(List<V2TIMMessage> values) {
+                    if (!owner.equals(currentUserId)) return;
+                    V2TIMMessage cursor = values == null || values.isEmpty() ? null : values.get(0);
+                    if (cursor == null || !id.equals(clean(cursor.getGroupID()))) {
+                        completion.onError(-1, "群历史游标已失效"); return;
+                    }
+                    fetchGroupHistory(id, cursor, owner, completion, new ArrayList<>(), 0);
+                }
+                @Override public void onError(int code, String message) {
+                    if (owner.equals(currentUserId))
+                        completion.onError(code, safeError(message, "群历史游标读取失败"));
+                }
+            });
+    }
+
+    private void fetchGroupHistory(String groupId, V2TIMMessage cursor, String owner,
+                                   GroupHistoryCompletion completion,
+                                   List<RemoteIMGroupMessage> collected, int scanned) {
+        if (!owner.equals(currentUserId)) return;
+        if (scanned >= 10 || collected.size() >= 20) {
+            Collections.reverse(collected);
+            completion.onSuccess(new GroupHistoryPage(collected,
+                cursor == null ? null : clean(cursor.getMsgID()), true));
+            return;
+        }
+        int pageSize = Math.min(20, 20 - collected.size());
+        V2TIMManager.getMessageManager().getGroupHistoryMessageList(groupId, pageSize, cursor,
+            new V2TIMValueCallback<List<V2TIMMessage>>() {
+                @Override public void onSuccess(List<V2TIMMessage> raw) {
+                    if (!owner.equals(currentUserId)) return;
+                    if (raw == null || raw.isEmpty()) {
+                        Collections.reverse(collected);
+                        completion.onSuccess(new GroupHistoryPage(collected, null, false));
+                        return;
+                    }
+                    V2TIMMessage oldest = raw.get(raw.size() - 1);
+                    if (cursor != null && clean(oldest.getMsgID()).equals(clean(cursor.getMsgID()))) {
+                        completion.onError(-1, "群历史分页没有向前推进"); return;
+                    }
+                    for (V2TIMMessage rawMessage : raw) {
+                        RemoteIMGroupMessage message = groupText(rawMessage, groupId);
+                        if (message != null && collected.stream().noneMatch(existing ->
+                            existing.remoteId().equals(message.remoteId()))) collected.add(message);
+                    }
+                    if (raw.size() < pageSize) {
+                        Collections.reverse(collected);
+                        completion.onSuccess(new GroupHistoryPage(collected, null, false));
+                    } else if (collected.size() >= 20 || scanned >= 9) {
+                        Collections.reverse(collected);
+                        completion.onSuccess(new GroupHistoryPage(collected,
+                            clean(oldest.getMsgID()), true));
+                    } else fetchGroupHistory(groupId, oldest, owner, completion, collected, scanned + 1);
+                }
+                @Override public void onError(int code, String message) {
+                    if (owner.equals(currentUserId))
+                        completion.onError(code, safeError(message, "读取群历史失败"));
+                }
+            });
+    }
+
+    static boolean isGroupActivation(V2TIMMessage message) {
+        return message != null && message.getCustomElem() != null
+            && isGroupActivation(message.getCustomElem().getData());
+    }
+
+    static boolean isGroupActivation(byte[] data) {
+        return java.util.Arrays.equals(GROUP_ACTIVATION, data);
+    }
+
+    static RemoteIMGroupMessage groupText(V2TIMMessage message, String groupId) {
+        if (message == null || !groupId.equals(clean(message.getGroupID()))
+            || message.getElemType() != V2TIMMessage.V2TIM_ELEM_TYPE_TEXT
+            || message.getTextElem() == null || clean(message.getTextElem().getText()).isEmpty())
+            return null;
+        String sender = clean(message.getSender());
+        if (sender.isEmpty()) sender = clean(message.getUserID());
+        if (sender.isEmpty()) return null;
+        return new RemoteIMGroupMessage(null, clean(message.getMsgID()), groupId, sender,
+            message.getTextElem().getText(), message.getTimestamp() > 0
+                ? message.getTimestamp() * 1000L : System.currentTimeMillis(),
+            message.isSelf() ? RemoteIMGroupMessage.Status.SENT : RemoteIMGroupMessage.Status.RECEIVED);
+    }
+
     private void send(
         V2TIMMessage message,
         String peerId,
@@ -686,6 +1009,16 @@ public final class TencentIMClient {
     void handleIncomingMessage(V2TIMMessage sdkMessage) {
         if (sdkMessage == null) {
             Log.w(TAG, "recv: null message from SDK; dropped");
+            return;
+        }
+        String groupId = clean(sdkMessage.getGroupID());
+        if (!groupId.isEmpty()) {
+            if (isGroupActivation(sdkMessage)) listener.onGroupMembershipChanged();
+            else {
+                RemoteIMGroupMessage groupMessage = groupText(sdkMessage, groupId);
+                if (groupMessage != null) listener.onIncomingGroupText(currentUserId, groupMessage);
+                else Log.w(TAG, "recv: unsupported group message id=" + clean(sdkMessage.getMsgID()));
+            }
             return;
         }
         if (sdkMessage.isSelf()) return;

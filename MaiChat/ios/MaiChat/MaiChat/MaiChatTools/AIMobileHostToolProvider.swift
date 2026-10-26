@@ -444,6 +444,12 @@ final class AIMobileHostToolProvider {
             return Self.jsonSuccess(["accepted": true])
         case "maichat_list_contacts":
             return Self.listContacts(appState: appState, arguments: arguments)
+        case "maichat_list_groups":
+            return Self.listGroups(appState: appState, arguments: arguments)
+        case "maichat_create_group":
+            return await createGroup(appState: appState, arguments: arguments)
+        case "maichat_get_group_messages":
+            return await getGroupMessages(appState: appState, arguments: arguments)
         case "maichat_request_friend":
             return await requestFriend(appState: appState, arguments: arguments)
         case "maichat_set_nickname":
@@ -458,6 +464,8 @@ final class AIMobileHostToolProvider {
             return Self.unreadSummary(appState: appState)
         case "maichat_send_text":
             return await sendText(appState: appState, arguments: arguments)
+        case "maichat_send_group_text":
+            return await sendGroupText(appState: appState, arguments: arguments)
         case "maichat_send_media":
             return await sendMedia(appState: appState, arguments: arguments)
         case "maichat_reply_message":

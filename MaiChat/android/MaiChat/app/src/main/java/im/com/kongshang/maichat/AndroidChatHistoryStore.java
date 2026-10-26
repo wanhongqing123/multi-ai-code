@@ -16,7 +16,7 @@ import java.util.List;
 
 public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
     private static final String DATABASE_NAME = "maichat-history.db";
-    private static final int DATABASE_VERSION = 6;
+    private static final int DATABASE_VERSION = 8;
     private static final String TAG = "MaiChat.im";
 
     private final RemoteIMMediaPaths mediaPaths;
@@ -109,6 +109,8 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         database.execSQL(
             "CREATE INDEX messages_remote_idx ON messages(owner_id, remote_id)"
         );
+        createGroupTables(database);
+        createGroupRemoteUniqueIndex(database);
     }
 
     @Override
@@ -137,6 +139,17 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
         if (version < 6) {
             addQuoteColumns(database);
             version = 6;
+        }
+        if (version < 7) {
+            createGroupTables(database);
+            version = 7;
+        }
+        if (version < 8) {
+            database.execSQL("DELETE FROM group_messages WHERE remote_id<>'' AND rowid NOT IN "
+                + "(SELECT MAX(rowid) FROM group_messages WHERE remote_id<>'' "
+                + "GROUP BY owner_id,group_id,remote_id)");
+            createGroupRemoteUniqueIndex(database);
+            version = 8;
         }
         if (version != newVersion) {
             // 只有在没有可用迁移路径时才重建。重建会清空用户本地聊天记录，
@@ -188,6 +201,128 @@ public final class AndroidChatHistoryStore extends SQLiteOpenHelper {
                 + "sort_order INTEGER NOT NULL,"
                 + "PRIMARY KEY(owner_id, name))"
         );
+    }
+
+    private static void createGroupTables(SQLiteDatabase database) {
+        database.execSQL("CREATE TABLE IF NOT EXISTS im_groups ("
+            + "owner_id TEXT NOT NULL,group_id TEXT NOT NULL,name TEXT NOT NULL,"
+            + "member_count INTEGER NOT NULL,pending_activation INTEGER NOT NULL DEFAULT 0,"
+            + "PRIMARY KEY(owner_id,group_id))");
+        database.execSQL("CREATE TABLE IF NOT EXISTS group_messages ("
+            + "owner_id TEXT NOT NULL,id TEXT NOT NULL,remote_id TEXT NOT NULL DEFAULT '',"
+            + "group_id TEXT NOT NULL,sender_id TEXT NOT NULL,body TEXT NOT NULL,"
+            + "status TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(owner_id,id))");
+        database.execSQL("CREATE INDEX IF NOT EXISTS group_messages_order_idx ON "
+            + "group_messages(owner_id,group_id,created_at DESC,id DESC)");
+        database.execSQL("CREATE INDEX IF NOT EXISTS group_messages_remote_idx ON "
+            + "group_messages(owner_id,group_id,remote_id)");
+    }
+
+    private static void createGroupRemoteUniqueIndex(SQLiteDatabase database) {
+        database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS group_messages_remote_unique_idx "
+            + "ON group_messages(owner_id,group_id,remote_id) WHERE remote_id<>''");
+    }
+
+    public List<RemoteIMGroup> loadGroups(String ownerId) {
+        List<RemoteIMGroup> groups = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery(
+            "SELECT group_id,name,member_count,pending_activation FROM im_groups WHERE owner_id=? "
+                + "ORDER BY name COLLATE NOCASE",
+            new String[]{clean(ownerId)})) {
+            while (cursor.moveToNext())
+                groups.add(new RemoteIMGroup(cursor.getString(0), cursor.getString(1),
+                    cursor.getInt(2),cursor.getInt(3) != 0));
+        }
+        return groups;
+    }
+
+    public void replaceGroups(String ownerId, List<RemoteIMGroup> groups) {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            database.delete("im_groups", "owner_id=?", new String[]{clean(ownerId)});
+            for (RemoteIMGroup group : groups) {
+                ContentValues values = new ContentValues();
+                values.put("owner_id", clean(ownerId));
+                values.put("group_id", group.groupId());
+                values.put("name", group.name());
+                values.put("member_count", group.memberCount());
+                values.put("pending_activation", group.pendingActivation() ? 1 : 0);
+                database.insertOrThrow("im_groups", null, values);
+            }
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
+    }
+
+    public void upsertGroup(String ownerId, RemoteIMGroup group) {
+        ContentValues values = new ContentValues();
+        values.put("owner_id", clean(ownerId));
+        values.put("group_id", group.groupId());
+        values.put("name", group.name());
+        values.put("member_count", group.memberCount());
+        values.put("pending_activation", group.pendingActivation() ? 1 : 0);
+        getWritableDatabase().insertWithOnConflict("im_groups", null, values,
+            SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public void upsertGroupMessage(String ownerId, RemoteIMGroupMessage message) {
+        ContentValues values = new ContentValues();
+        values.put("owner_id", clean(ownerId));
+        values.put("id", message.id());
+        values.put("remote_id", message.remoteId());
+        values.put("group_id", message.groupId());
+        values.put("sender_id", message.senderId());
+        values.put("body", message.text());
+        values.put("status", message.status().name());
+        values.put("created_at", message.createdAtMillis());
+        getWritableDatabase().insertWithOnConflict("group_messages", null, values,
+            SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public void deleteGroupMessage(String ownerId, String messageId) {
+        getWritableDatabase().delete("group_messages", "owner_id=? AND id=?",
+            new String[]{clean(ownerId),clean(messageId)});
+    }
+
+    public List<RemoteIMGroupMessage> loadGroupSummaries(String ownerId) {
+        List<RemoteIMGroupMessage> result = new ArrayList<>();
+        String sql = "SELECT id,remote_id,group_id,sender_id,body,status,created_at "
+            + "FROM group_messages WHERE owner_id=? AND id IN "
+            + "(SELECT id FROM group_messages AS recent WHERE recent.owner_id=? "
+            + "AND recent.group_id=group_messages.group_id ORDER BY created_at DESC,id DESC LIMIT 1)";
+        try (Cursor cursor = getReadableDatabase().rawQuery(sql,
+            new String[]{clean(ownerId), clean(ownerId)})) {
+            while (cursor.moveToNext()) result.add(groupMessage(cursor));
+        }
+        return result;
+    }
+
+    public List<RemoteIMGroupMessage> loadGroupPage(String ownerId, String groupId,
+            Long beforeTime, String beforeId, int limit) {
+        List<RemoteIMGroupMessage> result = new ArrayList<>();
+        String where = "owner_id=? AND group_id=?";
+        List<String> args = new ArrayList<>();
+        args.add(clean(ownerId)); args.add(clean(groupId));
+        if (beforeTime != null && beforeId != null) {
+            where += " AND (created_at<? OR (created_at=? AND id<?))";
+            args.add(String.valueOf(beforeTime)); args.add(String.valueOf(beforeTime)); args.add(beforeId);
+        }
+        try (Cursor cursor = getReadableDatabase().query("group_messages",
+            new String[]{"id","remote_id","group_id","sender_id","body","status","created_at"},
+            where,args.toArray(new String[0]),null,null,"created_at DESC,id DESC",
+            String.valueOf(Math.max(1, Math.min(limit, 100))))) {
+            while (cursor.moveToNext()) result.add(groupMessage(cursor));
+        }
+        Collections.reverse(result);
+        return result;
+    }
+
+    private static RemoteIMGroupMessage groupMessage(Cursor cursor) {
+        RemoteIMGroupMessage.Status status;
+        try { status = RemoteIMGroupMessage.Status.valueOf(cursor.getString(5)); }
+        catch (RuntimeException ignored) { status = RemoteIMGroupMessage.Status.RECEIVED; }
+        return new RemoteIMGroupMessage(cursor.getString(0), cursor.getString(1),
+            cursor.getString(2), cursor.getString(3), cursor.getString(4),cursor.getLong(6),status);
     }
 
     public List<String> loadContactGroups(String ownerId) {

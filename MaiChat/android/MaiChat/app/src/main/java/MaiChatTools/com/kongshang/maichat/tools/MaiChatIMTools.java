@@ -8,11 +8,15 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.webkit.MimeTypeMap;
 import com.kongshang.maichat.AIAssistantController;
 import com.kongshang.maichat.MainActivity;
 import com.kongshang.maichat.MessageQuote;
 import com.kongshang.maichat.RemoteIMContact;
+import com.kongshang.maichat.RemoteIMGroup;
+import com.kongshang.maichat.RemoteIMGroupMessage;
 import com.kongshang.maichat.RemoteIMMessage;
 import com.kongshang.maichat.RemoteIMMessageSearchHit;
 import com.kongshang.maichat.RemoteIMMediaPaths;
@@ -29,6 +33,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -57,6 +64,10 @@ final class MaiChatIMTools {
             case "maichat_send_media": return hostSendMedia(arguments);
             case "maichat_reply_message": return hostSendText(arguments, true);
             case "maichat_broadcast_text": return hostBroadcastText(arguments);
+            case "maichat_list_groups": return hostListGroups(arguments);
+            case "maichat_create_group": return hostCreateGroup(arguments);
+            case "maichat_get_group_messages": return hostGetGroupMessages(arguments);
+            case "maichat_send_group_text": return hostSendGroupText(arguments);
             default: throw new IllegalArgumentException("未知 MaiChat 宿主工具：" + tool);
         }
     }
@@ -312,6 +323,151 @@ final class MaiChatIMTools {
             throw new IllegalStateException("MaiChat 未能排队全部群发消息");
         return new JSONObject().put("queued", true).put("recipient_count", queued)
             .put("peer_ids", new JSONArray(recipients));
+    }
+
+    private JSONObject hostListGroups(JSONObject arguments) throws JSONException {
+        String query = arguments.optString("query","").trim().toLowerCase(Locale.ROOT);
+        int limit = hostToolLimit(arguments);
+        List<RemoteIMGroup> groups = session.groups();
+        groups.sort((left,right) -> {
+            RemoteIMGroupMessage lm = session.latestGroupMessage(left.groupId());
+            RemoteIMGroupMessage rm = session.latestGroupMessage(right.groupId());
+            return Long.compare(rm == null ? 0 : rm.createdAtMillis(),
+                lm == null ? 0 : lm.createdAtMillis());
+        });
+        JSONArray values = new JSONArray();
+        for (RemoteIMGroup group : groups) {
+            if (!query.isEmpty() && !group.name().toLowerCase(Locale.ROOT).contains(query)
+                && !group.groupId().toLowerCase(Locale.ROOT).contains(query)) continue;
+            values.put(groupJson(group).put("unread_count",session.groupUnreadCount(group.groupId())));
+            if (values.length() >= limit) break;
+        }
+        return new JSONObject().put("groups",values).put("count",values.length());
+    }
+
+    private JSONObject hostCreateGroup(JSONObject arguments) throws Exception {
+        String name = arguments.optString("name","").trim();
+        JSONArray memberValues = arguments.optJSONArray("member_ids");
+        if (name.isEmpty() || name.codePointCount(0,name.length()) > 30
+            || name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 100
+            || memberValues == null || memberValues.length() < 1 || memberValues.length() > 19)
+            throw new IllegalArgumentException("name 或 member_ids 无效；成员须为 1 至 19 位好友");
+        List<String> members = new ArrayList<>();
+        for (int index = 0; index < memberValues.length(); index++) {
+            Object value = memberValues.opt(index);
+            if (!(value instanceof String) || ((String) value).trim().isEmpty())
+                throw new IllegalArgumentException("member_ids 必须是非空的好友 IM ID");
+            members.add(((String) value).trim());
+        }
+        if (new HashSet<>(members).size() != members.size())
+            throw new IllegalArgumentException("member_ids 不能重复");
+        CountDownLatch complete = new CountDownLatch(1);
+        AtomicReference<RemoteIMGroup> created = new AtomicReference<>();
+        AtomicReference<String> failure = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean newlyCreated = new java.util.concurrent.atomic.AtomicBoolean();
+        new Handler(Looper.getMainLooper()).post(() -> session.createGroup(name,members,
+            (group,activated,createdNow,error) -> {
+                created.set(group);
+                newlyCreated.set(createdNow);
+                if (!activated) failure.set(error);
+                complete.countDown();
+            }));
+        awaitGroupOperation(complete,"创建群聊");
+        RemoteIMGroup group = created.get();
+        if (group == null) throw new IllegalStateException(
+            failure.get() == null ? "创建群聊失败" : failure.get());
+        JSONObject result = groupJson(group).put("created",newlyCreated.get());
+        if (group.pendingActivation()) result.put("notice",
+            "群已创建，成员通知未送达。请打开这个群发送文字消息；不要重复创建。");
+        return result;
+    }
+
+    private JSONObject hostGetGroupMessages(JSONObject arguments) throws Exception {
+        String groupId = arguments.optString("group_id","").trim();
+        int limit = Math.max(1,Math.min(20,arguments.optInt("limit",20)));
+        if (groupId.isEmpty()) throw new IllegalArgumentException("group_id 不能为空");
+        CountDownLatch complete = new CountDownLatch(1);
+        AtomicReference<String> failure = new AtomicReference<>();
+        new Handler(Looper.getMainLooper()).post(() -> session.loadGroupMessages(groupId,true,error -> {
+            failure.set(error);
+            complete.countDown();
+        }));
+        awaitGroupOperation(complete,"读取群消息");
+        if (failure.get() != null) throw new IllegalStateException(failure.get());
+        AtomicReference<JSONObject> result = new AtomicReference<>();
+        CountDownLatch serialized = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                if (session.group(groupId) == null) throw new IllegalArgumentException("找不到此群聊");
+                List<RemoteIMGroupMessage> messages = session.groupMessages(groupId);
+                JSONArray values = new JSONArray();
+                for (int index = Math.max(0,messages.size() - limit); index < messages.size(); index++) {
+                    RemoteIMGroupMessage message = messages.get(index);
+                    values.put(new JSONObject()
+                        .put("id",message.id()).put("remote_id",message.remoteId())
+                        .put("group_id",message.groupId()).put("sender_id",message.senderId())
+                        .put("direction",message.senderId().equals(session.chatState().ownerUserId())
+                            ? "outgoing" : "incoming")
+                        .put("text",message.text()).put("created_at_ms",message.createdAtMillis())
+                        .put("status",message.status().name().toLowerCase(Locale.ROOT)));
+                }
+                result.set(new JSONObject().put("group_id",groupId)
+                    .put("messages",values).put("count",values.length())
+                    .put("has_earlier",session.hasEarlierGroupMessages(groupId)));
+            } catch (JSONException | IllegalArgumentException error) {
+                failure.set(error.getMessage());
+            } finally { serialized.countDown(); }
+        });
+        awaitGroupOperation(serialized,"读取群消息结果");
+        if (failure.get() != null) throw new IllegalStateException(failure.get());
+        return result.get();
+    }
+
+    private JSONObject hostSendGroupText(JSONObject arguments) throws Exception {
+        String groupId = arguments.optString("group_id","").trim();
+        String text = arguments.optString("text","").trim();
+        if (groupId.isEmpty() || text.isEmpty())
+            throw new IllegalArgumentException("group_id 和 text 不能为空");
+        CountDownLatch complete = new CountDownLatch(1);
+        AtomicReference<RemoteIMGroupMessage> queued = new AtomicReference<>();
+        AtomicReference<RemoteIMGroupMessage> delivered = new AtomicReference<>();
+        AtomicReference<String> failure = new AtomicReference<>();
+        new Handler(Looper.getMainLooper()).post(() -> queued.set(session.sendGroupText(groupId,text,
+            (message,error) -> {
+                delivered.set(message);
+                failure.set(error);
+                complete.countDown();
+            })));
+        if (Looper.myLooper() == Looper.getMainLooper())
+            throw new IllegalStateException("发送群消息不能阻塞界面线程");
+        if (!complete.await(60,TimeUnit.SECONDS)) {
+            RemoteIMGroupMessage pending = queued.get();
+            if (pending == null) throw new IllegalStateException("发送群消息状态未知，请先查看群聊");
+            return new JSONObject().put("queued",true).put("sent",false)
+                .put("status_unknown",true).put("group_id",groupId)
+                .put("message_id",pending.id());
+        }
+        if (failure.get() != null) throw new IllegalStateException(failure.get());
+        RemoteIMGroupMessage sent = delivered.get();
+        if (sent == null || sent.remoteId().isEmpty())
+            throw new IllegalStateException("发送结果没有远端消息 ID，请查看群聊确认状态");
+        return new JSONObject().put("queued",true).put("sent",true)
+            .put("group_id",groupId).put("message_id",sent.id())
+            .put("remote_id",sent.remoteId());
+    }
+
+    private static JSONObject groupJson(RemoteIMGroup group) throws JSONException {
+        return new JSONObject().put("group_id",group.groupId())
+            .put("name",group.name()).put("member_count",group.memberCount())
+            .put("pending_activation",group.pendingActivation());
+    }
+
+    private static void awaitGroupOperation(CountDownLatch complete, String operation)
+            throws InterruptedException {
+        if (Looper.myLooper() == Looper.getMainLooper())
+            throw new IllegalStateException(operation + "不能阻塞界面线程");
+        if (!complete.await(60,TimeUnit.SECONDS))
+            throw new IllegalStateException(operation + "状态未知，请先查询群聊列表后再操作");
     }
 
     private JSONObject hostMessageJson(RemoteIMMessage message, String peer) throws JSONException {

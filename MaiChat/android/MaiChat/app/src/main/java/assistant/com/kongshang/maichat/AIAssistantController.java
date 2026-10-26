@@ -369,7 +369,9 @@ public final class AIAssistantController {
                 response[0] = hostToolFailure(safeMessage(failure));
             }
         };
-        if (tool.startsWith("mobile_") || tool.equals("generate_pdf")) {
+        if (tool.startsWith("mobile_") || tool.equals("generate_pdf")
+            || tool.equals("maichat_create_group") || tool.equals("maichat_get_group_messages")
+            || tool.equals("maichat_send_group_text")) {
             if (Looper.myLooper() == Looper.getMainLooper())
                 return hostToolFailure("此宿主工具不能在 UI 线程执行");
             invoke.run();

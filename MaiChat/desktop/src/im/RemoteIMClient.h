@@ -11,6 +11,7 @@
 #include <functional>
 
 #include "model/RemoteIMContact.h"
+#include "model/RemoteIMGroup.h"
 #include "model/RemoteIMMessage.h"
 #include "model/RemoteIMVideoPayload.h"
 #include "diagnostics/RemoteDiagnosticsEvidence.h"
@@ -24,6 +25,12 @@ struct RemoteIMFriendRequest {
 };
 using RemoteIMFriendRequestsCompletion =
     std::function<void(bool ok, const QString& error, const QList<RemoteIMFriendRequest>& requests)>;
+using RemoteIMGroupsCompletion =
+    std::function<void(bool ok, const QString& error, const QList<RemoteIMGroup>& groups)>;
+using RemoteIMGroupCompletion =
+    std::function<void(bool ok, const QString& error, const RemoteIMGroup& group)>;
+using RemoteIMGroupHistoryCompletion =
+    std::function<void(bool ok, const QString& error, const RemoteIMGroupHistoryPage& page)>;
 struct RemoteIMSendReceipt {
     QString remoteMessageId;
     qint64 createdAtMillis = 0;
@@ -75,6 +82,28 @@ public:
         if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持好友申请"));
     }
     virtual void refreshFriendList() {}
+    virtual void joinedGroups(RemoteIMGroupsCompletion completion) {
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持群聊"), {});
+    }
+    virtual void createGroup(const QString& name, const QStringList& memberIds,
+                             RemoteIMGroupCompletion completion) {
+        Q_UNUSED(name); Q_UNUSED(memberIds);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持群聊"), {});
+    }
+    virtual void sendGroupText(const QString& groupId, const QString& text,
+                               RemoteIMSendCompletion completion) {
+        Q_UNUSED(groupId); Q_UNUSED(text);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持群聊"), {});
+    }
+    virtual void groupHistory(const QString& groupId, int count, qint64 beforeSequence,
+                              RemoteIMGroupHistoryCompletion completion) {
+        Q_UNUSED(groupId); Q_UNUSED(count); Q_UNUSED(beforeSequence);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持群聊"), {});
+    }
+    virtual void markGroupRead(const QString& groupId, RemoteIMCompletion completion) {
+        Q_UNUSED(groupId);
+        if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持群消息已读上报"));
+    }
     virtual void friendRequests(RemoteIMFriendRequestsCompletion completion) {
         if (completion) completion(false, QStringLiteral("当前 IM 客户端不支持好友申请"), {});
     }
@@ -177,6 +206,10 @@ public:
 signals:
     void selfProfileReceived(const QString& userId, const QString& displayName, const QString& avatarUrl);
     void contactsReceived(const QList<RemoteIMContact>& contacts);
+    void groupsReceived(const QList<RemoteIMGroup>& groups);
+    void groupUnreadReceived(const QString& groupId, int unreadCount);
+    void groupMessagesReceived(const QList<RemoteIMGroupMessage>& messages, bool live);
+    void groupMembershipChanged();
     // 漫游/历史恢复通道：消息并入内存与本地库（按 id 去重），不产生未读红点。
     void messagesReceived(const QList<RemoteIMMessage>& messages);
     // 实时推送通道（RecvNewMsg）：与 messagesReceived 同构（携带稳定 SDK 消息 id

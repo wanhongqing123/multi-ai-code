@@ -1419,6 +1419,13 @@ target_compile_definitions(add_contact_dialog_test PRIVATE
 add_executable(main_window_layout_test tests/MainWindowLayoutTest.cpp)
 target_link_libraries(main_window_layout_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
+# Live QA probe uses a throwaway account and an isolated app identity. It is not part of ctest or normal builds.
+if(APPLE)
+  add_executable(desktop_group_live_probe EXCLUDE_FROM_ALL tests/DesktopGroupLiveProbe.cpp)
+  target_link_libraries(desktop_group_live_probe PRIVATE
+    remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets)
+endif()
+
 add_executable(remote_desktop_signal_test tests/RemoteDesktopSignalTest.cpp)
 target_link_libraries(remote_desktop_signal_test PRIVATE remote_im_core Qt5::Test)
 

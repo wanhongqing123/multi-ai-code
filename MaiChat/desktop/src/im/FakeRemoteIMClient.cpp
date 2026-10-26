@@ -29,6 +29,74 @@ void FakeRemoteIMClient::requestFriend(const QString& userId,
     complete(std::move(completion));
 }
 
+void FakeRemoteIMClient::joinedGroups(RemoteIMGroupsCompletion completion) {
+    if (completion) completion(true, {}, groups_);
+}
+
+void FakeRemoteIMClient::createGroup(const QString& name, const QStringList& memberIds,
+                                     RemoteIMGroupCompletion completion) {
+    if (!nextError_.isEmpty()) {
+        const QString error = nextError_;
+        nextError_.clear();
+        if (completion) completion(false, error, {});
+        return;
+    }
+    const RemoteIMGroup group{QStringLiteral("fake-group-%1").arg(groups_.size() + 1),
+                              name.trimmed(), memberIds.size() + 1};
+    groups_.append(group);
+    emit groupsReceived({group});
+    if (completion) completion(true, {}, group);
+}
+
+void FakeRemoteIMClient::sendGroupText(const QString& groupId, const QString& text,
+                                       RemoteIMSendCompletion completion) {
+    lastGroupId_ = groupId;
+    lastGroupText_ = text;
+    completeSend(std::move(completion));
+}
+
+void FakeRemoteIMClient::groupHistory(const QString&, int, qint64,
+                                      RemoteIMGroupHistoryCompletion completion) {
+    ++groupHistoryRequestCount_;
+    if (deferGroupHistory_) {
+        deferGroupHistory_ = false;
+        deferredGroupHistoryCompletion_ = std::move(completion);
+        return;
+    }
+    if (completion) completion(true, {}, {});
+}
+
+void FakeRemoteIMClient::deferNextGroupHistory() {
+    deferGroupHistory_ = true;
+}
+
+void FakeRemoteIMClient::finishDeferredGroupHistory(const QList<RemoteIMGroupMessage>& messages) {
+    auto completion = std::move(deferredGroupHistoryCompletion_);
+    if (completion) completion(true, {}, RemoteIMGroupHistoryPage{messages, 0, false});
+}
+
+void FakeRemoteIMClient::markGroupRead(const QString& groupId, RemoteIMCompletion completion) {
+    lastMarkedGroupId_ = groupId;
+    if (completion) completion(true, {});
+}
+
+void FakeRemoteIMClient::emitIncomingGroupText(const QString& groupId, const QString& senderId,
+                                                const QString& text, const QString& messageId) {
+    RemoteIMGroupMessage message;
+    message.id = messageId;
+    message.groupId = groupId;
+    message.senderId = senderId;
+    message.text = text;
+    message.createdAtMillis = QDateTime::currentMSecsSinceEpoch();
+    emit groupMessagesReceived({message}, true);
+}
+
+void FakeRemoteIMClient::removeGroupForTest(const QString& groupId) {
+    for (int index = groups_.size() - 1; index >= 0; --index)
+        if (groups_.at(index).groupId == groupId) groups_.removeAt(index);
+    emit groupMembershipChanged();
+}
+
 QString FakeRemoteIMClient::lastFriendRequestId() const {
     return lastFriendRequestId_;
 }

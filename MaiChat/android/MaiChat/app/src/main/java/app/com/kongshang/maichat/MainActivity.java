@@ -180,6 +180,15 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private final Map<String, String> draftsByPeer = new HashMap<>();
     private String displayedOwner = "";
     private String activeChatUserId;
+    private String activeGroupId;
+    private String renderedGroupId;
+    private ScrollView groupScroll;
+    private LinearLayout groupRows;
+    private EditText groupDraftInput;
+    private final Map<String, String> groupDrafts = new HashMap<>();
+    private boolean groupStickToLatest;
+    private String groupFirstRenderedId;
+    private int groupWindowSize = 20;
     private String activeFriendProfileUserId;
     private String draftText = "";
     private List<String> aiReplySuggestions = new ArrayList<>();
@@ -448,6 +457,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             else if (swipeBack != null) swipeBack.goBack();
             return;
         }
+        if (activeGroupId != null) {
+            finishGroupBack();
+            return;
+        }
         if (activeTab == RemoteIMTab.REMOTE && session.remoteDesktop().isActive()) {
             session.remoteDesktop().stop();
             render();
@@ -472,6 +485,18 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         session.setConversationVisible(activeChatUserId, false);
         activeChatUserId = null; messageSearchTargetId = null; pendingQuote = null;
         activeTab = returnTab; chatBackdrop = null; presentationRequest++;
+        render();
+    }
+
+    private void finishGroupBack() {
+        if (activeGroupId == null) return;
+        if (groupDraftInput != null)
+            groupDrafts.put(displayedOwner + "\0" + activeGroupId, groupDraftInput.getText().toString());
+        session.setGroupConversationVisible(activeGroupId, false);
+        activeGroupId = null;
+        renderedGroupId = null;
+        groupScroll = null; groupRows = null; groupDraftInput = null;
+        activeTab = returnTab; chatBackdrop = null;
         render();
     }
 
@@ -844,14 +869,22 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 AIAssistantController.shared(this).setHostToolHandler(maiChatHostTools::execute);
             rememberDraft();
             if (!displayedOwner.isEmpty()) {
-                hideKeyboard(); activeChatUserId = null; activeFriendProfileUserId = null;
+                hideKeyboard(); activeChatUserId = null; activeGroupId = null;
+                activeFriendProfileUserId = null;
                 renderedChatUserId = null;
+                renderedGroupId = null; groupScroll = null; groupRows = null;
+                groupDraftInput = null; groupDrafts.clear();
                 chatBackdrop = null; draftText = ""; pendingQuote = null; presentationRequest++;
             }
             displayedOwner = owner;
         }
         if (activeChatUserId != null && contact(activeChatUserId) == null) {
             activeChatUserId = null; chatBackdrop = null;
+        }
+        if (activeGroupId != null && session.group(activeGroupId) == null) {
+            activeGroupId = null; renderedGroupId = null;
+            groupScroll = null; groupRows = null; groupDraftInput = null;
+            chatBackdrop = null;
         }
         if (activeFriendProfileUserId != null && profileContact(activeFriendProfileUserId) == null)
             activeFriendProfileUserId = null;
@@ -877,6 +910,19 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             }
             return;
         }
+        if (activeGroupId != null && landscapeIm == renderedLandscapeIm
+            && activeGroupId.equals(renderedGroupId) && groupRows != null
+            && !showInitialLogin && !session.requiresLogin()) {
+            renderGroupRows();
+            if (landscapeIm && currentConversationRows != null) {
+                long fingerprint = conversationFingerprint();
+                if (fingerprint != renderedConversationFingerprint) {
+                    renderConversationRows(currentConversationRows, "", Collections.emptyList(), false);
+                    renderedConversationFingerprint = fingerprint;
+                }
+            }
+            return;
+        }
         if (activeTab == RemoteIMTab.ASSISTANT && activeChatUserId == null && aiAssistant != null
                 && aiAssistant.isAttachedToWindow() && !showInitialLogin && !session.requiresLogin()) return;
         if (activeTab == RemoteIMTab.CLOUD && activeChatUserId == null
@@ -887,6 +933,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         // 只有页面身份真的改变才重建导航容器；不能把每条新消息都当作换页。
         currentMessageList = null;
         renderedChatUserId = null;
+        groupRows = null; groupScroll = null; groupDraftInput = null;
+        renderedGroupId = null;
         messageInput = null;
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -895,9 +943,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         landscapeConversationDivider = null;
         if (swipeBack != null) swipeBack.dispose();
         FrameLayout navigation = new FrameLayout(this);
-        if (!landscapeIm && activeChatUserId != null && chatBackdrop == null)
+        if (!landscapeIm && (activeChatUserId != null || activeGroupId != null) && chatBackdrop == null)
             chatBackdrop = createPortraitConversationBackdrop();
-        if (activeChatUserId != null && chatBackdrop != null) {
+        if ((activeChatUserId != null || activeGroupId != null) && chatBackdrop != null) {
             if (chatBackdrop.getParent() instanceof ViewGroup)
                 ((ViewGroup) chatBackdrop.getParent()).removeView(chatBackdrop);
             navigation.addView(chatBackdrop, new FrameLayout.LayoutParams(-1, -1));
@@ -910,7 +958,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             @Override public View page() { return root; }
             @Override public boolean canGoBack() {
                 return !destroyed && !renderedLandscapeIm
-                    && (activeChatUserId != null || activeFriendProfileUserId != null);
+                    && (activeChatUserId != null || activeGroupId != null
+                        || activeFriendProfileUserId != null);
             }
             @Override public boolean keyboardVisible() { return keyboardVisible; }
             @Override public void began() {
@@ -923,7 +972,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 if (activeFriendProfileUserId != null) {
                     activeFriendProfileUserId = null;
                     render();
-                } else finishChatBack();
+                } else if (activeGroupId != null) finishGroupBack();
+                else finishChatBack();
             }
             @Override public void cancelled(boolean shown) { keyboardVisible = shown; }
         });
@@ -1008,6 +1058,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         if (activeChatUserId != null) {
             // 页面容器建好以后再选择具体内容；聊天页不显示底部主导航。
             renderChatDetail(activeChatUserId);
+        } else if (activeGroupId != null) {
+            renderGroupDetail(activeGroupId);
         } else {
             switch (activeTab) {
                 case CLOUD:
@@ -1036,7 +1088,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             }
         }
 
-        boolean hideTabs = activeChatUserId != null
+        boolean hideTabs = activeChatUserId != null || activeGroupId != null
             || (activeTab == RemoteIMTab.REMOTE && session.remoteDesktop().isActive());
         if (!hideTabs) root.addView(bottomTabBar(), match(dp(64)));
     }
@@ -1676,6 +1728,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             cancelVoiceRecording();
             activeTab = tab;
             activeChatUserId = null;
+            if (activeGroupId != null) session.setGroupConversationVisible(activeGroupId, false);
+            activeGroupId = null;
             render();
             if (tab == RemoteIMTab.CONTACTS) session.refreshAcceptedFriends();
         });
@@ -1707,6 +1761,18 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     }
 
     private void renderConversationList() {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(18), dp(4), dp(12), dp(4));
+        header.setBackgroundColor(Color.WHITE);
+        TextView title = MaiChatTheme.label(this, "消息", 20, MaiChatTheme.TEXT);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        TextView plus = iconButton("＋", 26, MaiChatTheme.TEXT);
+        plus.setContentDescription("新建聊天");
+        plus.setOnClickListener(this::showMessageActionMenu);
+        header.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        content.addView(header, match(dp(56)));
         ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
@@ -1733,6 +1799,13 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 hash = hash * 31 + latest.text().hashCode();
             }
             hash = hash * 31 + session.unreadCount(contact.userId());
+        }
+        for (RemoteIMGroup group : session.groups()) {
+            hash = hash * 31 + group.groupId().hashCode();
+            hash = hash * 31 + group.name().hashCode();
+            RemoteIMGroupMessage latest = session.latestGroupMessage(group.groupId());
+            if (latest != null) hash = hash * 31 + latest.id().hashCode();
+            hash = hash * 31 + session.groupUnreadCount(group.groupId());
         }
         return hash * 31 + session.mediaRevision();
     }
@@ -1763,6 +1836,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         sidebar.addView(bottomTabBar(), match(dp(64)));
         content = detail;
         if (activeChatUserId != null) renderChatDetail(activeChatUserId);
+        else if (activeGroupId != null) renderGroupDetail(activeGroupId);
         else detail.addView(emptyState("◇", "选择一个对话", "从左侧选择联系人开始聊天。"), matchMatch());
         columns.post(this::updateVideoDockLayout);
     }
@@ -1778,6 +1852,12 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         rows.removeAllViews();
         String query = queryValue == null ? "" : queryValue.trim().toLowerCase(Locale.ROOT);
         List<RemoteIMContact> contacts = new ArrayList<>(session.chatState().contacts());
+        List<RemoteIMGroup> groups = new ArrayList<>(session.groups());
+        groups.removeIf(group -> !query.isEmpty()
+            && !group.name().toLowerCase(Locale.ROOT).contains(query)
+            && (session.latestGroupMessage(group.groupId()) == null
+                || !session.latestGroupMessage(group.groupId()).text()
+                    .toLowerCase(Locale.ROOT).contains(query)));
         contacts.removeIf(contact -> {
             if (query.isEmpty()) return false;
             RemoteIMMessage latest = latestMessage(contact.userId());
@@ -1785,19 +1865,21 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 && !contact.displayName().toLowerCase(Locale.ROOT).contains(query)
                 && (latest == null || !latest.text().toLowerCase(Locale.ROOT).contains(query));
         });
-        contacts.sort((left, right) -> {
-            RemoteIMMessage leftMessage = latestMessage(left.userId());
-            RemoteIMMessage rightMessage = latestMessage(right.userId());
-            long leftTime = leftMessage == null ? 0 : leftMessage.createdAtMillis();
-            long rightTime = rightMessage == null ? 0 : rightMessage.createdAtMillis();
-            if (leftTime == rightTime) return left.displayName().compareToIgnoreCase(right.displayName());
-            return Long.compare(rightTime, leftTime);
+        List<Object> conversations = new ArrayList<>();
+        conversations.addAll(groups); conversations.addAll(contacts);
+        conversations.sort((left,right) -> {
+            long leftTime = conversationTime(left), rightTime = conversationTime(right);
+            return leftTime == rightTime ? conversationTitle(left).compareToIgnoreCase(conversationTitle(right))
+                : Long.compare(rightTime,leftTime);
         });
-
-        if (!query.isEmpty() && !contacts.isEmpty()) {
-            rows.addView(searchSectionLabel("联系人"), match(dp(34)));
-        }
-        for (RemoteIMContact contact : contacts) {
+        if (!query.isEmpty() && !conversations.isEmpty())
+            rows.addView(searchSectionLabel("会话"), match(dp(34)));
+        for (Object item : conversations) {
+            if (item instanceof RemoteIMGroup) {
+                rows.addView(groupConversationRow((RemoteIMGroup) item), match(dp(72)));
+                continue;
+            }
+            RemoteIMContact contact = (RemoteIMContact) item;
             View rowContent = conversationRow(contact);
             SwipeActionRow row = new SwipeActionRow(
                 this,
@@ -1826,7 +1908,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             }
         }
 
-        if (contacts.isEmpty()
+        if (contacts.isEmpty() && groups.isEmpty()
             && !searchingMessages
             && (messageHits == null || messageHits.isEmpty())) {
             String title = query.isEmpty() ? "暂无会话" : "没有搜索结果";
@@ -1835,6 +1917,20 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
                 : "换个关键词再试试。";
             rows.addView(emptyState("○", title, detail), match(dp(260)));
         }
+    }
+
+    private long conversationTime(Object item) {
+        if (item instanceof RemoteIMGroup) {
+            RemoteIMGroupMessage message = session.latestGroupMessage(((RemoteIMGroup) item).groupId());
+            return message == null ? 0 : message.createdAtMillis();
+        }
+        RemoteIMMessage message = latestMessage(((RemoteIMContact) item).userId());
+        return message == null ? 0 : message.createdAtMillis();
+    }
+
+    private String conversationTitle(Object item) {
+        return item instanceof RemoteIMGroup ? ((RemoteIMGroup) item).name()
+            : ((RemoteIMContact) item).displayName();
     }
 
     private TextView searchSectionLabel(String title) {
@@ -1924,6 +2020,185 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return row;
     }
 
+    private void showMessageActionMenu(View anchor) {
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(6), dp(6), dp(6), dp(6));
+        menu.setBackground(MaiChatTheme.bordered(Color.rgb(43, 48, 55),
+            Color.rgb(65, 72, 82), 10, this));
+        PopupWindow popup = new PopupWindow(menu, dp(184),
+            ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        String[] labels = {"发起群聊", "添加朋友", "扫一扫"};
+        Runnable[] actions = {this::showCreateGroupDialog, this::showAddContactDialog,
+            () -> startActivityForResult(new Intent(this, FriendQrScanActivity.class), REQUEST_FRIEND_SCAN)};
+        for (int index = 0; index < labels.length; index++) {
+            int selected = index;
+            TextView row = MaiChatTheme.label(this, labels[index], 15, Color.WHITE);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(16), 0, dp(12), 0);
+            row.setContentDescription(labels[index]);
+            row.setOnClickListener(view -> { popup.dismiss(); actions[selected].run(); });
+            menu.addView(row, match(dp(48)));
+        }
+        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(10));
+        popup.showAsDropDown(anchor, -dp(128), dp(2));
+    }
+
+    private View groupConversationRow(RemoteIMGroup group) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), 0, dp(16), 0);
+        row.setBackgroundColor(renderedLandscapeIm && group.groupId().equals(activeGroupId)
+            ? MaiChatTheme.NAV_MESSAGES_SOFT : Color.WHITE);
+        TextView avatar = MaiChatTheme.label(this, "群", 18, MaiChatTheme.BLUE_DARK);
+        avatar.setGravity(Gravity.CENTER);
+        avatar.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE_SOFT, 11, this));
+        row.addView(avatar, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, -2, 1);
+        textParams.leftMargin = dp(12);
+        row.addView(text, textParams);
+        LinearLayout titleLine = new LinearLayout(this);
+        titleLine.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = MaiChatTheme.label(this, group.name(), 16, MaiChatTheme.TEXT);
+        title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        titleLine.addView(title, new LinearLayout.LayoutParams(0, dp(24), 1));
+        RemoteIMGroupMessage latest = session.latestGroupMessage(group.groupId());
+        if (latest != null) titleLine.addView(MaiChatTheme.text(this,
+            timestamp(latest.createdAtMillis()), 11, MaiChatTheme.SECONDARY), wrapWrap());
+        text.addView(titleLine, match(dp(24)));
+        LinearLayout subtitleLine = new LinearLayout(this);
+        subtitleLine.setGravity(Gravity.CENTER_VERTICAL);
+        String preview = latest == null ? group.memberCount() + " 位成员" : latest.text();
+        TextView subtitle = MaiChatTheme.text(this, preview, 13, MaiChatTheme.SECONDARY);
+        subtitle.setSingleLine(true); subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        subtitleLine.addView(subtitle, new LinearLayout.LayoutParams(0, dp(22), 1));
+        int unread = session.groupUnreadCount(group.groupId());
+        if (unread > 0) subtitleLine.addView(unreadBadge(unread), wrapWrap());
+        text.addView(subtitleLine, match(dp(22)));
+        row.setContentDescription(group.name() + " 群聊" + (unread > 0 ? " " + unread + " 条未读" : ""));
+        row.setOnClickListener(view -> openGroup(group.groupId()));
+        return row;
+    }
+
+    private void showCreateGroupDialog() {
+        session.refreshAcceptedFriends();
+        List<RemoteIMContact> friends = new ArrayList<>(session.acceptedFriends());
+        friends.sort((left,right) -> left.displayName().compareToIgnoreCase(right.displayName()));
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(6), dp(20), dp(10));
+        EditText name = new EditText(this);
+        name.setHint("群聊名称（最多 30 字）");
+        name.setSingleLine(true);
+        name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(30)});
+        form.addView(name, match(dp(52)));
+        TextView membersLabel = MaiChatTheme.label(this, "邀请好友 · 已选 0 人", 14, MaiChatTheme.TEXT);
+        LinearLayout.LayoutParams labelParams = match(dp(42));
+        labelParams.topMargin = dp(8);
+        form.addView(membersLabel,labelParams);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(rows,matchWrap());
+        form.addView(scroll,new LinearLayout.LayoutParams(-1,
+            dp(friends.isEmpty() ? 92 : Math.min(260,Math.max(58,friends.size() * 48)))));
+        java.util.Set<String> selected = new java.util.LinkedHashSet<>();
+        if (friends.isEmpty()) {
+            TextView empty = MaiChatTheme.text(this,"还没有可以邀请的好友，请先添加朋友。",14,
+                MaiChatTheme.SECONDARY);
+            empty.setGravity(Gravity.CENTER_VERTICAL);
+            rows.addView(empty,match(dp(70)));
+        }
+        for (RemoteIMContact friend : friends) {
+            CheckBox check = new CheckBox(this);
+            check.setText(friend.displayName());
+            check.setTextSize(15);
+            check.setContentDescription("邀请 " + friend.displayName());
+            check.setOnCheckedChangeListener((button,checked) -> {
+                if (checked && selected.size() >= 19) {
+                    button.setChecked(false); toast("最多邀请 19 位好友"); return;
+                }
+                if (checked) selected.add(friend.userId()); else selected.remove(friend.userId());
+                membersLabel.setText("邀请好友 · 已选 " + selected.size() + " 人");
+            });
+            rows.addView(check,match(dp(48)));
+        }
+        TextView error = MaiChatTheme.text(this,"最多邀请 19 位好友，含你共 20 人",12,
+            MaiChatTheme.SECONDARY);
+        error.setPadding(0,dp(8),0,0);
+        form.addView(error,matchWrap());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("发起群聊")
+            .setView(form)
+            .setNegativeButton("取消",null)
+            .setPositiveButton(friends.isEmpty() ? "添加朋友" : "创建群聊",null)
+            .create();
+        final boolean[] creating = {false};
+        final RemoteIMGroup[] recovered = {null};
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(view -> {
+                if (friends.isEmpty()) {
+                    dialog.dismiss(); showAddContactDialog(); return;
+                }
+                if (recovered[0] != null) {
+                    dialog.dismiss(); openGroup(recovered[0].groupId()); return;
+                }
+                if (creating[0]) return;
+                String title = name.getText().toString().trim();
+                if (title.isEmpty()) { name.setError("请填写群聊名称"); return; }
+                if (selected.isEmpty()) { error.setText("至少选择一位好友");
+                    error.setTextColor(MaiChatTheme.RED); return; }
+                creating[0] = true;
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                error.setText("正在创建群聊…");
+                session.createGroup(title,new ArrayList<>(selected),
+                    (group,activated,newlyCreated,failure) -> {
+                    creating[0] = false;
+                    if (!dialog.isShowing()) return;
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                    if (group == null) {
+                        error.setText(failure == null ? "创建失败，请重试" : failure);
+                        error.setTextColor(MaiChatTheme.RED);
+                    } else if (activated) {
+                        dialog.dismiss(); openGroup(group.groupId());
+                    } else {
+                        recovered[0] = group;
+                        error.setText("群聊已创建，成员通知尚未送达。请打开现有群发送一条消息。\n"
+                            + (failure == null ? "" : failure));
+                        error.setTextColor(MaiChatTheme.TEXT);
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText("打开已创建群聊");
+                    }
+                });
+            }));
+        dialog.show();
+    }
+
+    private void openGroup(String groupId) {
+        if (session.group(groupId) == null) return;
+        hideKeyboard();
+        if (activeChatUserId != null) {
+            rememberDraft(); session.setConversationVisible(activeChatUserId,false);
+            activeChatUserId = null;
+        }
+        if (activeGroupId == null) {
+            chatBackdrop = renderedLandscapeIm ? null : root;
+            returnTab = activeTab;
+        }
+        activeGroupId = groupId;
+        activeTab = RemoteIMTab.MESSAGES;
+        groupStickToLatest = true;
+        groupWindowSize = 20;
+        session.setGroupConversationVisible(groupId,true);
+        session.loadGroupMessages(groupId,true);
+        render();
+    }
+
     private void openChat(String userId) {
         allowKeyboardLocation = true;
         rememberDraft();
@@ -1998,6 +2273,176 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             }
         });
         refreshChatMessages();
+    }
+
+    private void renderGroupDetail(String groupId) {
+        RemoteIMGroup group = session.group(groupId);
+        if (group == null) { activeGroupId = null; renderConversationList(); return; }
+        renderedGroupId = groupId;
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8),dp(4),dp(16),dp(4));
+        header.setBackgroundColor(Color.WHITE);
+        View back = symbolButton(MaiChatSymbolView.Symbol.CHEVRON_LEFT,
+            MaiChatTheme.TEXT,24,Color.TRANSPARENT,0);
+        back.setContentDescription("返回会话列表");
+        back.setOnClickListener(view -> {
+            if (renderedLandscapeIm) finishGroupBack();
+            else if (swipeBack != null) swipeBack.goBack();
+        });
+        header.addView(back,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = MaiChatTheme.label(this,group.name(),18,MaiChatTheme.TEXT);
+        title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END);
+        labels.addView(title,match(dp(26)));
+        labels.addView(MaiChatTheme.text(this,group.memberCount() + " 位成员",12,
+            MaiChatTheme.SECONDARY),match(dp(18)));
+        header.addView(labels,new LinearLayout.LayoutParams(0,dp(46),1));
+        content.addView(header,match(dp(58)));
+
+        groupScroll = new ScrollView(this);
+        groupScroll.setFillViewport(true);
+        groupScroll.setBackgroundColor(MaiChatTheme.PAGE);
+        groupRows = new LinearLayout(this);
+        groupRows.setOrientation(LinearLayout.VERTICAL);
+        groupRows.setPadding(dp(16),dp(12),dp(16),dp(16));
+        groupScroll.addView(groupRows,matchWrap());
+        groupScroll.setOnScrollChangeListener((view,scrollX,scrollY,oldX,oldY) -> {
+            if (groupRows == null || groupScroll == null) return;
+            groupStickToLatest = scrollY >= Math.max(0,groupRows.getHeight()
+                - groupScroll.getHeight() - dp(48));
+        });
+        content.addView(groupScroll,new LinearLayout.LayoutParams(-1,0,1));
+
+        LinearLayout composer = new LinearLayout(this);
+        composer.setOrientation(LinearLayout.HORIZONTAL);
+        composer.setGravity(Gravity.BOTTOM);
+        composer.setPadding(dp(14),dp(8),dp(14),dp(10));
+        composer.setBackgroundColor(Color.WHITE);
+        groupDraftInput = new EditText(this);
+        groupDraftInput.setHint("发送文字消息");
+        groupDraftInput.setTextSize(16);
+        groupDraftInput.setMinLines(1);
+        groupDraftInput.setMaxLines(4);
+        groupDraftInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        groupDraftInput.setBackground(MaiChatTheme.bordered(MaiChatTheme.PAGE,
+            MaiChatTheme.BORDER,12,this));
+        groupDraftInput.setPadding(dp(12),dp(8),dp(12),dp(8));
+        groupDraftInput.setText(groupDrafts.getOrDefault(displayedOwner + "\0" + groupId,""));
+        groupDraftInput.addTextChangedListener(new SimpleTextWatcher() {
+            @Override public void afterTextChanged(Editable value) {
+                groupDrafts.put(displayedOwner + "\0" + groupId,value.toString());
+            }
+        });
+        composer.addView(groupDraftInput,new LinearLayout.LayoutParams(0,dp(44),1));
+        TextView send = MaiChatTheme.label(this,"↑",23,Color.WHITE);
+        send.setGravity(Gravity.CENTER);
+        send.setContentDescription("发送群消息");
+        send.setBackground(MaiChatTheme.rounded(MaiChatTheme.BLUE,22,this));
+        LinearLayout.LayoutParams sendParams = new LinearLayout.LayoutParams(dp(44),dp(44));
+        sendParams.leftMargin = dp(10);
+        composer.addView(send,sendParams);
+        send.setOnClickListener(view -> {
+            String body = groupDraftInput.getText().toString().trim();
+            if (body.isEmpty()) return;
+            if (!session.groupTransportReady()) {
+                toast("IM 尚未连接"); return;
+            }
+            session.sendGroupText(groupId,body);
+            groupDraftInput.setText("");
+            groupDrafts.put(displayedOwner + "\0" + groupId,"");
+            groupStickToLatest = true;
+        });
+        content.addView(composer,matchWrap());
+        groupFirstRenderedId = null;
+        renderGroupRows();
+        groupScroll.post(() -> { if (groupScroll != null) groupScroll.fullScroll(View.FOCUS_DOWN); });
+    }
+
+    private void renderGroupRows() {
+        if (groupRows == null || groupScroll == null || activeGroupId == null) return;
+        String id = activeGroupId;
+        List<RemoteIMGroupMessage> all = session.groupMessages(id);
+        List<RemoteIMGroupMessage> messages = all.subList(
+            Math.max(0,all.size() - groupWindowSize),all.size());
+        int oldHeight = groupRows.getHeight();
+        int oldScrollY = groupScroll.getScrollY();
+        String firstId = messages.isEmpty() ? null : messages.get(0).id();
+        boolean prepended = false;
+        if (groupFirstRenderedId != null) for (int index = 1; index < messages.size(); index++)
+            if (groupFirstRenderedId.equals(messages.get(index).id())) { prepended = true; break; }
+        groupFirstRenderedId = firstId;
+        groupRows.removeAllViews();
+        if (all.size() > groupWindowSize || session.hasEarlierGroupMessages(id)
+            || session.isLoadingGroupMessages(id)
+            && messages.isEmpty()) {
+            TextView load = MaiChatTheme.label(this,
+                session.isLoadingGroupMessages(id) ? "正在加载…" : "加载更早消息",
+                13,MaiChatTheme.BLUE_DARK);
+            load.setGravity(Gravity.CENTER);
+            load.setContentDescription("加载更早群消息");
+            load.setEnabled(!session.isLoadingGroupMessages(id));
+            load.setOnClickListener(view -> {
+                groupWindowSize += 20;
+                if (all.size() > groupWindowSize - 20) renderGroupRows();
+                else session.loadGroupMessages(id,false);
+            });
+            groupRows.addView(load,match(dp(48)));
+        }
+        if (messages.isEmpty() && !session.isLoadingGroupMessages(id)) {
+            TextView empty = MaiChatTheme.text(this,"群聊已创建，发条消息开始聊天吧",14,
+                MaiChatTheme.SECONDARY);
+            empty.setGravity(Gravity.CENTER);
+            groupRows.addView(empty,match(dp(180)));
+        }
+        for (RemoteIMGroupMessage message : messages) {
+            boolean outgoing = message.senderId().equals(session.chatState().ownerUserId());
+            LinearLayout outer = new LinearLayout(this);
+            outer.setOrientation(LinearLayout.VERTICAL);
+            outer.setGravity(outgoing ? Gravity.END : Gravity.START);
+            LinearLayout.LayoutParams outerParams = matchWrap();
+            outerParams.bottomMargin = dp(12);
+            groupRows.addView(outer,outerParams);
+            if (!outgoing) {
+                String sender = session.groupSenderName(message.senderId());
+                TextView name = MaiChatTheme.text(this,sender,12,MaiChatTheme.SECONDARY);
+                outer.addView(name,matchWrap());
+            }
+            TextView bubble = MaiChatTheme.text(this,message.text(),15,MaiChatTheme.TEXT);
+            bubble.setPadding(dp(13),dp(10),dp(13),dp(10));
+            bubble.setBackground(MaiChatTheme.rounded(outgoing ? MaiChatTheme.BLUE_SOFT
+                : Color.WHITE,14,this));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams bubbleParams = wrapWrap();
+            bubbleParams.topMargin = dp(4);
+            bubbleParams.width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(110),
+                dp(300));
+            outer.addView(bubble,bubbleParams);
+            String delivery = message.status() == RemoteIMGroupMessage.Status.PENDING
+                ? " · 发送中" : message.status() == RemoteIMGroupMessage.Status.FAILED
+                ? " · 发送失败" : "";
+            TextView time = MaiChatTheme.text(this,
+                timestamp(message.createdAtMillis()) + delivery,11,
+                message.status() == RemoteIMGroupMessage.Status.FAILED
+                    ? MaiChatTheme.RED : MaiChatTheme.SECONDARY);
+            time.setGravity(outgoing ? Gravity.END : Gravity.START);
+            outer.addView(time,matchWrap());
+        }
+        if (groupStickToLatest) {
+            groupScroll.post(() -> {
+                if (id.equals(activeGroupId) && groupScroll != null)
+                    groupScroll.fullScroll(View.FOCUS_DOWN);
+            });
+        } else if (prepended) {
+            groupRows.post(() -> {
+                if (id.equals(activeGroupId) && groupScroll != null)
+                    groupScroll.scrollTo(0,oldScrollY + Math.max(0,groupRows.getHeight() - oldHeight));
+            });
+        }
     }
 
     private void refreshChatMessages() {

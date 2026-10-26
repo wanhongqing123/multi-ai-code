@@ -29,6 +29,14 @@ public:
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void requestFriend(const QString& userId, RemoteIMCompletion completion) override;
     void refreshFriendList() override;
+    void joinedGroups(RemoteIMGroupsCompletion completion) override;
+    void createGroup(const QString& name, const QStringList& memberIds,
+                     RemoteIMGroupCompletion completion) override;
+    void sendGroupText(const QString& groupId, const QString& text,
+                       RemoteIMSendCompletion completion) override;
+    void groupHistory(const QString& groupId, int count, qint64 beforeSequence,
+                      RemoteIMGroupHistoryCompletion completion) override;
+    void markGroupRead(const QString& groupId, RemoteIMCompletion completion) override;
     void friendRequests(RemoteIMFriendRequestsCompletion completion) override;
     void decideFriendRequest(const QString& userId, bool accept,
                              RemoteIMCompletion completion) override;
@@ -77,6 +85,9 @@ private:
     QString sdkConfigJson() const;
     void handleIncomingMessages(const QString& jsonMessages);
     void handleIncomingMessage(const QJsonObject& message);
+    static RemoteIMGroupMessage groupTextMessage(const QJsonObject& message, const QString& groupId,
+                                                 const QString& ownerUserId);
+    void handleGroupHistoryPayload(const QString& groupId, const QString& payload, bool live);
     // message 需预填 id/方向/时间等字段（附件 localPath 由下载完成后补上），
     // 下载完经 messagesReceived 通道送出，保持稳定 id 供本地库去重。
     // live=true 表示来自实时推送（RecvNewMsg），送 liveMessagesReceived（计未读红点）；

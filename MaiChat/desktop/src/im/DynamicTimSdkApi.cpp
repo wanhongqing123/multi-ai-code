@@ -87,6 +87,10 @@ DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(lib
     logout_ = resolve<LogoutFn>("TIMLogout");
     sendMessage_ = resolve<SendMessageFn>("TIMMsgSendMessage");
     getConversationList_ = resolve<GetConversationListFn>("TIMConvGetConvList");
+    createGroup_ = resolve<GroupCreateFn>("TIMGroupCreate");
+    getJoinedGroupList_ = resolve<GetJoinedGroupListFn>("TIMGroupGetJoinedGroupList");
+    getGroupInfoList_ = resolve<GroupCreateFn>("TIMGroupGetGroupInfoList");
+    cleanConversationUnread_ = resolve<CleanConversationUnreadFn>("TIMConvCleanConversationUnreadMessageCount");
     getFriendList_ = resolve<GetFriendListFn>("TIMFriendshipGetFriendProfileList");
     getUserProfiles_ = resolve<GetUserProfilesFn>("TIMProfileGetUserProfileList");
     modifySelfProfile_ = resolve<FriendOperationFn>("TIMProfileModifySelfUserProfile");
@@ -211,6 +215,56 @@ int DynamicTimSdkApi::getConversationList(TimSdkCompletion completion) {
     if (!getConversationList_) return completeIfImmediateFailure(-1, std::move(completion));
     auto* heapCompletion = new TimSdkCompletion(std::move(completion));
     const int result = getConversationList_(completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+int DynamicTimSdkApi::createGroup(const QString& request, TimSdkCompletion completion) {
+    if (!createGroup_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = createGroup_(request.toUtf8().constData(), completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+int DynamicTimSdkApi::getJoinedGroupList(TimSdkCompletion completion) {
+    if (!getJoinedGroupList_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = getJoinedGroupList_(completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+int DynamicTimSdkApi::getGroupInfoList(const QString& request, TimSdkCompletion completion) {
+    if (!getGroupInfoList_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = getGroupInfoList_(request.toUtf8().constData(), completeOnce, heapCompletion);
+    if (result != 0) {
+        TimSdkCompletion failedCompletion = std::move(*heapCompletion);
+        delete heapCompletion;
+        return completeIfImmediateFailure(result, std::move(failedCompletion));
+    }
+    return result;
+}
+
+int DynamicTimSdkApi::cleanConversationUnread(const QString& conversationId,
+                                               TimSdkCompletion completion) {
+    if (!cleanConversationUnread_) return completeIfImmediateFailure(-1, std::move(completion));
+    auto* heapCompletion = new TimSdkCompletion(std::move(completion));
+    const int result = cleanConversationUnread_(conversationId.toUtf8().constData(), 0, 0,
+                                                completeOnce, heapCompletion);
     if (result != 0) {
         TimSdkCompletion failedCompletion = std::move(*heapCompletion);
         delete heapCompletion;

@@ -185,6 +185,9 @@ private:
     void updateNavigationSelection(QPushButton* selectedButton);
     void openAddContactDialog();
     void openFriendRequestsDialog();
+    void openCreateGroupDialog();
+    void openGroupConversation(const QString& groupId);
+    void refreshGroupConversation();
     // 处理消息框里的 Ctrl+V：把剪贴板里的图片/文件作为内联对象插入到输入框中（不立即发送），
     // 返回 true 表示已消费；否则返回 false 交给 QTextEdit 默认粘贴文本。
     bool handleComposerPaste();
@@ -361,6 +364,17 @@ private:
     int videoDockVerticalExtent_ = 0;
     QPointer<QWidget> videoDialog_;
     QWidget* messagesPage_ = nullptr;
+    QStackedWidget* chatConversationStack_ = nullptr;
+    QWidget* groupConversationPane_ = nullptr;
+    QLabel* groupTitleLabel_ = nullptr;
+    QLabel* groupSubtitleLabel_ = nullptr;
+    QScrollArea* groupMessageScroll_ = nullptr;
+    QWidget* groupMessageContainer_ = nullptr;
+    QVBoxLayout* groupMessageLayout_ = nullptr;
+    QTextEdit* groupMessageEditor_ = nullptr;
+    QPushButton* groupSendButton_ = nullptr;
+    QPushButton* groupLoadEarlierButton_ = nullptr;
+    QString activeGroupId_;
     QWidget* cloudDrivePage_ = nullptr;
     QWidget* contactsPage_ = nullptr;
     QStackedWidget* contactProfileStack_ = nullptr;

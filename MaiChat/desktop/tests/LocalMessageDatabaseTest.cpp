@@ -5,6 +5,7 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
+#include <limits>
 
 #include "model/ChatState.h"
 #include "storage/LocalMessageDatabase.h"
@@ -50,7 +51,42 @@ private slots:
     void contactProfileRefreshKeepsLocalGroup();
     void healsContactPointingAtMissingGroup();
     void upgradesPreGroupDatabaseWithoutLosingContacts();
+    void groupHistoryPagesSeparatelyAndSurvivesMembershipRemoval();
 };
+
+void LocalMessageDatabaseTest::groupHistoryPagesSeparatelyAndSurvivesMembershipRemoval() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("history.sqlite"));
+    {
+        LocalMessageDatabase db(path);
+        QVERIFY(db.isOpen());
+        db.upsertGroup({QStringLiteral("@TGS#one"), QStringLiteral("Team"), 3});
+        for (int i = 1; i <= 23; ++i) {
+            const RemoteIMGroupMessage message{
+                QStringLiteral("group-msg-%1").arg(i, 3, 10, QLatin1Char('0')),
+                QStringLiteral("@TGS#one"), QStringLiteral("friend"),
+                QStringLiteral("message %1").arg(i), i * 1000LL, i, false, false, false};
+            QVERIFY(db.insertGroupMessageIfAbsent(message));
+            QVERIFY(!db.insertGroupMessageIfAbsent(message));
+        }
+        QCOMPARE(db.groupMessageCount(QStringLiteral("@TGS#one")), 23);
+        const auto latest = db.groupMessagesBefore(QStringLiteral("@TGS#one"),
+            std::numeric_limits<qint64>::max(), QStringLiteral("~"), 20);
+        QCOMPARE(latest.size(), 20);
+        QCOMPARE(latest.first().sequence, qint64(4));
+        const auto older = db.groupMessagesBefore(QStringLiteral("@TGS#one"),
+            latest.first().createdAtMillis, latest.first().id, 20);
+        QCOMPARE(older.size(), 3);
+        QCOMPARE(older.first().sequence, qint64(1));
+        db.removeGroup(QStringLiteral("@TGS#one"));
+        QVERIFY(db.groups().isEmpty());
+        QCOMPARE(db.groupMessageCount(QStringLiteral("@TGS#one")), 23);
+    }
+    LocalMessageDatabase reopened(path);
+    reopened.upsertGroup({QStringLiteral("@TGS#one"), QStringLiteral("Team"), 3});
+    QCOMPARE(reopened.groups().size(), 1);
+    QCOMPARE(reopened.groupMessageCount(QStringLiteral("@TGS#one")), 23);
+}
 
 void LocalMessageDatabaseTest::insertsAndDeduplicatesById() {
     QTemporaryDir dir;

@@ -102,6 +102,7 @@ class MainWindowLayoutTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void groupMenuCreatesAndOpensTextConversation();
     void transientActivityFollowsOnlyActivityEventsAcrossConversationSwitches();
     void transientActivityStaysAfterNewOutgoingMessage();
     void activityDurationUsesMinutesAfterSixtySeconds();
@@ -209,6 +210,68 @@ private slots:
     void conversationListBreaksTimeTiesByName();
     void droppingAnImageFileSendsTheOriginalFileAsAnImage();
 };
+
+void MainWindowLayoutTest::groupMenuCreatesAndOpensTextConversation() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.connectToService(123456, QStringLiteral("sig"));
+    app.addContact(QStringLiteral("friend-a"), QStringLiteral("Friend A"));
+    MainWindow window(app);
+    window.show();
+    QTRY_VERIFY(window.isVisible());
+    auto *add = window.findChild<QPushButton*>(QStringLiteral("addConversationButton"));
+    QVERIFY(add);
+    add->click();
+    QMenu* menu = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((menu = add->findChild<QMenu*>()) != nullptr && menu->isVisible(), 1000);
+    QAction* createAction = nullptr;
+    for (QAction* action : menu->actions())
+        if (action->text() == QStringLiteral("发起群聊")) createAction = action;
+    QVERIFY(createAction);
+    QTimer::singleShot(80, [] {
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<QDialog*>(widget);
+            if (!dialog || dialog->objectName() != QStringLiteral("createGroupDialog")) continue;
+            auto* name = dialog->findChild<QLineEdit*>(QStringLiteral("groupNameInput"));
+            auto* members = dialog->findChild<QListWidget*>(QStringLiteral("groupMemberPicker"));
+            auto* create = dialog->findChild<QPushButton*>(QStringLiteral("groupCreateButton"));
+            if (!name || !members || members->count() != 1 || !create) return;
+            name->setText(QStringLiteral("Project chat"));
+            members->item(0)->setCheckState(Qt::Checked);
+            create->click();
+            return;
+        }
+    });
+    menu->hide();
+    createAction->trigger();
+    QTRY_COMPARE(app.groups().size(), 1);
+    QTRY_VERIFY(window.findChild<QWidget*>(QStringLiteral("groupConversationPane"))->isVisible());
+    QCOMPARE(window.findChild<QLabel*>(QStringLiteral("groupChatTitle"))->text(),
+             QStringLiteral("Project chat"));
+    auto* editor = window.findChild<QTextEdit*>(QStringLiteral("groupMessageEditor"));
+    auto* send = window.findChild<QPushButton*>(QStringLiteral("groupSendButton"));
+    QVERIFY(editor && send);
+    editor->setPlainText(QStringLiteral("hello group"));
+    send->click();
+    QTRY_COMPARE(fake->lastGroupText(), QStringLiteral("hello group"));
+    QCOMPARE(fake->lastGroupId(), app.groups().first().groupId);
+    fake->emitIncomingGroupText(app.groups().first().groupId, QStringLiteral("friend-a"),
+                                QStringLiteral("reply from friend"), QStringLiteral("group-reply#0"));
+    QTRY_VERIFY(window.findChildren<QLabel*>(QStringLiteral("groupMessageText")).size() >= 2);
+    QTest::qWait(100);
+    int visibleMessages = 0;
+    for (auto *label : window.findChildren<QLabel*>(QStringLiteral("groupMessageText")))
+        if (label->isVisible()) ++visibleMessages;
+    QCOMPARE(visibleMessages, 2);
+    const QString screenshot = qEnvironmentVariable("MAICHAT_GROUP_SCREENSHOT");
+    if (!screenshot.isEmpty()) QVERIFY(window.grab().save(screenshot));
+    auto *conversations = window.findChild<QListWidget*>(QStringLiteral("conversationList"));
+    QVERIFY(conversations && conversations->count() == 2);
+    conversations->setCurrentRow(1);
+    QTRY_VERIFY(!window.findChild<QWidget*>(QStringLiteral("groupConversationPane"))->isVisible());
+    QVERIFY(app.chatState().messagesWith(QStringLiteral("friend-a")).isEmpty());
+}
 
 void MainWindowLayoutTest::transientActivityFollowsOnlyActivityEventsAcrossConversationSwitches() {
     auto client = std::make_unique<FakeRemoteIMClient>();

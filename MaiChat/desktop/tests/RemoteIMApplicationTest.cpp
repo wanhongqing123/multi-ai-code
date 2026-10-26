@@ -43,7 +43,170 @@ private slots:
     void rejectsInternalAttachmentPlaceholderAsPlainText();
     void rejectsUnsupportedVoiceBeforeQueueing();
     void disconnectsActiveImOnAccountExit();
+    void groupChatIsSeparateFromDirectMessagesAndSurvivesRestart();
+    void membershipRemovalHidesGroupWithoutErasingHistory();
+    void selfEchoBeforeAckWithClockSkewKeepsOneGroupMessage();
+    void mixedLocalAndServerGroupSequencesHaveStableOrder();
+    void groupUnreadAndPreviewArriveBeforeLazyHistoryAndClearOnOpen();
 };
+
+void RemoteIMApplicationTest::groupChatIsSeparateFromDirectMessagesAndSurvivesRestart() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("messages.sqlite"));
+    {
+        auto client = std::make_unique<FakeRemoteIMClient>();
+        auto* fake = client.get();
+        RemoteIMApplication app(QStringLiteral("owner"), std::move(client),
+                                std::make_unique<LocalMessageDatabase>(path));
+        app.connectToService(123456, QStringLiteral("sig"));
+        app.addContact(QStringLiteral("friend-a"), QStringLiteral("Friend A"));
+        RemoteIMGroup created;
+        app.createGroup(QStringLiteral("Project group"), {QStringLiteral("friend-a")},
+                        [&](bool ok, const QString&, const RemoteIMGroup& group) {
+            QVERIFY(ok);
+            created = group;
+        });
+        QTRY_VERIFY(!created.groupId.isEmpty());
+        QCOMPARE(app.groups().size(), 1);
+        QCOMPARE(app.selectedGroupId(), created.groupId);
+        QVERIFY(app.sendGroupText(created.groupId, QStringLiteral("hello group")));
+        QTRY_COMPARE(fake->lastGroupId(), created.groupId);
+        QCOMPARE(fake->lastGroupText(), QStringLiteral("hello group"));
+        fake->emitIncomingGroupText(created.groupId, QStringLiteral("friend-a"),
+                                    QStringLiteral("reply"), QStringLiteral("remote-reply#0"));
+        QTRY_COMPARE(app.groupMessages(created.groupId).size(), 2);
+        QVERIFY(app.chatState().messagesWith(QStringLiteral("friend-a")).isEmpty());
+        const auto contacts = app.chatState().contacts();
+        QVERIFY(std::none_of(contacts.cbegin(), contacts.cend(),
+            [&](const RemoteIMContact& contact) { return contact.userId == created.groupId; }));
+        QCOMPARE(app.groupUnreadCount(created.groupId), 0);
+        app.clearSelectedGroup();
+        fake->emitIncomingGroupText(created.groupId, QStringLiteral("friend-a"),
+                                    QStringLiteral("second reply"), QStringLiteral("remote-reply-2#0"));
+        QCOMPARE(app.groupUnreadCount(created.groupId), 1);
+        app.selectGroup(created.groupId);
+        QCOMPARE(app.groupUnreadCount(created.groupId), 0);
+    }
+    RemoteIMApplication reopened(QStringLiteral("owner"), std::make_unique<FakeRemoteIMClient>(),
+                                 std::make_unique<LocalMessageDatabase>(path));
+    QCOMPARE(reopened.groups().size(), 1);
+    QCOMPARE(reopened.groupMessages(reopened.groups().first().groupId).size(), 3);
+    QVERIFY(reopened.chatState().messages().isEmpty());
+}
+
+void RemoteIMApplicationTest::membershipRemovalHidesGroupWithoutErasingHistory() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("group.sqlite"));
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client),
+                            std::make_unique<LocalMessageDatabase>(path));
+    app.connectToService(123456, QStringLiteral("sig"));
+    app.addContact(QStringLiteral("friend"), QStringLiteral("Friend"));
+    RemoteIMGroup created;
+    app.createGroup(QStringLiteral("Team"), {QStringLiteral("friend")},
+                    [&](bool ok, const QString&, const RemoteIMGroup& group) {
+        QVERIFY(ok);
+        created = group;
+    });
+    QTRY_VERIFY(!created.groupId.isEmpty());
+    app.clearSelectedGroup();
+    emit fake->groupUnreadReceived(created.groupId, 2);
+    emit fake->groupsReceived({RemoteIMGroup{created.groupId, created.name, 2, false, 0}});
+    QCOMPARE(app.groupUnreadCount(created.groupId), 2);
+    app.selectGroup(created.groupId);
+    QCOMPARE(app.groupUnreadCount(created.groupId), 0);
+    QCOMPARE(fake->lastMarkedGroupId(), created.groupId);
+    fake->emitIncomingGroupText(created.groupId, QStringLiteral("friend"),
+                                QStringLiteral("archive me"), QStringLiteral("stable-group-message#0"));
+    QTRY_COMPARE(app.groupMessages(created.groupId).size(), 1);
+    fake->removeGroupForTest(created.groupId);
+    QTRY_VERIFY(app.groups().isEmpty());
+    QCOMPARE(app.selectedGroupId(), QString());
+    LocalMessageDatabase independent(path);
+    QCOMPARE(independent.groupMessageCount(created.groupId), 1);
+}
+
+void RemoteIMApplicationTest::selfEchoBeforeAckWithClockSkewKeepsOneGroupMessage() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.connectToService(123456, QStringLiteral("sig"));
+    app.addContact(QStringLiteral("friend"), QStringLiteral("Friend"));
+    RemoteIMGroup group;
+    app.createGroup(QStringLiteral("Team"), {QStringLiteral("friend")},
+                    [&](bool ok, const QString&, const RemoteIMGroup& created) {
+        QVERIFY(ok);
+        group = created;
+    });
+    QTRY_VERIFY(!group.groupId.isEmpty());
+    emit fake->groupsReceived({RemoteIMGroup{group.groupId, group.name, 2, true}});
+    QVERIFY(app.groups().first().pendingActivation);
+    fake->deferNextSend();
+    QVERIFY(app.sendGroupText(group.groupId, QStringLiteral("activate")));
+    QCOMPARE(app.groupMessages(group.groupId).size(), 1);
+    RemoteIMGroupMessage echo;
+    echo.id = QStringLiteral("fake-remote-1#0");
+    echo.groupId = group.groupId;
+    echo.senderId = QStringLiteral("owner");
+    echo.text = QStringLiteral("activate");
+    echo.createdAtMillis = QDateTime::currentMSecsSinceEpoch() + 60000;
+    echo.sequence = 77;
+    echo.fromSelf = true;
+    emit fake->groupMessagesReceived({echo}, true);
+    QCOMPARE(app.groupMessages(group.groupId).size(), 2);
+    fake->finishDeferredSend();
+    QTRY_COMPARE(app.groupMessages(group.groupId).size(), 1);
+    const auto result = app.groupMessages(group.groupId).first();
+    QCOMPARE(result.id, echo.id);
+    QCOMPARE(result.sequence, echo.sequence);
+    QVERIFY(!result.pending);
+    QVERIFY(!app.groups().first().pendingActivation);
+}
+
+void RemoteIMApplicationTest::mixedLocalAndServerGroupSequencesHaveStableOrder() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    emit fake->groupsReceived({RemoteIMGroup{QStringLiteral("group"), QStringLiteral("Group"), 3}});
+    const RemoteIMGroupMessage sequenceOne{
+        QStringLiteral("z"), QStringLiteral("group"), QStringLiteral("a"),
+        QStringLiteral("one"), 1000, 1};
+    const RemoteIMGroupMessage sequenceTwo{
+        QStringLiteral("a"), QStringLiteral("group"), QStringLiteral("b"),
+        QStringLiteral("two"), 1000, 2};
+    const RemoteIMGroupMessage noSequence{
+        QStringLiteral("m"), QStringLiteral("group"), QStringLiteral("owner"),
+        QStringLiteral("local"), 1000, 0, true, true};
+    emit fake->groupMessagesReceived({sequenceOne, sequenceTwo, noSequence}, false);
+    const auto messages = app.groupMessages(QStringLiteral("group"));
+    QCOMPARE(messages.size(), 3);
+    QCOMPARE(messages.at(0).id, QStringLiteral("m"));
+    QCOMPARE(messages.at(1).id, QStringLiteral("z"));
+    QCOMPARE(messages.at(2).id, QStringLiteral("a"));
+}
+
+void RemoteIMApplicationTest::groupUnreadAndPreviewArriveBeforeLazyHistoryAndClearOnOpen() {
+    auto client = std::make_unique<FakeRemoteIMClient>();
+    auto* fake = client.get();
+    RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+    app.connectToService(123456, QStringLiteral("sig"));
+    const QString id = QStringLiteral("@TGS#new");
+    const RemoteIMGroupMessage preview{QStringLiteral("sdk-preview#0"), id,
+        QStringLiteral("friend"), QStringLiteral("offline message"), 1700000000000LL, 1};
+    emit fake->groupUnreadReceived(id, 2);
+    emit fake->groupMessagesReceived({preview}, false);
+    emit fake->groupsReceived({RemoteIMGroup{id, QStringLiteral("New group"), 3, false, 0}});
+    QCOMPARE(app.groupUnreadCount(id), 2);
+    QCOMPARE(app.groupMessages(id).size(), 1);
+    QCOMPARE(app.groupMessages(id).first().text, QStringLiteral("offline message"));
+    QCOMPARE(fake->groupHistoryRequestCount(), 0);
+    QVERIFY(!app.hasLoadedGroupHistory(id));
+    app.selectGroup(id);
+    QCOMPARE(fake->groupHistoryRequestCount(), 1);
+    QCOMPARE(fake->lastMarkedGroupId(), id);
+    QCOMPARE(app.groupUnreadCount(id), 0);
+}
 
 void RemoteIMApplicationTest::friendRequestWaitsForRemoteAcceptance() {
     auto client = std::make_unique<FakeRemoteIMClient>();

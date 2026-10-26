@@ -28,6 +28,11 @@ public:
                     const QString& jsonMessage,
                     TimSdkCompletion completion) override;
     int getConversationList(TimSdkCompletion completion) override;
+    int createGroup(const QString& request, TimSdkCompletion completion) override;
+    int getJoinedGroupList(TimSdkCompletion completion) override;
+    int getGroupInfoList(const QString& request, TimSdkCompletion completion) override;
+    int cleanConversationUnread(const QString& conversationId,
+                                TimSdkCompletion completion) override;
     int getFriendList(TimSdkCompletion completion) override;
     int getUserProfiles(const QString& request, TimSdkCompletion completion) override;
     int modifySelfProfile(const QString& request, TimSdkCompletion completion) override;
@@ -60,6 +65,11 @@ private:
                                   NativeCompletion completion,
                                   const void* userData);
     using GetConversationListFn = int (*)(NativeCompletion completion, const void* userData);
+    using GroupCreateFn = int (*)(const char* request, NativeCompletion completion, const void* userData);
+    using GetJoinedGroupListFn = int (*)(NativeCompletion completion, const void* userData);
+    using CleanConversationUnreadFn = int (*)(const char* conversationId,
+                                              quint64 cleanTimestamp, quint64 cleanSequence,
+                                              NativeCompletion completion, const void* userData);
     using GetFriendListFn = int (*)(NativeCompletion completion, const void* userData);
     using GetUserProfilesFn = int (*)(const char* request, NativeCompletion completion, const void* userData);
     using SetSelfInfoUpdatedFn = void (*)(NativeReceiveMessages callback, const void* userData);
@@ -96,6 +106,10 @@ private:
     LogoutFn logout_ = nullptr;
     SendMessageFn sendMessage_ = nullptr;
     GetConversationListFn getConversationList_ = nullptr;
+    GroupCreateFn createGroup_ = nullptr;
+    GetJoinedGroupListFn getJoinedGroupList_ = nullptr;
+    GroupCreateFn getGroupInfoList_ = nullptr;
+    CleanConversationUnreadFn cleanConversationUnread_ = nullptr;
     GetFriendListFn getFriendList_ = nullptr;
     GetUserProfilesFn getUserProfiles_ = nullptr;
     FriendOperationFn modifySelfProfile_ = nullptr;

@@ -248,6 +248,23 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // query 按用户 ID 或显示名筛选；limit 限本次最多返回 200 人。
         R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
             R"("maximum":200}}})");
+    add("maichat_list_groups",
+        "List joined MaiChat group conversations. Use query to filter by group ID or name.",
+        R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,)"
+            R"("maximum":200}},"additionalProperties":false})");
+    add("maichat_create_group",
+        "Create a MaiChat text group with 1 to 19 accepted friends. The owner is added "
+        "automatically. Show the complete group name and member list for approval on every call.",
+        R"({"type":"object","properties":{"name":{"type":"string","minLength":1},)"
+            R"("member_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
+            R"("maxItems":19,"uniqueItems":true}},"required":["name","member_ids"],)"
+            R"("additionalProperties":false})",
+        true);
+    add("maichat_get_group_messages",
+        "Read recent text messages from a joined MaiChat group without changing the open chat.",
+        R"({"type":"object","properties":{"group_id":{"type":"string"},)"
+            R"("limit":{"type":"integer","minimum":1,"maximum":20}},)"
+            R"("required":["group_id"],"additionalProperties":false})");
     add("maichat_request_friend",
         "Send a MaiChat friend request by phone number or account ID. Requires user approval. "
         "The recipient must accept.",
@@ -260,7 +277,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
             R"("required":["nickname"]})",
         true);
     add("maichat_list_conversations",
-        "List MaiChat conversations ordered by latest message, including unread counts.",
+        "List direct MaiChat conversations with contacts, ordered by latest message and unread "
+        "count. Use maichat_list_groups for group conversations.",
         // 会话按最新消息排序；limit 只限制返回条数，未读数来自会话记录。
         R"({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":200}}})");
     add("maichat_get_messages",
@@ -315,6 +333,13 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         // peer_id 与 text 均必填；真正发送前弹出用户确认。
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id",)"
             R"("text"]})",
+        true);
+    add("maichat_send_group_text",
+        "Send text to a joined MaiChat group. Show the group and full text for approval "
+        "on every call.",
+        R"({"type":"object","properties":{"group_id":{"type":"string"},)"
+            R"("text":{"type":"string","minLength":1}},"required":["group_id","text"],)"
+            R"("additionalProperties":false})",
         true);
     add("maichat_send_media",
         "Send an accessible Agent workspace image or video as a persistent media bubble, "

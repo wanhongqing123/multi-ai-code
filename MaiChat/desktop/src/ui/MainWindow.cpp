@@ -192,6 +192,7 @@ constexpr int IsGroupHeaderRole = Qt::UserRole + 8;
 constexpr int GroupNameRole = Qt::UserRole + 9;
 constexpr int GroupCollapsedRole = Qt::UserRole + 10;
 constexpr int GroupCountRole = Qt::UserRole + 11;
+constexpr int IsChatGroupRole = Qt::UserRole + 12;
 // 未分组表头在列表里的 GroupNameRole 用空串——和联系人的 groupName 表示法一致。
 // 结果太多时列表本身就没用了，截断并提示收窄关键词。
 constexpr int MaxGlobalSearchResults = 60;
@@ -782,7 +783,19 @@ public:
     const QRect avatarRect(rowRect.left() + UiZoom::s(12),
                            rowRect.top() + UiZoom::s(10), UiZoom::s(40),
                            UiZoom::s(40));
-    if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
+    if (index.data(IsChatGroupRole).toBool()) {
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(QColor(QStringLiteral("#e5f2ff")));
+      painter->drawRoundedRect(avatarRect, UiZoom::s(9), UiZoom::s(9));
+      painter->setPen(QPen(QColor(QStringLiteral("#138bd4")), UiZoom::s(2)));
+      const QPoint center = avatarRect.center();
+      painter->drawEllipse(QPoint(center.x() - UiZoom::s(8), center.y() - UiZoom::s(4)),
+                           UiZoom::s(4), UiZoom::s(4));
+      painter->drawEllipse(QPoint(center.x() + UiZoom::s(7), center.y() - UiZoom::s(4)),
+                           UiZoom::s(4), UiZoom::s(4));
+      painter->drawArc(QRect(center.x() - UiZoom::s(14), center.y() + UiZoom::s(1),
+                             UiZoom::s(28), UiZoom::s(17)), 0, 180 * 16);
+    } else if (!drawRemoteAvatar(painter, avatarRect, avatarUrl, UiZoom::s(8),
                           const_cast<QWidget *>(option.widget))) {
       const qreal dpr =
           option.widget ? option.widget->devicePixelRatioF() : 1.0;
@@ -2284,7 +2297,9 @@ void MainWindow::buildUi() {
   conversationLayout->addLayout(conversationHeader);
   conversationLayout->addWidget(conversationList_, 1);
 
-  auto *chatContentPane = new QWidget(messagesPage_);
+  chatConversationStack_ = new QStackedWidget(messagesPage_);
+  chatConversationStack_->setObjectName(QStringLiteral("chatConversationStack"));
+  auto *chatContentPane = new QWidget(chatConversationStack_);
   chatContentPane->setObjectName(QStringLiteral("chatContentPane"));
   chatContentPane->setMinimumWidth(UiZoom::s(520));
   auto *chatLayout = new QVBoxLayout(chatContentPane);
@@ -2606,8 +2621,82 @@ void MainWindow::buildUi() {
   chatLayout->addWidget(diagnosticsStatusLabel_);
   chatLayout->addWidget(messageComposerSplitter, 1);
 
+  chatConversationStack_->addWidget(chatContentPane);
+  groupConversationPane_ = new QWidget(chatConversationStack_);
+  groupConversationPane_->setObjectName(QStringLiteral("groupConversationPane"));
+  auto *groupLayout = new QVBoxLayout(groupConversationPane_);
+  groupLayout->setContentsMargins(0, 0, 0, 0);
+  groupLayout->setSpacing(0);
+  auto *groupHeader = new QWidget(groupConversationPane_);
+  groupHeader->setObjectName(QStringLiteral("groupChatHeader"));
+  groupHeader->setFixedHeight(UiZoom::s(58));
+  auto *groupHeaderLayout = new QVBoxLayout(groupHeader);
+  groupHeaderLayout->setContentsMargins(UiZoom::s(28), UiZoom::s(7), UiZoom::s(28), UiZoom::s(7));
+  groupHeaderLayout->setSpacing(1);
+  groupTitleLabel_ = new QLabel(groupHeader);
+  groupTitleLabel_->setObjectName(QStringLiteral("groupChatTitle"));
+  QFont groupTitleFont = groupTitleLabel_->font();
+  groupTitleFont.setPixelSize(UiZoom::s(17));
+  groupTitleFont.setWeight(QFont::DemiBold);
+  groupTitleLabel_->setFont(groupTitleFont);
+  groupSubtitleLabel_ = new QLabel(groupHeader);
+  groupSubtitleLabel_->setObjectName(QStringLiteral("groupChatSubtitle"));
+  groupSubtitleLabel_->setStyleSheet(QStringLiteral("color:#8895a7;font-size:12px;"));
+  groupHeaderLayout->addWidget(groupTitleLabel_);
+  groupHeaderLayout->addWidget(groupSubtitleLabel_);
+  groupLayout->addWidget(groupHeader);
+  groupMessageScroll_ = new QScrollArea(groupConversationPane_);
+  groupMessageScroll_->setObjectName(QStringLiteral("groupMessageScroll"));
+  groupMessageScroll_->setWidgetResizable(true);
+  groupMessageScroll_->setFrameShape(QFrame::NoFrame);
+  groupMessageScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  groupMessageContainer_ = new QWidget(groupMessageScroll_);
+  groupMessageContainer_->setObjectName(QStringLiteral("groupMessageContainer"));
+  groupMessageLayout_ = new QVBoxLayout(groupMessageContainer_);
+  groupMessageLayout_->setContentsMargins(UiZoom::s(28), UiZoom::s(18),
+                                          UiZoom::s(28), UiZoom::s(18));
+  groupMessageLayout_->setSpacing(UiZoom::s(12));
+  groupLoadEarlierButton_ = new QPushButton(QStringLiteral("加载更早消息"), groupMessageContainer_);
+  groupLoadEarlierButton_->setObjectName(QStringLiteral("groupLoadEarlierButton"));
+  groupLoadEarlierButton_->setFlat(true);
+  groupLoadEarlierButton_->setCursor(Qt::PointingHandCursor);
+  groupLoadEarlierButton_->setStyleSheet(QStringLiteral("color:#1688ce; padding:8px;"));
+  groupMessageLayout_->addWidget(groupLoadEarlierButton_, 0, Qt::AlignHCenter);
+  groupMessageLayout_->addStretch(1);
+  groupMessageScroll_->setWidget(groupMessageContainer_);
+  groupLayout->addWidget(groupMessageScroll_, 1);
+  auto *groupComposer = new QWidget(groupConversationPane_);
+  groupComposer->setObjectName(QStringLiteral("groupComposer"));
+  auto *groupComposerLayout = new QHBoxLayout(groupComposer);
+  groupComposerLayout->setContentsMargins(UiZoom::s(20), UiZoom::s(12),
+                                          UiZoom::s(20), UiZoom::s(16));
+  groupComposerLayout->setSpacing(UiZoom::s(10));
+  groupMessageEditor_ = new QTextEdit(groupComposer);
+  groupMessageEditor_->setObjectName(QStringLiteral("groupMessageEditor"));
+  groupMessageEditor_->setPlaceholderText(QStringLiteral("发送群消息"));
+  groupMessageEditor_->setAcceptRichText(false);
+  groupMessageEditor_->setMaximumHeight(UiZoom::s(86));
+  groupMessageEditor_->setToolTip(QStringLiteral("Ctrl+Enter 发送"));
+  groupSendButton_ = new QPushButton(QStringLiteral("发送"), groupComposer);
+  groupSendButton_->setObjectName(QStringLiteral("groupSendButton"));
+  groupSendButton_->setCursor(Qt::PointingHandCursor);
+  groupSendButton_->setFixedSize(UiZoom::s(76), UiZoom::s(42));
+  groupComposerLayout->addWidget(groupMessageEditor_, 1);
+  groupComposerLayout->addWidget(groupSendButton_, 0, Qt::AlignBottom);
+  groupLayout->addWidget(groupComposer);
+  groupConversationPane_->setStyleSheet(QStringLiteral(
+      "#groupConversationPane {background:#fff;}"
+      "#groupChatHeader {background:#fff;border-bottom:1px solid #e8eef5;}"
+      "#groupMessageContainer {background:#fff;}"
+      "#groupComposer {border-top:1px solid #e8eef5;background:#fff;}"
+      "#groupMessageEditor {border:1px solid #d8e1eb;border-radius:11px;"
+      "padding:9px;background:#fff;color:#1f2937;}"
+      "#groupSendButton {background:#168ee0;color:white;border:0;border-radius:11px;}"
+      "#groupSendButton:disabled {background:#bfdff2;}"));
+  chatConversationStack_->addWidget(groupConversationPane_);
+
   contentSplitter->addWidget(conversationPane);
-  contentSplitter->addWidget(chatContentPane);
+  contentSplitter->addWidget(chatConversationStack_);
   contentSplitter->setStretchFactor(0, 0);
   contentSplitter->setStretchFactor(1, 1);
   contentSplitter->setSizes(QList<int>() << 320 << 960);
@@ -3373,6 +3462,10 @@ void MainWindow::bindSignals() {
 
   connect(&app_, &RemoteIMApplication::stateChanged, this,
           [this] { refresh(); });
+  connect(&app_, &RemoteIMApplication::groupsChanged, this, [this] {
+    refreshContacts();
+    refreshGroupConversation();
+  });
   connect(&app_, &RemoteIMApplication::selectionChanged, this,
           [this](const QString &) { refreshSelectedConversation(); });
   connect(
@@ -3413,10 +3506,33 @@ void MainWindow::bindSignals() {
   connect(&app_, &RemoteIMApplication::friendRequestSent, this, [this] {
     showToast(QStringLiteral("好友申请已发送，等待对方同意"), 14, 3000);
   });
-  connect(addContactButton_, &QPushButton::clicked, this,
-          [this] { openAddContactDialog(); });
+  connect(addContactButton_, &QPushButton::clicked, this, [this] {
+    auto *menu = new QMenu(addContactButton_);
+    QAction* create = menu->addAction(QStringLiteral("发起群聊"));
+    QAction* addFriend = menu->addAction(QStringLiteral("添加朋友"));
+    connect(create, &QAction::triggered, this, [this] { openCreateGroupDialog(); });
+    connect(addFriend, &QAction::triggered, this, [this] { openAddContactDialog(); });
+    connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+    menu->popup(addContactButton_->mapToGlobal(
+        QPoint(addContactButton_->width() - menu->sizeHint().width(),
+               addContactButton_->height())));
+  });
   connect(friendRequestsButton_, &QPushButton::clicked, this,
           [this] { openFriendRequestsDialog(); });
+  connect(groupLoadEarlierButton_, &QPushButton::clicked, this, [this] {
+    if (!activeGroupId_.isEmpty()) app_.loadEarlierGroupMessages(activeGroupId_);
+  });
+  connect(groupMessageEditor_, &QTextEdit::textChanged, this, [this] {
+    groupSendButton_->setEnabled(!groupMessageEditor_->toPlainText().trimmed().isEmpty()
+                                 && app_.isConnected());
+  });
+  groupSendButton_->setEnabled(false);
+  connect(groupSendButton_, &QPushButton::clicked, this, [this] {
+    const QString message = groupMessageEditor_->toPlainText().trimmed();
+    if (app_.sendGroupText(activeGroupId_, message)) groupMessageEditor_->clear();
+  });
+  connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Return), groupMessageEditor_),
+          &QShortcut::activated, groupSendButton_, &QPushButton::click);
   // 搜索一次要扫所有会话的消息，绝不能挂在每次按键上跑：会话上千条时输入会发涩。
   // 与命令提示条同一套做法——停顿 150ms 才真正执行，输入法组词期间一律不跑。
   globalSearchUpdateTimer_ = new QTimer(this);
@@ -3547,6 +3663,13 @@ void MainWindow::bindSignals() {
           [this](QListWidgetItem *current) {
             if (!current)
               return;
+            if (current->data(IsChatGroupRole).toBool()) {
+              openGroupConversation(current->data(UserIdRole).toString());
+              return;
+            }
+            activeGroupId_.clear();
+            app_.clearSelectedGroup();
+            chatConversationStack_->setCurrentIndex(0);
             const QString userId = current->data(Qt::UserRole).toString();
             if (userId.isEmpty())
               return;
@@ -3597,6 +3720,9 @@ void MainWindow::refresh() {
 }
 
 void MainWindow::refreshSelectedConversation() {
+  activeGroupId_.clear();
+  app_.clearSelectedGroup();
+  chatConversationStack_->setCurrentIndex(0);
   const QString selectedPeer = app_.chatState().selectedPeerId();
   {
     QSignalBlocker blocker(conversationList_);
@@ -3616,6 +3742,122 @@ void MainWindow::refreshSelectedConversation() {
   updateRemoteDesktopButton();
   if (appIsForegroundVisible())
     notificationTracker_.clear(selectedPeer);
+}
+
+void MainWindow::openGroupConversation(const QString& groupId) {
+  const QString id = groupId.trimmed();
+  if (id.isEmpty()) return;
+  activeGroupId_ = id;
+  app_.selectGroup(id);
+  chatConversationStack_->setCurrentWidget(groupConversationPane_);
+  showMessagesPage();
+  {
+    QSignalBlocker blocker(conversationList_);
+    for (int row = 0; row < conversationList_->count(); ++row) {
+      QListWidgetItem *item = conversationList_->item(row);
+      if (!item->data(IsChatGroupRole).toBool() ||
+          item->data(UserIdRole).toString() != id) continue;
+      conversationList_->setCurrentItem(item);
+      break;
+    }
+  }
+  refreshGroupConversation();
+  groupMessageEditor_->setFocus();
+}
+
+void MainWindow::refreshGroupConversation() {
+  if (activeGroupId_.isEmpty() || !groupConversationPane_) return;
+  RemoteIMGroup selected;
+  bool found = false;
+  for (const RemoteIMGroup& group : app_.groups()) {
+    if (group.groupId != activeGroupId_) continue;
+    selected = group;
+    found = true;
+    break;
+  }
+  if (!found) {
+    activeGroupId_.clear();
+    chatConversationStack_->setCurrentIndex(0);
+    return;
+  }
+  groupTitleLabel_->setText(selected.name);
+  groupSubtitleLabel_->setText(selected.memberCount > 0
+      ? QStringLiteral("%1 位成员 · 群聊").arg(selected.memberCount)
+      : QStringLiteral("群聊"));
+  groupSendButton_->setEnabled(app_.isConnected() &&
+                                !groupMessageEditor_->toPlainText().trimmed().isEmpty());
+  groupLoadEarlierButton_->setVisible(app_.hasEarlierGroupMessages(activeGroupId_));
+  auto *scroll = groupMessageScroll_->verticalScrollBar();
+  const int beforeValue = scroll->value();
+  const int beforeMax = scroll->maximum();
+  const bool atBottom = beforeMax - beforeValue <= UiZoom::s(12);
+  // The header button and stretch remain stable. Only message rows are replaced.
+  while (groupMessageLayout_->count() > 2) {
+    QLayoutItem* item = groupMessageLayout_->takeAt(1);
+    if (QWidget* widget = item->widget()) { widget->hide(); widget->deleteLater(); }
+    delete item;
+  }
+  const QList<RemoteIMGroupMessage> messages = app_.groupMessages(activeGroupId_);
+  if (messages.isEmpty()) {
+    auto *empty = new QLabel(QStringLiteral("还没有消息，发一条文字开始聊天"), groupMessageContainer_);
+    empty->setObjectName(QStringLiteral("groupEmptyState"));
+    empty->setAlignment(Qt::AlignCenter);
+    empty->setStyleSheet(QStringLiteral("color:#9aa8ba;padding:35px;"));
+    groupMessageLayout_->insertWidget(1, empty);
+  }
+  for (const RemoteIMGroupMessage& message : messages) {
+    auto *row = new QWidget(groupMessageContainer_);
+    row->setObjectName(QStringLiteral("groupMessageRow"));
+    row->setProperty("groupMessageId", message.id);
+    auto *rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(0);
+    if (message.fromSelf) rowLayout->addStretch(1);
+    auto *bubble = new QWidget(row);
+    bubble->setObjectName(QStringLiteral("groupMessageBubble"));
+    bubble->setMaximumWidth(UiZoom::s(560));
+    bubble->setStyleSheet(message.fromSelf
+        ? QStringLiteral("#groupMessageBubble {background:#e5f3ff;border-radius:12px;}")
+        : QStringLiteral("#groupMessageBubble {background:#f2f5f8;border-radius:12px;}"));
+    auto *bubbleLayout = new QVBoxLayout(bubble);
+    bubbleLayout->setContentsMargins(UiZoom::s(13), UiZoom::s(9),
+                                     UiZoom::s(13), UiZoom::s(9));
+    bubbleLayout->setSpacing(UiZoom::s(5));
+    QString sender = message.fromSelf ? QStringLiteral("我") : message.senderId;
+    if (!message.fromSelf) {
+      for (const RemoteIMContact& contact : app_.chatState().contacts()) {
+        if (contact.userId == message.senderId && !contact.displayName.isEmpty()) {
+          sender = contact.displayName;
+          break;
+        }
+      }
+    }
+    auto *senderLabel = new QLabel(sender, bubble);
+    senderLabel->setObjectName(QStringLiteral("groupMessageSender"));
+    senderLabel->setStyleSheet(QStringLiteral("color:#697b91;font-size:11px;"));
+    auto *body = new QLabel(message.text, bubble);
+    body->setObjectName(QStringLiteral("groupMessageText"));
+    body->setWordWrap(true);
+    body->setTextFormat(Qt::PlainText);
+    body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    body->setStyleSheet(QStringLiteral("color:#1d2939;font-size:14px;"));
+    auto *meta = new QLabel(bubble);
+    meta->setStyleSheet(QStringLiteral("color:#92a0b1;font-size:10px;"));
+    meta->setText(message.failed ? QStringLiteral("发送失败") :
+        message.pending ? QStringLiteral("发送中…") :
+        QDateTime::fromMSecsSinceEpoch(message.createdAtMillis).toString(QStringLiteral("HH:mm")));
+    bubbleLayout->addWidget(senderLabel);
+    bubbleLayout->addWidget(body);
+    bubbleLayout->addWidget(meta, 0, Qt::AlignRight);
+    rowLayout->addWidget(bubble);
+    if (!message.fromSelf) rowLayout->addStretch(1);
+    groupMessageLayout_->insertWidget(groupMessageLayout_->count() - 1, row);
+  }
+  QTimer::singleShot(0, this, [this, scroll, beforeValue, beforeMax, atBottom] {
+    if (!scroll || activeGroupId_.isEmpty()) return;
+    if (atBottom) scroll->setValue(scroll->maximum());
+    else scroll->setValue(beforeValue + qMax(0, scroll->maximum() - beforeMax));
+  });
 }
 
 void MainWindow::refreshContacts() {
@@ -3658,6 +3900,33 @@ void MainWindow::refreshContacts() {
         return a.userId.localeAwareCompare(b.userId) < 0;
       });
 
+  QList<RemoteIMGroup> groups = app_.groups();
+  std::stable_sort(groups.begin(), groups.end(), [this](const auto& a, const auto& b) {
+    const auto left = app_.groupMessages(a.groupId);
+    const auto right = app_.groupMessages(b.groupId);
+    const qint64 leftTime = left.isEmpty() ? 0 : left.last().createdAtMillis;
+    const qint64 rightTime = right.isEmpty() ? 0 : right.last().createdAtMillis;
+    if (leftTime != rightTime) return leftTime > rightTime;
+    return a.name.localeAwareCompare(b.name) < 0;
+  });
+  for (const RemoteIMGroup& group : groups) {
+    const auto messages = app_.groupMessages(group.groupId);
+    const auto latest = messages.isEmpty() ? RemoteIMGroupMessage{} : messages.last();
+    auto *item = new QListWidgetItem();
+    item->setSizeHint(QSize(0, UiZoom::s(76)));
+    item->setData(UserIdRole, group.groupId);
+    item->setData(IsChatGroupRole, true);
+    item->setData(DisplayNameRole, group.name);
+    item->setData(PreviewRole, group.pendingActivation
+        ? QStringLiteral("群已创建，请发一条消息激活") : latest.text);
+    item->setData(TimeRole, latest.createdAtMillis > 0
+        ? QDateTime::fromMSecsSinceEpoch(latest.createdAtMillis).toString(QStringLiteral("HH:mm"))
+        : QString());
+    item->setData(UnreadRole, app_.groupUnreadCount(group.groupId));
+    conversationList_->addItem(item);
+    if (group.groupId == activeGroupId_) selectedRow = conversationList_->count() - 1;
+  }
+
   for (int index = 0; index < contacts.size(); ++index) {
     const RemoteIMContact &contact = contacts[index];
     auto *item = new QListWidgetItem();
@@ -3676,8 +3945,8 @@ void MainWindow::refreshContacts() {
     item->setData(UnreadRole, app_.chatState().unreadCount(contact.userId));
     item->setData(AvatarUrlRole, contact.avatarUrl);
     conversationList_->addItem(item);
-    if (contact.userId == selectedPeer)
-      selectedRow = index;
+    if (activeGroupId_.isEmpty() && contact.userId == selectedPeer)
+      selectedRow = groups.size() + index;
   }
   if (selectedRow >= 0)
     conversationList_->setCurrentRow(selectedRow);
@@ -5539,6 +5808,114 @@ void MainWindow::scrollMessagesToBottom() {
       });
   // 内容本就放得下、不会触发 rangeChanged 时的兜底：此时 maximum() 已正确。
   bar->setValue(bar->maximum());
+}
+
+void MainWindow::openCreateGroupDialog() {
+  for (const RemoteIMGroup& group : app_.groups()) {
+    if (!group.pendingActivation) continue;
+    const bool open = AppMessageDialog::confirm(
+        this, QStringLiteral("继续已创建的群聊"),
+        QStringLiteral("群“%1”已经创建，但激活消息未送达。请先打开它发送一条文字，不要重复建群。")
+            .arg(group.name),
+        QStringLiteral("打开群聊"), false);
+    if (open) openGroupConversation(group.groupId);
+    return;
+  }
+  const QList<RemoteIMContact> friends = acceptedContacts();
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("createGroupDialog"));
+  dialog.setWindowTitle(QStringLiteral("发起群聊"));
+  dialog.resize(UiZoom::s(410), UiZoom::s(500));
+  auto *layout = new QVBoxLayout(&dialog);
+  layout->setContentsMargins(UiZoom::s(22), UiZoom::s(20),
+                             UiZoom::s(22), UiZoom::s(20));
+  layout->setSpacing(UiZoom::s(11));
+  auto *heading = new QLabel(QStringLiteral("群聊名称"), &dialog);
+  layout->addWidget(heading);
+  auto *name = new QLineEdit(&dialog);
+  name->setObjectName(QStringLiteral("groupNameInput"));
+  name->setPlaceholderText(QStringLiteral("给群聊起个名字"));
+  name->setMaxLength(30);
+  layout->addWidget(name);
+  layout->addWidget(new QLabel(QStringLiteral("选择好友（最多 19 位）"), &dialog));
+  auto *members = new QListWidget(&dialog);
+  members->setObjectName(QStringLiteral("groupMemberPicker"));
+  members->setSelectionMode(QAbstractItemView::NoSelection);
+  for (const RemoteIMContact& friendContact : friends) {
+    auto *item = new QListWidgetItem(
+        friendContact.displayName.isEmpty() ? friendContact.userId : friendContact.displayName,
+        members);
+    item->setData(Qt::UserRole, friendContact.userId);
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(Qt::Unchecked);
+  }
+  layout->addWidget(members, 1);
+  if (friends.isEmpty()) {
+    auto *empty = new QLabel(QStringLiteral("还没有可邀请的好友，请先添加朋友。"), &dialog);
+    empty->setStyleSheet(QStringLiteral("color:#7e8b9d;"));
+    layout->addWidget(empty);
+  }
+  auto *status = new QLabel(&dialog);
+  status->setObjectName(QStringLiteral("groupCreateStatus"));
+  status->setWordWrap(true);
+  status->setStyleSheet(QStringLiteral("color:#d34d4d;"));
+  status->hide();
+  layout->addWidget(status);
+  auto *buttons = new QHBoxLayout();
+  auto *cancel = new QPushButton(QStringLiteral("取消"), &dialog);
+  auto *create = new QPushButton(QStringLiteral("创建群聊"), &dialog);
+  create->setObjectName(QStringLiteral("groupCreateButton"));
+  create->setEnabled(false);
+  buttons->addStretch(1);
+  buttons->addWidget(cancel);
+  buttons->addWidget(create);
+  layout->addLayout(buttons);
+  connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+  auto updateCreate = [name, members, create] {
+    int selected = 0;
+    for (int row = 0; row < members->count(); ++row)
+      if (members->item(row)->checkState() == Qt::Checked) ++selected;
+    create->setEnabled(!name->text().trimmed().isEmpty() &&
+                       name->text().trimmed().toUtf8().size() <= 100 &&
+                       selected >= 1 && selected <= 19);
+  };
+  connect(name, &QLineEdit::textChanged, &dialog, updateCreate);
+  connect(members, &QListWidget::itemChanged, &dialog, updateCreate);
+  QString createdGroupId;
+  connect(create, &QPushButton::clicked, &dialog,
+          [this, &dialog, name, members, create, status, &createdGroupId] {
+    QStringList ids;
+    for (int row = 0; row < members->count(); ++row) {
+      const auto *item = members->item(row);
+      if (item->checkState() == Qt::Checked) ids.append(item->data(Qt::UserRole).toString());
+    }
+    if (ids.isEmpty()) return;
+    create->setEnabled(false);
+    create->setText(QStringLiteral("创建中…"));
+    status->hide();
+    QPointer<QDialog> guard(&dialog);
+    app_.createGroup(name->text(), ids,
+        [guard, create, status, &createdGroupId](bool ok, const QString& error,
+                                                 const RemoteIMGroup& group) {
+      if (!guard) return;
+      if (ok) {
+        createdGroupId = group.groupId;
+        guard->accept();
+        return;
+      }
+      create->setText(QStringLiteral("创建群聊"));
+      status->setText(error.isEmpty() ? QStringLiteral("创建失败，请稍后再试") : error);
+      status->show();
+      if (!group.groupId.isEmpty()) {
+        createdGroupId = group.groupId;
+        create->setEnabled(false);
+      } else {
+        create->setEnabled(true);
+      }
+    });
+  });
+  if (dialog.exec() == QDialog::Accepted && !createdGroupId.isEmpty())
+    openGroupConversation(createdGroupId);
 }
 
 void MainWindow::openAddContactDialog() {
@@ -8272,6 +8649,7 @@ void MainWindow::showConversationContextMenu(const QPoint &pos) {
   QListWidgetItem *item = conversationList_->itemAt(pos);
   if (!item)
     return;
+  if (item->data(IsChatGroupRole).toBool()) return;
   conversationList_->setCurrentItem(item);
 
   QMenu menu(this);

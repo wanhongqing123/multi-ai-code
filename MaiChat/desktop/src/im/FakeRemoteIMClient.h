@@ -18,6 +18,21 @@ public:
     void disconnectFromService(RemoteIMCompletion completion) override;
     void deleteContact(const QString& userId, RemoteIMCompletion completion) override;
     void requestFriend(const QString& userId, RemoteIMCompletion completion) override;
+    void joinedGroups(RemoteIMGroupsCompletion completion) override;
+    void createGroup(const QString& name, const QStringList& memberIds,
+                     RemoteIMGroupCompletion completion) override;
+    void sendGroupText(const QString& groupId, const QString& text,
+                       RemoteIMSendCompletion completion) override;
+    void groupHistory(const QString& groupId, int count, qint64 beforeSequence,
+                      RemoteIMGroupHistoryCompletion completion) override;
+    void markGroupRead(const QString& groupId, RemoteIMCompletion completion) override;
+    QString lastMarkedGroupId() const { return lastMarkedGroupId_; }
+    void deferNextGroupHistory();
+    void finishDeferredGroupHistory(const QList<RemoteIMGroupMessage>& messages);
+    int groupHistoryRequestCount() const { return groupHistoryRequestCount_; }
+    void emitIncomingGroupText(const QString& groupId, const QString& senderId,
+                               const QString& text, const QString& messageId);
+    void removeGroupForTest(const QString& groupId);
     void sendText(const QString& peerId, const QString& text, RemoteIMSendCompletion completion) override;
     void sendApprovalDecision(const QString& peerId,
                               const QString& token,
@@ -36,6 +51,8 @@ public:
     QString lastFriendRequestId() const;
     QString lastTextPeerId() const;
     QString lastText() const;
+    QString lastGroupId() const { return lastGroupId_; }
+    QString lastGroupText() const { return lastGroupText_; }
     QString lastApprovalToken() const;
     RemoteIMApprovalAction lastApprovalAction() const;
     QString lastImagePeerId() const;
@@ -62,6 +79,13 @@ private:
     QString lastFriendRequestId_;
     QString lastTextPeerId_;
     QString lastText_;
+    QString lastGroupId_;
+    QString lastGroupText_;
+    QString lastMarkedGroupId_;
+    QList<RemoteIMGroup> groups_;
+    bool deferGroupHistory_ = false;
+    int groupHistoryRequestCount_ = 0;
+    RemoteIMGroupHistoryCompletion deferredGroupHistoryCompletion_;
     QString lastApprovalToken_;
     RemoteIMApprovalAction lastApprovalAction_ = RemoteIMApprovalAction::Reject;
     QString lastImagePeerId_;

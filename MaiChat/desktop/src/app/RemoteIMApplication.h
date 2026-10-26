@@ -60,6 +60,21 @@ public:
     // 向上翻一页：从本地库取更早消息并入内存，返回本次加载条数。
     int loadEarlierMessages(const QString& peerId);
 
+    QList<RemoteIMGroup> groups() const;
+    QList<RemoteIMGroupMessage> groupMessages(const QString& groupId) const;
+    int groupUnreadCount(const QString& groupId) const;
+    bool hasEarlierGroupMessages(const QString& groupId) const;
+    bool hasLoadedGroupHistory(const QString& groupId) const;
+    void ensureGroupHistory(const QString& groupId);
+    void selectGroup(const QString& groupId);
+    void clearSelectedGroup();
+    QString selectedGroupId() const { return selectedGroupId_; }
+    void refreshGroups();
+    void createGroup(const QString& name, const QStringList& memberIds,
+                     RemoteIMGroupCompletion completion);
+    bool sendGroupText(const QString& groupId, const QString& text);
+    void loadEarlierGroupMessages(const QString& groupId);
+
     void connectToService(int sdkAppId, const QString& userSig);
     void disconnectFromService(RemoteIMCompletion completion = {});
     void addContact(const QString& userId, const QString& displayName);
@@ -148,6 +163,8 @@ signals:
     void connectionChanged(bool connected);
     void errorMessage(const QString& message);
     void friendRequestSent();
+    void groupsChanged();
+    void groupHistoryFinished(const QString& groupId, bool ok);
     // 远程桌面信令：借道 IM 文本通道，但不入库、不进消息列表、不计未读。
     // 由 UI 层转交给 RemoteDesktopController 处理。
     void remoteDesktopSignalReceived(const QString& fromUserId, const QString& text);
@@ -169,6 +186,9 @@ private:
     // 漫游/历史（live=false，不计红点）与实时推送（live=true，新入站消息计红点）
     // 的统一入库入口：upsert 联系人、按 id 去重落库、并入内存。
     void ingestMessages(const QList<RemoteIMMessage>& messages, bool live);
+    void mergeGroup(const RemoteIMGroup& group);
+    void ingestGroupMessages(const QList<RemoteIMGroupMessage>& messages, bool live);
+    void fetchGroupHistoryPage(const QString& groupId, qint64 beforeSequence);
     void persistMessage(const RemoteIMMessage& message);
     // 发送成功后用 SDK 稳定 id 替换本地临时 UUID（内存+库），返回生效的 id。
     QString adoptRemoteMessageId(const QString& localId, const QString& remoteMessageId);
@@ -178,6 +198,18 @@ private:
     ChatState state_;
     RemoteIMContact selfProfile_;
     QHash<QString, bool> hasEarlierMessages_;
+    QList<RemoteIMGroup> groups_;
+    QHash<QString, QList<RemoteIMGroupMessage>> groupMessages_;
+    QHash<QString, RemoteIMGroupMessage> pendingGroupPreviews_;
+    QHash<QString, int> groupUnreadCounts_;
+    QSet<QString> groupUnreadFromConversation_;
+    QHash<QString, bool> groupHasEarlierLocal_;
+    QHash<QString, bool> groupHasEarlierRemote_;
+    QHash<QString, qint64> groupOlderSequence_;
+    QSet<QString> groupHistoryInFlight_;
+    bool groupRefreshInFlight_ = false;
+    QSet<QString> groupInitialHistoryLoaded_;
+    QString selectedGroupId_;
     std::unique_ptr<RemoteIMClient> client_;
     std::unique_ptr<LocalMessageDatabase> database_;
     bool connected_ = false;

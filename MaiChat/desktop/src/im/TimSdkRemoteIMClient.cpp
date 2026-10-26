@@ -31,6 +31,8 @@
 namespace {
 
 constexpr int kConversationTypeC2C = 1;
+constexpr int kConversationTypeGroup = 2;
+constexpr int kGroupTypeWork = 1;
 constexpr int kElemText = 0;
 constexpr int kElemImage = 1;
 constexpr int kElemSound = 2;
@@ -39,6 +41,8 @@ constexpr int kElemFile = 4;
 // TIMElemType 里 Video 排在 Text/Image/Sound/Custom/File/GroupTips/Face/Location/GroupReport
 // 之后，值为 9（见 vendor/tencent-im/.../TIMMessageManager.h 的 enum TIMElemType）。
 constexpr int kElemVideo = 9;
+constexpr int kElemGroupTips = 5;
+constexpr auto kGroupActivation = "{\"type\":\"maichat_group_activation\",\"v\":1}";
 constexpr int kImageLevelOriginal = 0;
 constexpr int kFriendTypeBoth = 1;
 constexpr auto kCloudCustomDataKey = "message_cloud_custom_str";
@@ -679,6 +683,246 @@ void TimSdkRemoteIMClient::refreshFriendList() {
     if (connected_ && api_) fetchFriendList();
 }
 
+void TimSdkRemoteIMClient::joinedGroups(RemoteIMGroupsCompletion completion) {
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    api_->getJoinedGroupList([self, account, completion = std::move(completion)](
+        int code, const QString& description, const QString& payload) mutable {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, code, description, payload,
+                                         completion = std::move(completion)]() mutable {
+            if (!self || self->currentAccount() != account) return;
+            QList<RemoteIMGroup> groups;
+            const QJsonDocument document = QJsonDocument::fromJson(payload.toUtf8());
+            if (code == 0 && !document.isArray()) {
+                if (completion) completion(false, QStringLiteral("群列表响应格式错误"), {});
+                return;
+            }
+            if (code == 0) {
+                const QJsonArray raw = document.array();
+                for (const QJsonValue& value : raw) {
+                    const QJsonObject item = value.toObject();
+                    const QJsonObject base = item.value(QStringLiteral("group_detail_info_group_base_info")).toObject();
+                    const QJsonObject info = base.isEmpty() ? item : base;
+                    const int type = info.value(QStringLiteral("group_base_info_group_type")).toInt(
+                        info.value(QStringLiteral("group_detail_info_group_type")).toInt(-1));
+                    if (type != kGroupTypeWork) continue;
+                    const QString id = firstNonEmpty(info, {
+                        QStringLiteral("group_base_info_group_id"),
+                        QStringLiteral("group_detail_info_group_id")});
+                    if (id.isEmpty()) continue;
+                    const QString name = firstNonEmpty(info, {
+                        QStringLiteral("group_base_info_group_name"),
+                        QStringLiteral("group_detail_info_group_name")});
+                    const int unread = info.value(QStringLiteral("group_base_info_self_info"))
+                                           .toObject().value(QStringLiteral("group_self_info_unread_num"))
+                                           .toInt(-1);
+                    groups.append({id, name.isEmpty() ? id : name,
+                                   item.value(QStringLiteral("group_detail_info_member_num")).toInt(),
+                                   false, unread});
+                }
+            }
+            if (code != 0) {
+                if (completion) completion(false, description, {});
+                return;
+            }
+            if (groups.isEmpty()) {
+                emit self->groupsReceived(groups);
+                if (completion) completion(true, {}, groups);
+                return;
+            }
+            QJsonArray ids;
+            for (const RemoteIMGroup& group : groups) ids.append(group.groupId);
+            const QString request = QString::fromUtf8(QJsonDocument(ids).toJson(QJsonDocument::Compact));
+            self->api_->getGroupInfoList(request,
+                [self, account, groups, completion = std::move(completion)](
+                    int detailCode, const QString&, const QString& detailPayload) mutable {
+                if (!self) return;
+                QMetaObject::invokeMethod(self, [self, account, groups, detailCode, detailPayload,
+                                                 completion = std::move(completion)]() mutable {
+                    if (!self || self->currentAccount() != account) return;
+                    if (detailCode == 0) {
+                        const QJsonDocument detail = QJsonDocument::fromJson(detailPayload.toUtf8());
+                        if (detail.isArray()) {
+                            for (const QJsonValue& value : detail.array()) {
+                                const QJsonObject info = value.toObject();
+                                const QString id = info.value(QStringLiteral("group_detail_info_group_id"))
+                                                       .toString().trimmed();
+                                for (RemoteIMGroup& group : groups) {
+                                    if (group.groupId != id) continue;
+                                    const QString name = info.value(QStringLiteral("group_detail_info_group_name"))
+                                                             .toString().trimmed();
+                                    if (!name.isEmpty()) group.name = name;
+                                    group.memberCount = info.value(QStringLiteral("group_detail_info_member_num"))
+                                                            .toInt(group.memberCount);
+                                }
+                            }
+                        }
+                    }
+                    emit self->groupsReceived(groups);
+                    if (completion) completion(true, {}, groups);
+                }, Qt::AutoConnection);
+            });
+        }, Qt::AutoConnection);
+    });
+}
+
+void TimSdkRemoteIMClient::createGroup(const QString& name, const QStringList& memberIds,
+                                        RemoteIMGroupCompletion completion) {
+    const QString cleanName = name.trimmed();
+    QStringList members;
+    for (const QString& id : memberIds) {
+        const QString clean = id.trimmed();
+        if (!clean.isEmpty() && !members.contains(clean)) members.append(clean);
+    }
+    if (cleanName.isEmpty() || cleanName.toUtf8().size() > 100 || members.isEmpty() ||
+        members.size() > 19 || members.contains(currentUserId_)) {
+        if (completion) completion(false, QStringLiteral("群名称需在 100 字节内，且须选择 1 至 19 位好友"), {});
+        return;
+    }
+    QJsonArray memberArray;
+    for (const QString& id : members) {
+        memberArray.append(QJsonObject{{QStringLiteral("group_member_info_identifier"), id}});
+    }
+    QJsonObject request;
+    request[QStringLiteral("create_group_param_group_type")] = kGroupTypeWork;
+    request[QStringLiteral("create_group_param_group_name")] = cleanName;
+    request[QStringLiteral("create_group_param_group_member_array")] = memberArray;
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    api_->createGroup(compactJson(request), [self, account, cleanName, memberCount = members.size() + 1,
+                                              completion = std::move(completion)](
+        int code, const QString& description, const QString& payload) mutable {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, cleanName, memberCount, code, description, payload,
+                                         completion = std::move(completion)]() mutable {
+            if (!self || self->currentAccount() != account) return;
+            if (code != 0) {
+                if (completion) completion(false, description, {});
+                return;
+            }
+            const QJsonDocument doc = QJsonDocument::fromJson(payload.toUtf8());
+            const QString id = doc.object().value(QStringLiteral("create_group_result_groupid")).toString().trimmed();
+            if (id.isEmpty()) {
+                if (completion) completion(false, QStringLiteral("群已创建，但 SDK 未返回群 ID；请刷新群列表"), {});
+                self->joinedGroups({});
+                return;
+            }
+            const RemoteIMGroup group{id, cleanName, memberCount};
+            QJsonObject activationElem;
+            activationElem[QStringLiteral("elem_type")] = kElemCustom;
+            activationElem[QStringLiteral("custom_elem_data")] = QString::fromLatin1(kGroupActivation);
+            QJsonObject activation;
+            activation[QStringLiteral("message_elem_array")] = QJsonArray{activationElem};
+            activation[QStringLiteral("message_is_excluded_from_unread_count")] = true;
+            activation[QStringLiteral("message_excluded_from_last_message")] = true;
+            self->api_->sendMessage(id, kConversationTypeGroup, compactJson(activation),
+                [self, account, group, completion = std::move(completion)](
+                    int activationCode, const QString& activationError, const QString&) mutable {
+                if (!self) return;
+                QMetaObject::invokeMethod(self, [self, account, group, activationCode, activationError,
+                                                 completion = std::move(completion)]() mutable {
+                    if (!self || self->currentAccount() != account) return;
+                    if (activationCode != 0) {
+                        if (completion) completion(false,
+                            QStringLiteral("群已创建，但激活失败：%1；请打开该群发送文字重试")
+                                .arg(activationError), group);
+                        return;
+                    }
+                    emit self->groupsReceived({group});
+                    if (completion) completion(true, {}, group);
+                }, Qt::AutoConnection);
+            });
+        }, Qt::AutoConnection);
+    });
+}
+
+void TimSdkRemoteIMClient::sendGroupText(const QString& groupId, const QString& text,
+                                          RemoteIMSendCompletion completion) {
+    const QString group = groupId.trimmed();
+    const QString cleanText = text.trimmed();
+    if (group.isEmpty() || cleanText.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("群 ID 和消息不能为空"), {});
+        return;
+    }
+    QJsonObject elem{{QStringLiteral("elem_type"), kElemText},
+                     {QStringLiteral("text_elem_content"), cleanText}};
+    QJsonObject message{{QStringLiteral("message_elem_array"), QJsonArray{elem}}};
+    api_->sendMessage(group, kConversationTypeGroup, compactJson(message),
+        [completion = std::move(completion)](int code, const QString& description,
+                                             const QString& payload) mutable {
+        if (completion) completion(code == 0, code == 0 ? QString() : description,
+                                   code == 0 ? sentMessageReceipt(payload) : RemoteIMSendReceipt{});
+    });
+}
+
+void TimSdkRemoteIMClient::groupHistory(const QString& groupId, int count, qint64 beforeSequence,
+                                         RemoteIMGroupHistoryCompletion completion) {
+    const QString group = groupId.trimmed();
+    if (group.isEmpty() || count <= 0) {
+        if (completion) completion(false, QStringLiteral("群 ID 或分页数无效"), {});
+        return;
+    }
+    const int pageSize = qMin(count, 20);
+    QJsonObject request;
+    request[QStringLiteral("msg_getmsglist_param_count")] = pageSize;
+    request[QStringLiteral("msg_getmsglist_param_is_ramble")] = true;
+    request[QStringLiteral("msg_getmsglist_param_is_forward")] = false;
+    if (beforeSequence > 0) request[QStringLiteral("msg_getmsglist_param_last_msg_seq")] = beforeSequence;
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    api_->getMessageList(group, kConversationTypeGroup, compactJson(request),
+        [self, account, group, pageSize, completion = std::move(completion)](
+            int code, const QString& description, const QString& payload) mutable {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, group, pageSize, code, description, payload,
+                                         completion = std::move(completion)]() mutable {
+            if (!self || self->currentAccount() != account) return;
+            RemoteIMGroupHistoryPage page;
+            const QJsonDocument document = QJsonDocument::fromJson(payload.toUtf8());
+            if (code == 0 && !document.isArray()) {
+                if (completion) completion(false, QStringLiteral("群历史响应格式错误"), {});
+                return;
+            }
+            if (code == 0) {
+                const QJsonArray raw = document.array();
+                qint64 oldest = 0;
+                for (const QJsonValue& value : raw) {
+                    const QJsonObject object = value.toObject();
+                    const qint64 sequence = static_cast<qint64>(object.value(QStringLiteral("message_seq")).toDouble());
+                    if (sequence > 0 && (oldest == 0 || sequence < oldest)) oldest = sequence;
+                    const auto text = groupTextMessage(object, group, self->currentUserId_);
+                    if (!text.id.isEmpty()) page.messages.prepend(text);
+                }
+                page.hasMore = raw.size() >= pageSize && oldest > 1;
+                page.nextSequence = page.hasMore ? oldest - 1 : 0;
+            }
+            if (completion) completion(code == 0, code == 0 ? QString() : description, page);
+        }, Qt::AutoConnection);
+    });
+}
+
+void TimSdkRemoteIMClient::markGroupRead(const QString& groupId,
+                                         RemoteIMCompletion completion) {
+    const QString id = groupId.trimmed();
+    if (id.isEmpty()) {
+        if (completion) completion(false, QStringLiteral("群 ID 不能为空"));
+        return;
+    }
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    const auto account = currentAccount();
+    api_->cleanConversationUnread(QStringLiteral("group_") + id,
+        [self, account, completion = std::move(completion)](
+            int code, const QString& description, const QString&) mutable {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, code, description,
+                                         completion = std::move(completion)]() mutable {
+            if (!self || self->currentAccount() != account) return;
+            if (completion) completion(code == 0, code == 0 ? QString() : description);
+        }, Qt::AutoConnection);
+    });
+}
+
 void TimSdkRemoteIMClient::friendRequests(RemoteIMFriendRequestsCompletion completion) {
     if (!connected_ || !api_) {
         if (completion) completion(false, QStringLiteral("IM 未连接"), {});
@@ -1222,12 +1466,48 @@ void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayl
                 avatarUrl
             });
             fetchRecentMessages(conversationId, conversationType);
+        } else if (conversationType == kConversationTypeGroup) {
+            emit groupUnreadReceived(conversationId,
+                qMax(0, conversation.value(QStringLiteral("conv_unread_num")).toInt()));
+            const RemoteIMGroupMessage preview = groupTextMessage(
+                conversation.value(QStringLiteral("conv_last_msg")).toObject(),
+                conversationId, currentUserId_);
+            if (!preview.id.isEmpty()) emit groupMessagesReceived({preview}, false);
         }
     }
     qInfo().noquote()
         << QStringLiteral("[im] conversation list: %1 raw -> %2 c2c")
                .arg(conversations.size()).arg(contacts.size());
     if (!contacts.isEmpty()) emit contactsReceived(contacts);
+}
+
+RemoteIMGroupMessage TimSdkRemoteIMClient::groupTextMessage(const QJsonObject& message,
+                                                             const QString& groupId,
+                                                             const QString& ownerUserId) {
+    RemoteIMGroupMessage result;
+    const QString actualGroup = message.value(QStringLiteral("message_conv_id")).toString().trimmed();
+    if (!actualGroup.isEmpty() && actualGroup != groupId) return result;
+    const QJsonArray elements = message.value(QStringLiteral("message_elem_array")).toArray();
+    for (int index = 0; index < elements.size(); ++index) {
+        const QJsonObject elem = elements.at(index).toObject();
+        if (elem.value(QStringLiteral("elem_type")).toInt(-1) != kElemText) continue;
+        const QString text = elem.value(QStringLiteral("text_elem_content")).toString();
+        if (text.trimmed().isEmpty()) continue;
+        const QString id = sdkElemMessageId(sdkMessageId(message), index);
+        if (id.isEmpty()) continue;
+        result.id = id;
+        result.groupId = groupId;
+        result.senderId = message.value(QStringLiteral("message_sender")).toString().trimmed();
+        if (result.senderId.isEmpty() && message.value(QStringLiteral("message_is_from_self")).toBool())
+            result.senderId = ownerUserId;
+        result.text = text;
+        result.createdAtMillis = messageTimeMillis(message);
+        result.sequence = static_cast<qint64>(message.value(QStringLiteral("message_seq")).toDouble());
+        result.fromSelf = result.senderId == ownerUserId ||
+            message.value(QStringLiteral("message_is_from_self")).toBool();
+        return result;
+    }
+    return result;
 }
 
 // 作用：解析 SDK 历史消息载荷并合并到对应会话。
@@ -1450,6 +1730,25 @@ void TimSdkRemoteIMClient::handleIncomingMessages(const QString& jsonMessages) {
 // 作用：解析入站消息类型、元数据和附件后更新会话。
 // 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
 void TimSdkRemoteIMClient::handleIncomingMessage(const QJsonObject& message) {
+    if (message.value(QStringLiteral("message_conv_type")).toInt() == kConversationTypeGroup) {
+        const QString groupId = message.value(QStringLiteral("message_conv_id")).toString().trimmed();
+        if (groupId.isEmpty()) return;
+        bool refreshMembership = false;
+        for (const QJsonValue& value : message.value(QStringLiteral("message_elem_array")).toArray()) {
+            const QJsonObject elem = value.toObject();
+            const int type = elem.value(QStringLiteral("elem_type")).toInt(-1);
+            if (type == kElemGroupTips ||
+                (type == kElemCustom && elem.value(QStringLiteral("custom_elem_data")).toString().toUtf8() ==
+                    QByteArray(kGroupActivation))) refreshMembership = true;
+        }
+        if (refreshMembership) {
+            emit groupMembershipChanged();
+            joinedGroups({});
+        }
+        const RemoteIMGroupMessage text = groupTextMessage(message, groupId, currentUserId_);
+        if (!text.id.isEmpty()) emit groupMessagesReceived({text}, true);
+        return;
+    }
     // 这两个 return 以前是完全静默的：消息在这里消失，日志里一个字都没有。
     if (message.value(QStringLiteral("message_is_from_self")).toBool(false)) return;
     const QString fromUserId =

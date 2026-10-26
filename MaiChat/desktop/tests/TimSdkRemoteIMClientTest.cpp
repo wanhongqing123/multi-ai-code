@@ -52,6 +52,33 @@ public:
         return 0;
     }
 
+    int createGroup(const QString& request, TimSdkCompletion completion) override {
+        createGroupRequest = request;
+        if (completion) completion(createGroupCode,
+                                   createGroupCode == 0 ? QString() : QStringLiteral("create failed"),
+                                   createGroupPayload);
+        return 0;
+    }
+
+    int getJoinedGroupList(TimSdkCompletion completion) override {
+        joinedGroupRequested = true;
+        if (completion) completion(0, {}, joinedGroupPayload);
+        return 0;
+    }
+
+    int getGroupInfoList(const QString& request, TimSdkCompletion completion) override {
+        groupInfoRequest = request;
+        if (completion) completion(0, {}, groupInfoPayload);
+        return 0;
+    }
+
+    int cleanConversationUnread(const QString& conversationId,
+                                TimSdkCompletion completion) override {
+        markedConversationId = conversationId;
+        if (completion) completion(0, {}, {});
+        return 0;
+    }
+
     int getFriendList(TimSdkCompletion completion) override {
         friendListRequested = true;
         if (completion) completion(0, QString(), friendListPayload);
@@ -148,6 +175,7 @@ public:
     int addFriendCode = 0;
     int sendResult = 0;
     int sendCode = 0;
+    int createGroupCode = 0;
     quint64 initializedSdkAppId = 0;
     QString initConfig;
     QString loginUserId;
@@ -155,6 +183,13 @@ public:
     QString lastConversationId;
     int lastConversationType = 0;
     QString lastJsonMessage;
+    QString createGroupRequest;
+    QString createGroupPayload;
+    QString joinedGroupPayload = QStringLiteral("[]");
+    QString groupInfoRequest;
+    QString groupInfoPayload;
+    QString markedConversationId;
+    bool joinedGroupRequested = false;
     QString sendPayload;
     bool conversationListRequested = false;
     bool friendListRequested = false;
@@ -219,6 +254,9 @@ private slots:
     void emitsIncomingVideoWithLocalPath();
     void mergesCaptionIntoIncomingVideoMessage();
     void rejectsMissingCredentials();
+    void createsWorkGroupWithExactActivationAndKeepsGroupTrafficOutOfDirectChat();
+    void pagesGroupTextHistoryBySequence();
+    void reportsCreatedGroupWhenActivationFailsWithoutCreatingAgain();
 };
 
 void TimSdkRemoteIMClientTest::loadsAndUpdatesOwnAvatarWithoutAddingSelfAsContact() {
@@ -1129,6 +1167,173 @@ void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {
 
     QVERIFY(!ok);
     QVERIFY(error.contains(QStringLiteral("SDK AppID")));
+}
+
+void TimSdkRemoteIMClientTest::createsWorkGroupWithExactActivationAndKeepsGroupTrafficOutOfDirectChat() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->createGroupPayload = QStringLiteral(R"({"create_group_result_groupid":"@TGS#work-1"})");
+    fake->joinedGroupPayload = QStringLiteral(R"([{
+        "group_base_info_group_id":"@TGS#work-1",
+        "group_base_info_group_name":"Project chat",
+        "group_base_info_group_type":1,
+        "group_base_info_self_info":{"group_self_info_unread_num":2}
+    }])");
+    fake->groupInfoPayload = QStringLiteral(R"([{
+        "group_detail_info_group_id":"@TGS#work-1",
+        "group_detail_info_group_name":"Project chat",
+        "group_detail_info_member_num":3
+    }])");
+    fake->conversationListPayload = QStringLiteral(R"([{
+        "conv_type":2,"conv_id":"@TGS#work-1","conv_show_name":"Project chat", "conv_unread_num":2,
+        "conv_last_msg":{"message_conv_id":"@TGS#work-1","message_sender":"friend-a",
+            "message_msg_id":"last-text","message_server_time":1700000000,
+            "message_elem_array":[{"elem_type":0,"text_elem_content":"last group text"}]}
+    }])");
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy directContacts(&client, &RemoteIMClient::contactsReceived);
+    QSignalSpy groupUnread(&client, &RemoteIMClient::groupUnreadReceived);
+    QSignalSpy groupPreview(&client, &RemoteIMClient::groupMessagesReceived);
+    client.connectToService(123456, QStringLiteral("owner"), QStringLiteral("sig"), {});
+    QCOMPARE(directContacts.count(), 0);
+    QCOMPARE(groupUnread.count(), 1);
+    QCOMPARE(groupUnread.first().at(1).toInt(), 2);
+    QCOMPARE(groupPreview.count(), 1);
+    const auto preview = groupPreview.first().at(0).value<QList<RemoteIMGroupMessage>>();
+    QCOMPARE(preview.size(), 1);
+    QCOMPARE(preview.first().text, QStringLiteral("last group text"));
+    QVERIFY(fake->historyConversationId.isEmpty());
+    QList<RemoteIMGroup> joined;
+    client.joinedGroups([&](bool ok, const QString&, const QList<RemoteIMGroup>& value) {
+        QVERIFY(ok);
+        joined = value;
+    });
+    QCOMPARE(joined.size(), 1);
+    QCOMPARE(joined.first().memberCount, 3);
+    QCOMPARE(joined.first().unreadCount, 2);
+    QCOMPARE(QJsonDocument::fromJson(fake->groupInfoRequest.toUtf8()).array().first().toString(),
+             QStringLiteral("@TGS#work-1"));
+    bool marked = false;
+    client.markGroupRead(QStringLiteral("@TGS#work-1"),
+                         [&](bool ok, const QString&) { marked = ok; });
+    QVERIFY(marked);
+    QCOMPARE(fake->markedConversationId, QStringLiteral("group_@TGS#work-1"));
+
+    bool created = false;
+    RemoteIMGroup group;
+    client.createGroup(QStringLiteral("Project chat"), {QStringLiteral("friend-a")},
+                       [&](bool ok, const QString&, const RemoteIMGroup& value) {
+        created = ok;
+        group = value;
+    });
+    QVERIFY(created);
+    QCOMPARE(group.groupId, QStringLiteral("@TGS#work-1"));
+    QCOMPARE(group.memberCount, 2);
+    QCOMPARE(fake->lastConversationType, 2);
+    QCOMPARE(fake->lastConversationId, group.groupId);
+    const auto createRequest = QJsonDocument::fromJson(fake->createGroupRequest.toUtf8()).object();
+    QCOMPARE(createRequest.value(QStringLiteral("create_group_param_group_type")).toInt(), 1);
+    QCOMPARE(createRequest.value(QStringLiteral("create_group_param_group_member_array")).toArray()
+                 .first().toObject().value(QStringLiteral("group_member_info_identifier")).toString(),
+             QStringLiteral("friend-a"));
+    const auto activation = QJsonDocument::fromJson(fake->lastJsonMessage.toUtf8()).object();
+    QCOMPARE(activation.value(QStringLiteral("message_is_excluded_from_unread_count")).toBool(), true);
+    QCOMPARE(activation.value(QStringLiteral("message_excluded_from_last_message")).toBool(), true);
+    QCOMPARE(activation.value(QStringLiteral("message_elem_array")).toArray().first().toObject()
+                 .value(QStringLiteral("custom_elem_data")).toString().toUtf8(),
+             QByteArray("{\"type\":\"maichat_group_activation\",\"v\":1}"));
+
+    QSignalSpy groupMessages(&client, &RemoteIMClient::groupMessagesReceived);
+    QSignalSpy directMessages(&client, &RemoteIMClient::liveMessagesReceived);
+    QSignalSpy refresh(&client, &RemoteIMClient::groupMembershipChanged);
+    fake->joinedGroupRequested = false;
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_conv_type"), 2},
+        {QStringLiteral("message_conv_id"), group.groupId},
+        {QStringLiteral("message_sender"), QStringLiteral("friend-a")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("activation")},
+        {QStringLiteral("message_elem_array"), QJsonArray{QJsonObject{
+            {QStringLiteral("elem_type"), 3},
+            {QStringLiteral("custom_elem_data"), QStringLiteral("{\"type\":\"maichat_group_activation\",\"v\":1}")}
+        }}}
+    }});
+    QTRY_COMPARE(refresh.count(), 1);
+    QVERIFY(fake->joinedGroupRequested);
+    QCOMPARE(groupMessages.count(), 0);
+    QCOMPARE(directMessages.count(), 0);
+
+    fake->emitMessages(QJsonArray{QJsonObject{
+        {QStringLiteral("message_conv_type"), 2},
+        {QStringLiteral("message_conv_id"), group.groupId},
+        {QStringLiteral("message_sender"), QStringLiteral("friend-a")},
+        {QStringLiteral("message_msg_id"), QStringLiteral("group-text-1")},
+        {QStringLiteral("message_server_time"), 1700000000},
+        {QStringLiteral("message_elem_array"), QJsonArray{QJsonObject{
+            {QStringLiteral("elem_type"), 0},
+            {QStringLiteral("text_elem_content"), QStringLiteral("你好群聊")}
+        }}}
+    }});
+    QTRY_COMPARE(groupMessages.count(), 1);
+    QCOMPARE(directMessages.count(), 0);
+    const auto messages = groupMessages.takeFirst().at(0).value<QList<RemoteIMGroupMessage>>();
+    QCOMPARE(messages.size(), 1);
+    QCOMPARE(messages.first().groupId, group.groupId);
+    QCOMPARE(messages.first().senderId, QStringLiteral("friend-a"));
+    QCOMPARE(messages.first().text, QStringLiteral("你好群聊"));
+}
+
+void TimSdkRemoteIMClientTest::pagesGroupTextHistoryBySequence() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->historyPayload = QStringLiteral(R"([
+      {"message_conv_type":2,"message_conv_id":"group-1","message_sender":"friend-b",
+       "message_msg_id":"latest","message_seq":44,"message_server_time":1700000100,
+       "message_elem_array":[{"elem_type":0,"text_elem_content":"newer"}]},
+      {"message_conv_type":2,"message_conv_id":"group-1","message_sender":"friend-b",
+       "message_msg_id":"media","message_seq":43,"message_server_time":1700000099,
+       "message_elem_array":[{"elem_type":1}]},
+      {"message_conv_type":2,"message_conv_id":"group-1","message_sender":"owner",
+       "message_msg_id":"older","message_seq":42,"message_server_time":1700000098,
+       "message_is_from_self":true,
+       "message_elem_array":[{"elem_type":0,"text_elem_content":"older"}]}
+    ])");
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("owner"), QStringLiteral("sig"), {});
+    RemoteIMGroupHistoryPage page;
+    client.groupHistory(QStringLiteral("group-1"), 3, 99,
+                        [&](bool ok, const QString&, const RemoteIMGroupHistoryPage& value) {
+        QVERIFY(ok);
+        page = value;
+    });
+    QCOMPARE(fake->historyConversationType, 2);
+    QCOMPARE(fake->historyConversationId, QStringLiteral("group-1"));
+    QCOMPARE(QJsonDocument::fromJson(fake->historyRequest.toUtf8()).object()
+                 .value(QStringLiteral("msg_getmsglist_param_last_msg_seq")).toInt(), 99);
+    QCOMPARE(page.messages.size(), 2);
+    QCOMPARE(page.messages.first().text, QStringLiteral("older"));
+    QCOMPARE(page.messages.last().text, QStringLiteral("newer"));
+    QCOMPARE(page.nextSequence, qint64(41));
+    QVERIFY(page.hasMore);
+}
+
+void TimSdkRemoteIMClientTest::reportsCreatedGroupWhenActivationFailsWithoutCreatingAgain() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->createGroupPayload = QStringLiteral(R"({"create_group_result_groupid":"@TGS#partial"})");
+    fake->sendCode = 500;
+    TimSdkRemoteIMClient client(std::move(api));
+    client.connectToService(123456, QStringLiteral("owner"), QStringLiteral("sig"), {});
+    bool succeeded = true;
+    RemoteIMGroup created;
+    client.createGroup(QStringLiteral("Partial"), {QStringLiteral("friend-a")},
+        [&](bool ok, const QString& error, const RemoteIMGroup& group) {
+            succeeded = ok;
+            QVERIFY(error.contains(QStringLiteral("激活失败")));
+            created = group;
+        });
+    QVERIFY(!succeeded);
+    QCOMPARE(created.groupId, QStringLiteral("@TGS#partial"));
+    QCOMPARE(created.name, QStringLiteral("Partial"));
 }
 
 QTEST_MAIN(TimSdkRemoteIMClientTest)

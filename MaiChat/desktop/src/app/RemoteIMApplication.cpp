@@ -16,6 +16,8 @@
 #include <QStandardPaths>
 #include <stdexcept>
 #include <utility>
+#include <algorithm>
+#include <limits>
 
 #include "app/VideoCoverImage.h"
 #include "im/VideoFileMetadata.h"
@@ -25,6 +27,16 @@ namespace {
 
 // 分页启动：每会话只载最近一页，避免大历史全量进内存/上屏。
 constexpr int kMessagesPageSize = 200;
+constexpr int kGroupPageSize = 20;
+
+bool groupMessageLess(const RemoteIMGroupMessage& lhs, const RemoteIMGroupMessage& rhs) {
+    if (lhs.createdAtMillis != rhs.createdAtMillis) return lhs.createdAtMillis < rhs.createdAtMillis;
+    const bool leftHasSequence = lhs.sequence > 0;
+    const bool rightHasSequence = rhs.sequence > 0;
+    if (leftHasSequence != rightHasSequence) return !leftHasSequence;
+    if (lhs.sequence != rhs.sequence) return lhs.sequence < rhs.sequence;
+    return lhs.id < rhs.id;
+}
 
 QString peerOf(const RemoteIMMessage& message) {
     return message.direction == RemoteIMMessageDirection::Outgoing ? message.toUserId : message.fromUserId;
@@ -78,7 +90,339 @@ RemoteIMApplication::RemoteIMApplication(QString ownerUserId,
         // 内存里才不会出现「指向还不存在的分组」这种中间态。
         state_.setContactGroups(database_->contactGroups());
         hasEarlierMessages_ = database_->loadRecentInto(state_, kMessagesPageSize);
+        groups_ = database_->groups();
+        for (const RemoteIMGroup& group : groups_) {
+            groupMessages_[group.groupId] = database_->groupMessagesBefore(
+                group.groupId, std::numeric_limits<qint64>::max(), QStringLiteral("~"), kGroupPageSize);
+            groupHasEarlierLocal_[group.groupId] = database_->groupMessageCount(group.groupId) >
+                groupMessages_.value(group.groupId).size();
+        }
     }
+}
+
+QList<RemoteIMGroup> RemoteIMApplication::groups() const { return groups_; }
+
+QList<RemoteIMGroupMessage> RemoteIMApplication::groupMessages(const QString& groupId) const {
+    return groupMessages_.value(groupId.trimmed());
+}
+
+int RemoteIMApplication::groupUnreadCount(const QString& groupId) const {
+    return groupUnreadCounts_.value(groupId.trimmed());
+}
+
+bool RemoteIMApplication::hasEarlierGroupMessages(const QString& groupId) const {
+    return groupHasEarlierLocal_.value(groupId) || groupHasEarlierRemote_.value(groupId);
+}
+
+bool RemoteIMApplication::hasLoadedGroupHistory(const QString& groupId) const {
+    return groupInitialHistoryLoaded_.contains(groupId.trimmed());
+}
+
+void RemoteIMApplication::ensureGroupHistory(const QString& groupId) {
+    const QString id = groupId.trimmed();
+    if (!connected_ || id.isEmpty() || groupInitialHistoryLoaded_.contains(id)) return;
+    if (std::none_of(groups_.cbegin(), groups_.cend(), [&id](const RemoteIMGroup& group) {
+            return group.groupId == id;
+        })) return;
+    fetchGroupHistoryPage(id, 0);
+}
+
+void RemoteIMApplication::mergeGroup(const RemoteIMGroup& group) {
+    if (group.groupId.trimmed().isEmpty()) return;
+    for (RemoteIMGroup& old : groups_) {
+        if (old.groupId != group.groupId) continue;
+        if (!group.name.isEmpty() && group.name != group.groupId) old.name = group.name;
+        if (group.memberCount > 0) old.memberCount = group.memberCount;
+        // A partial create stays recoverable until activation succeeds or the user sends text.
+        old.pendingActivation = old.pendingActivation || group.pendingActivation;
+        if (group.unreadCount >= 0 && selectedGroupId_ != group.groupId &&
+            !groupUnreadFromConversation_.contains(group.groupId))
+            groupUnreadCounts_[group.groupId] = group.unreadCount;
+        if (database_) database_->upsertGroup(old);
+        return;
+    }
+    groups_.append(group);
+    if (group.unreadCount >= 0 && selectedGroupId_ != group.groupId &&
+        !groupUnreadFromConversation_.contains(group.groupId))
+        groupUnreadCounts_[group.groupId] = group.unreadCount;
+    if (database_) database_->upsertGroup(group);
+    if (database_ && !groupMessages_.contains(group.groupId)) {
+        groupMessages_[group.groupId] = database_->groupMessagesBefore(
+            group.groupId, std::numeric_limits<qint64>::max(), QStringLiteral("~"), kGroupPageSize);
+        groupHasEarlierLocal_[group.groupId] = database_->groupMessageCount(group.groupId) >
+            groupMessages_.value(group.groupId).size();
+    }
+    if (pendingGroupPreviews_.contains(group.groupId))
+        ingestGroupMessages({pendingGroupPreviews_.take(group.groupId)}, false);
+}
+
+void RemoteIMApplication::selectGroup(const QString& groupId) {
+    const QString id = groupId.trimmed();
+    if (std::none_of(groups_.cbegin(), groups_.cend(), [&id](const RemoteIMGroup& g) {
+            return g.groupId == id;
+        })) return;
+    setHumanTypingActive(false);
+    selectedGroupId_ = id;
+    groupUnreadCounts_.remove(id);
+    client_->markGroupRead(id, {});
+    emit groupsChanged();
+    if (!groupInitialHistoryLoaded_.contains(id)) fetchGroupHistoryPage(id, 0);
+}
+
+void RemoteIMApplication::clearSelectedGroup() {
+    selectedGroupId_.clear();
+}
+
+void RemoteIMApplication::refreshGroups() {
+    if (!connected_ || groupRefreshInFlight_) return;
+    groupRefreshInFlight_ = true;
+    const QPointer<RemoteIMApplication> self(this);
+    client_->joinedGroups([self](bool ok, const QString& error,
+                                 const QList<RemoteIMGroup>& joined) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, ok, error, joined] {
+            if (!self) return;
+            self->groupRefreshInFlight_ = false;
+            if (!ok) {
+                emit self->errorMessage(error.isEmpty() ? QStringLiteral("群列表加载失败") : error);
+                return;
+            }
+            QSet<QString> ids;
+            for (const RemoteIMGroup& group : joined) {
+                ids.insert(group.groupId);
+                self->mergeGroup(group);
+            }
+            for (int index = self->groups_.size() - 1; index >= 0; --index) {
+                const RemoteIMGroup& group = self->groups_[index];
+                if (ids.contains(group.groupId) || group.pendingActivation) continue;
+                if (self->selectedGroupId_ == group.groupId) self->selectedGroupId_.clear();
+                if (self->database_) self->database_->removeGroup(group.groupId);
+                self->groupMessages_.remove(group.groupId);
+                self->pendingGroupPreviews_.remove(group.groupId);
+                self->groupUnreadCounts_.remove(group.groupId);
+                self->groupUnreadFromConversation_.remove(group.groupId);
+                self->groups_.removeAt(index);
+            }
+            emit self->groupsChanged();
+        }, Qt::AutoConnection);
+    });
+}
+
+void RemoteIMApplication::createGroup(const QString& name, const QStringList& memberIds,
+                                       RemoteIMGroupCompletion completion) {
+    if (!connected_) {
+        if (completion) completion(false, QStringLiteral("IM 尚未连接"), {});
+        return;
+    }
+    QSet<QString> members;
+    const auto contacts = state_.contacts();
+    for (const QString& raw : memberIds) {
+        const QString id = raw.trimmed();
+        if (id.isEmpty() || id == state_.ownerUserId() || members.contains(id) ||
+            !isAcceptedFriend(id) ||
+            std::none_of(contacts.cbegin(), contacts.cend(), [&id](const RemoteIMContact& contact) {
+                return contact.userId == id;
+            })) {
+            if (completion) completion(false, QStringLiteral("群成员必须是已接受的好友，且不能重复或包含自己"), {});
+            return;
+        }
+        members.insert(id);
+    }
+    if (members.isEmpty() || members.size() > 19 || name.trimmed().isEmpty() ||
+        name.trimmed().toUtf8().size() > 100) {
+        if (completion) completion(false, QStringLiteral("群名称需在 100 字节内，且须选择 1 至 19 位好友"), {});
+        return;
+    }
+    const QPointer<RemoteIMApplication> self(this);
+    client_->createGroup(name, memberIds,
+        [self, completion = std::move(completion)](bool ok, const QString& error,
+                                                  const RemoteIMGroup& result) mutable {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, ok, error, result,
+                                         completion = std::move(completion)]() mutable {
+            if (!self) return;
+            if (!result.groupId.isEmpty()) {
+                RemoteIMGroup group = result;
+                group.pendingActivation = !ok;
+                self->mergeGroup(group);
+                if (ok) self->selectGroup(group.groupId);
+                emit self->groupsChanged();
+            }
+            if (completion) completion(ok, error, result);
+        }, Qt::AutoConnection);
+    });
+}
+
+bool RemoteIMApplication::sendGroupText(const QString& groupId, const QString& text) {
+    const QString id = groupId.trimmed();
+    const QString content = text.trimmed();
+    if (!connected_ || id.isEmpty() || content.isEmpty() ||
+        std::none_of(groups_.cbegin(), groups_.cend(), [&id](const RemoteIMGroup& g) {
+            return g.groupId == id;
+        })) return false;
+    RemoteIMGroupMessage message;
+    message.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    message.groupId = id;
+    message.senderId = state_.ownerUserId();
+    message.text = content;
+    message.createdAtMillis = QDateTime::currentMSecsSinceEpoch();
+    message.fromSelf = true;
+    message.pending = true;
+    groupMessages_[id].append(message);
+    if (database_) database_->insertGroupMessageIfAbsent(message);
+    emit groupsChanged();
+    const QPointer<RemoteIMApplication> self(this);
+    client_->sendGroupText(id, content, [self, id, localId = message.id](
+        bool ok, const QString& error, const RemoteIMSendReceipt& receipt) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, id, localId, ok, error, receipt] {
+            if (!self) return;
+            auto& messages = self->groupMessages_[id];
+            for (RemoteIMGroupMessage& existing : messages) {
+                if (existing.id != localId) continue;
+                existing.pending = false;
+                existing.failed = !ok;
+                if (ok && !receipt.remoteMessageId.isEmpty()) existing.id = receipt.remoteMessageId;
+                if (ok && receipt.createdAtMillis > 0) existing.createdAtMillis = receipt.createdAtMillis;
+                if (self->database_) {
+                    self->database_->adoptGroupMessageId(localId,
+                        ok ? receipt.remoteMessageId : QString(), existing.createdAtMillis, existing.sequence);
+                    self->database_->updateGroupMessageStatus(existing.id, false, !ok);
+                }
+                break;
+            }
+            if (ok && !receipt.remoteMessageId.isEmpty()) {
+                // A self echo can arrive before the send receipt. If its server time differs
+                // from our local clock, the provisional row may not have matched the echo.
+                // Both rows then acquire the same SDK ID; retain the echo with its sequence.
+                int keeper = -1;
+                for (int index = 0; index < messages.size(); ++index) {
+                    if (messages.at(index).id != receipt.remoteMessageId) continue;
+                    if (keeper < 0) {
+                        keeper = index;
+                        continue;
+                    }
+                    if (messages.at(index).sequence > messages.at(keeper).sequence) {
+                        messages.removeAt(keeper);
+                        keeper = index - 1;
+                    } else {
+                        messages.removeAt(index);
+                    }
+                    --index;
+                }
+                std::stable_sort(messages.begin(), messages.end(), groupMessageLess);
+            }
+            if (ok) {
+                for (RemoteIMGroup& group : self->groups_) {
+                    if (group.groupId != id || !group.pendingActivation) continue;
+                    group.pendingActivation = false;
+                    if (self->database_) self->database_->upsertGroup(group);
+                    break;
+                }
+            } else {
+                emit self->errorMessage(error.isEmpty() ? QStringLiteral("群消息发送失败") : error);
+            }
+            emit self->groupsChanged();
+        }, Qt::AutoConnection);
+    });
+    return true;
+}
+
+void RemoteIMApplication::ingestGroupMessages(const QList<RemoteIMGroupMessage>& messages, bool live) {
+    bool changed = false;
+    for (const RemoteIMGroupMessage& message : messages) {
+        if (message.id.isEmpty() || message.groupId.isEmpty() || message.text.trimmed().isEmpty()) continue;
+        if (std::none_of(groups_.cbegin(), groups_.cend(), [&message](const RemoteIMGroup& group) {
+                return group.groupId == message.groupId;
+            })) {
+            if (pendingGroupPreviews_.size() < 50 || pendingGroupPreviews_.contains(message.groupId))
+                pendingGroupPreviews_[message.groupId] = message;
+            refreshGroups();
+            continue;
+        }
+        auto& items = groupMessages_[message.groupId];
+        if (std::any_of(items.cbegin(), items.cend(), [&message](const RemoteIMGroupMessage& old) {
+                return old.id == message.id;
+            })) continue;
+        if (message.fromSelf) {
+            auto pending = std::find_if(items.begin(), items.end(), [&message](const RemoteIMGroupMessage& old) {
+                return old.pending && old.fromSelf && old.text == message.text &&
+                    qAbs(old.createdAtMillis - message.createdAtMillis) < 5000;
+            });
+            if (pending != items.end()) {
+                const QString localId = pending->id;
+                *pending = message;
+                if (database_) {
+                    database_->adoptGroupMessageId(localId, message.id,
+                        message.createdAtMillis, message.sequence);
+                    database_->updateGroupMessageStatus(message.id, false, false);
+                }
+                changed = true;
+                continue;
+            }
+        }
+        const bool fresh = database_ ? database_->insertGroupMessageIfAbsent(message) : true;
+        items.append(message);
+        changed = true;
+        if (live && fresh && !message.fromSelf) {
+            if (selectedGroupId_ == message.groupId) client_->markGroupRead(message.groupId, {});
+            else groupUnreadCounts_[message.groupId] += 1;
+        }
+    }
+    if (changed) {
+        for (auto& items : groupMessages_) std::stable_sort(items.begin(), items.end(), groupMessageLess);
+        emit groupsChanged();
+    }
+}
+
+void RemoteIMApplication::fetchGroupHistoryPage(const QString& groupId, qint64 beforeSequence) {
+    if (!connected_ || groupHistoryInFlight_.contains(groupId)) return;
+    groupHistoryInFlight_.insert(groupId);
+    const QPointer<RemoteIMApplication> self(this);
+    client_->groupHistory(groupId, kGroupPageSize, beforeSequence,
+        [self, groupId](bool ok, const QString& error, const RemoteIMGroupHistoryPage& page) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, groupId, ok, error, page] {
+            if (!self) return;
+            self->groupHistoryInFlight_.remove(groupId);
+            if (!ok) {
+                emit self->errorMessage(error.isEmpty() ? QStringLiteral("群历史加载失败") : error);
+                emit self->groupHistoryFinished(groupId, false);
+                return;
+            }
+            self->groupInitialHistoryLoaded_.insert(groupId);
+            self->groupHasEarlierRemote_[groupId] = page.hasMore;
+            self->groupOlderSequence_[groupId] = page.nextSequence;
+            self->ingestGroupMessages(page.messages, false);
+            emit self->groupsChanged();
+            emit self->groupHistoryFinished(groupId, true);
+        }, Qt::AutoConnection);
+    });
+}
+
+void RemoteIMApplication::loadEarlierGroupMessages(const QString& groupId) {
+    if (groupHistoryInFlight_.contains(groupId)) return;
+    auto& items = groupMessages_[groupId];
+    if (database_ && !items.isEmpty() && groupHasEarlierLocal_.value(groupId)) {
+        const auto& oldest = items.first();
+        const auto page = database_->groupMessagesBefore(groupId, oldest.createdAtMillis,
+                                                         oldest.id, kGroupPageSize);
+        groupHasEarlierLocal_[groupId] = page.size() == kGroupPageSize;
+        for (const auto& message : page) {
+            if (std::none_of(items.cbegin(), items.cend(), [&message](const auto& old) {
+                    return old.id == message.id;
+                })) items.prepend(message);
+        }
+        if (!page.isEmpty() && page.first().sequence > 1) {
+            const qint64 next = page.first().sequence - 1;
+            if (groupOlderSequence_.value(groupId) == 0 ||
+                groupOlderSequence_.value(groupId) > next) groupOlderSequence_[groupId] = next;
+        }
+        emit groupsChanged();
+        if (!page.isEmpty()) return;
+    }
+    if (groupHasEarlierRemote_.value(groupId) && groupOlderSequence_.value(groupId) > 0)
+        fetchGroupHistoryPage(groupId, groupOlderSequence_.value(groupId));
 }
 
 bool RemoteIMApplication::createContactGroup(const QString& name) {
@@ -226,6 +570,7 @@ void RemoteIMApplication::connectToService(int sdkAppId, const QString& userSig)
     client_->connectToService(sdkAppId, state_.ownerUserId(), userSig, [this](bool ok, const QString& error) {
         connected_ = ok;
         emit connectionChanged(connected_);
+        if (connected_) refreshGroups();
         if (!ok) emit errorMessage(error.isEmpty() ? QStringLiteral("IM 连接失败") : error);
     });
 }
@@ -991,6 +1336,24 @@ void RemoteIMApplication::bindClientSignals() {
     connect(client_.get(), &RemoteIMClient::messagesReceived, this, [this](const QList<RemoteIMMessage>& messages) {
         ingestMessages(messages, /*live=*/false);
     });
+    connect(client_.get(), &RemoteIMClient::groupsReceived, this,
+            [this](const QList<RemoteIMGroup>& groups) {
+        for (const RemoteIMGroup& group : groups) mergeGroup(group);
+        emit groupsChanged();
+    });
+    connect(client_.get(), &RemoteIMClient::groupUnreadReceived, this,
+            [this](const QString& groupId, int count) {
+        if (selectedGroupId_ == groupId) return;
+        groupUnreadFromConversation_.insert(groupId);
+        groupUnreadCounts_[groupId] = qMax(0, count);
+        emit groupsChanged();
+    });
+    connect(client_.get(), &RemoteIMClient::groupMessagesReceived, this,
+            [this](const QList<RemoteIMGroupMessage>& messages, bool live) {
+        ingestGroupMessages(messages, live);
+    });
+    connect(client_.get(), &RemoteIMClient::groupMembershipChanged, this,
+            [this] { refreshGroups(); });
     connect(client_.get(), &RemoteIMClient::liveMessagesReceived, this, [this](const QList<RemoteIMMessage>& messages) {
         ingestMessages(messages, /*live=*/true);
     });

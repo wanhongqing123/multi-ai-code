@@ -9,6 +9,7 @@
 #include <QString>
 
 #include "model/ChatState.h"
+#include "model/RemoteIMGroup.h"
 
 // 本地消息库（SQLite，每账号一个库文件）。
 //
@@ -67,6 +68,18 @@ public:
     // 出站消息发送成功后把临时 UUID 主键换成 SDK 稳定 id；若稳定 id 已存在
     //（漫游先落库），删除旧临时行。
     void adoptMessageId(const QString& oldId, const QString& newId);
+
+    QList<RemoteIMGroup> groups() const;
+    void upsertGroup(const RemoteIMGroup& group);
+    void removeGroup(const QString& groupId);
+    QList<RemoteIMGroupMessage> groupMessagesBefore(const QString& groupId,
+                                                    qint64 beforeCreatedAt,
+                                                    const QString& beforeId, int limit) const;
+    int groupMessageCount(const QString& groupId) const;
+    bool insertGroupMessageIfAbsent(const RemoteIMGroupMessage& message);
+    void adoptGroupMessageId(const QString& oldId, const QString& remoteId,
+                             qint64 createdAtMillis, qint64 sequence);
+    void updateGroupMessageStatus(const QString& id, bool pending, bool failed);
 
 private:
     void migrate();

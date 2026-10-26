@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QtTest>
 
 #include <memory>
@@ -23,6 +24,9 @@ private slots:
   void readsContactsMessagesSearchAndUnreadState();
   void sendsAndRepliesOnlyThroughApprovalGatedTools();
   void sendsAgentImageAsPersistentMediaMessage();
+  void groupToolsUseTheSameApplicationFlowAndApprovalRules();
+  void groupMessageToolWaitsForInitialHistoryInsteadOfReportingEmpty();
+  void createGroupToolReturnsExistingPendingGroupWithoutDuplicating();
 };
 
 void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
@@ -36,7 +40,8 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
         "maichat_list_conversations",
         "maichat_get_messages", "maichat_search_messages",
         "maichat_get_unread_summary", "maichat_send_text", "maichat_send_media",
-        "maichat_reply_message", "maichat_broadcast_text"}) {
+        "maichat_reply_message", "maichat_broadcast_text", "maichat_list_groups",
+        "maichat_create_group", "maichat_get_group_messages", "maichat_send_group_text"}) {
     QVERIFY2(registry.find(name) != nullptr, name);
   }
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
@@ -57,6 +62,127 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
               ->requiresPerCallApproval("{}"));
   QVERIFY(registry.find("maichat_broadcast_text")
               ->requiresPerCallApproval("{}"));
+  QVERIFY(!registry.find("maichat_list_groups")->requiresApproval("{}"));
+  QVERIFY(!registry.find("maichat_get_group_messages")->requiresApproval("{}"));
+  QVERIFY(registry.find("maichat_create_group")->requiresPerCallApproval("{}"));
+  QVERIFY(registry.find("maichat_send_group_text")->requiresPerCallApproval("{}"));
+}
+
+void MaiChatHostToolsTest::groupToolsUseTheSameApplicationFlowAndApprovalRules() {
+  auto client = std::make_unique<FakeRemoteIMClient>();
+  auto *fake = client.get();
+  RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+  app.connectToService(123456, QStringLiteral("sig"));
+  app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+  MaiToolRegistry registry;
+  registerMaiChatHostTools(registry, app);
+  MaiToolContext context;
+
+  const auto invalid = registry.find("maichat_create_group")->execute(
+      R"({"name":"Team","member_ids":["owner"]})", context);
+  QVERIFY(invalid.hasError());
+  const auto created = registry.find("maichat_create_group")->execute(
+      R"({"name":"Team","member_ids":["alice"]})", context);
+  QVERIFY(!created.hasError());
+  const QJsonObject createdJson = QJsonDocument::fromJson(
+      QByteArray::fromStdString(created.output())).object();
+  const QString groupId = createdJson.value(QStringLiteral("group_id")).toString();
+  QVERIFY(!groupId.isEmpty());
+  QCOMPARE(createdJson.value(QStringLiteral("member_count")).toInt(), 2);
+  QVERIFY(createdJson.value(QStringLiteral("created")).toBool());
+  QCOMPARE(app.groups().first().groupId, groupId);
+
+  const auto listed = registry.find("maichat_list_groups")->execute(
+      R"({"query":"Tea","limit":2})", context);
+  QVERIFY(!listed.hasError());
+  QCOMPARE(QJsonDocument::fromJson(QByteArray::fromStdString(listed.output()))
+               .object().value(QStringLiteral("count")).toInt(), 1);
+  const QByteArray sendArgs = QJsonDocument(QJsonObject{
+      {QStringLiteral("group_id"), groupId}, {QStringLiteral("text"), QStringLiteral("hello")}
+  }).toJson(QJsonDocument::Compact);
+  const auto sent = registry.find("maichat_send_group_text")->execute(sendArgs.toStdString(), context);
+  QVERIFY(!sent.hasError());
+  const QJsonObject sentJson = QJsonDocument::fromJson(
+      QByteArray::fromStdString(sent.output())).object();
+  QVERIFY(sentJson.value(QStringLiteral("queued")).toBool());
+  QVERIFY(sentJson.value(QStringLiteral("sent")).toBool());
+  QVERIFY(!sentJson.value(QStringLiteral("message_id")).toString().isEmpty());
+  QVERIFY(!sentJson.value(QStringLiteral("remote_id")).toString().isEmpty());
+  QCOMPARE(fake->lastGroupId(), groupId);
+  QCOMPARE(fake->lastGroupText(), QStringLiteral("hello"));
+  fake->emitIncomingGroupText(groupId, QStringLiteral("alice"),
+                              QStringLiteral("received"), QStringLiteral("remote-1#0"));
+  const QByteArray getArgs = QJsonDocument(QJsonObject{
+      {QStringLiteral("group_id"), groupId}, {QStringLiteral("limit"), 20}
+  }).toJson(QJsonDocument::Compact);
+  const auto messages = registry.find("maichat_get_group_messages")
+                            ->execute(getArgs.toStdString(), context);
+  QVERIFY(!messages.hasError());
+  const auto rows = QJsonDocument::fromJson(QByteArray::fromStdString(messages.output()))
+                        .object().value(QStringLiteral("messages")).toArray();
+  QCOMPARE(rows.size(), 2);
+  QCOMPARE(rows.last().toObject().value(QStringLiteral("sender_id")).toString(),
+           QStringLiteral("alice"));
+  QCOMPARE(rows.last().toObject().value(QStringLiteral("remote_id")).toString(),
+           QStringLiteral("remote-1#0"));
+  QCOMPARE(rows.last().toObject().value(QStringLiteral("direction")).toString(),
+           QStringLiteral("incoming"));
+}
+
+void MaiChatHostToolsTest::groupMessageToolWaitsForInitialHistoryInsteadOfReportingEmpty() {
+  auto client = std::make_unique<FakeRemoteIMClient>();
+  auto* fake = client.get();
+  RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+  app.connectToService(123456, QStringLiteral("sig"));
+  app.addContact(QStringLiteral("alice"), QStringLiteral("Alice"));
+  fake->deferNextGroupHistory();
+  RemoteIMGroup created;
+  app.createGroup(QStringLiteral("Team"), {QStringLiteral("alice")},
+                  [&](bool ok, const QString&, const RemoteIMGroup& group) {
+    QVERIFY(ok);
+    created = group;
+  });
+  QTRY_VERIFY(!created.groupId.isEmpty());
+  QVERIFY(!app.hasLoadedGroupHistory(created.groupId));
+  MaiToolRegistry registry;
+  registerMaiChatHostTools(registry, app);
+  const QByteArray args = QJsonDocument(QJsonObject{
+      {QStringLiteral("group_id"), created.groupId}, {QStringLiteral("limit"), 20}
+  }).toJson(QJsonDocument::Compact);
+  QTimer::singleShot(50, [fake, groupId = created.groupId] {
+    fake->finishDeferredGroupHistory({RemoteIMGroupMessage{
+        QStringLiteral("remote-history#0"), groupId, QStringLiteral("alice"),
+        QStringLiteral("already there"), 1700000000000LL, 1}});
+  });
+  MaiToolContext context;
+  const auto result = registry.find("maichat_get_group_messages")
+                          ->execute(args.toStdString(), context);
+  QVERIFY(!result.hasError());
+  const auto rows = QJsonDocument::fromJson(QByteArray::fromStdString(result.output()))
+                        .object().value(QStringLiteral("messages")).toArray();
+  QCOMPARE(rows.size(), 1);
+  QCOMPARE(rows.first().toObject().value(QStringLiteral("text")).toString(),
+           QStringLiteral("already there"));
+}
+
+void MaiChatHostToolsTest::createGroupToolReturnsExistingPendingGroupWithoutDuplicating() {
+  auto client = std::make_unique<FakeRemoteIMClient>();
+  auto* fake = client.get();
+  RemoteIMApplication app(QStringLiteral("owner"), std::move(client));
+  app.connectToService(123456, QStringLiteral("sig"));
+  emit fake->groupsReceived({RemoteIMGroup{QStringLiteral("existing-group"),
+                                            QStringLiteral("Existing"), 2, true}});
+  MaiToolRegistry registry;
+  registerMaiChatHostTools(registry, app);
+  MaiToolContext context;
+  const auto result = registry.find("maichat_create_group")->execute(
+      R"({"name":"Another","member_ids":["friend"]})", context);
+  QVERIFY(!result.hasError());
+  const auto output = QJsonDocument::fromJson(QByteArray::fromStdString(result.output())).object();
+  QCOMPARE(output.value(QStringLiteral("created")).toBool(), false);
+  QCOMPARE(output.value(QStringLiteral("pending_activation")).toBool(), true);
+  QCOMPARE(output.value(QStringLiteral("group_id")).toString(), QStringLiteral("existing-group"));
+  QCOMPARE(app.groups().size(), 1);
 }
 
 void MaiChatHostToolsTest::nicknameToolUsesTheAccountUpdater() {

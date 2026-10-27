@@ -71,6 +71,11 @@ GET 约 10 秒超时；修复候选在不修改代理环境的情况下通过，
 Session WSS、Session Host 与 AgentController 五组完整 CTest 5/5 通过。
 实际只能通过代理的外部网络和 Mac 构建尚未实测，不能把本机验证扩大为这两项。
 
+产品与打包修复提交为 `7b788479f589153893330b4e34148543826fe02d`。
+从该精确提交增量重链 Windows VS2019/Qt Release 后，路由、登录、
+Session WSS、Session Host、AgentController 五组 CTest 再次 5/5 通过；
+带原机器代理环境的正式无凭据 GET 和二维码创建后取消均通过。源码工作树干净。
+
 排障时还出现独立的测试流程错误：从 `build/bin/maichat.exe` 裸启动暂存
 `--smoke`，因该目录未旁挂 Qt5Sql.dll 弹出系统缺 DLL 窗口。该进程由本次
 测试启动并已终止；用户安装目录中的 Qt5Sql.dll 存在，安装版 exe 未被
@@ -79,3 +84,17 @@ Session WSS、Session Host 与 AgentController 五组完整 CTest 5/5 通过。
 烟测只能运行完整 staging。独立暂存目录从 2.2.30 Release 构建生成，
 在仅含 Windows 系统目录的 PATH 下实际 `--smoke` 退出 0；日志回读运行路径、
 版本 2.2.30 和 OpenSSL 3.5.9。该暂存版尚未安装到用户机器的现用目录。
+
+独立 Windows 资产来自 `7b788479`，尚未上传或发布：安装器
+`MaiChat-Setup-win64-v2.2.30-7b788479.exe` 为 112,897,129 B，SHA-256
+`bb694c2e1ac0d8a3abbdef06aed2e2308f7ae03779c93e8bb104ef192ead49d0`，
+当前无 Authenticode 签名；ZIP
+`MaiChat-win64-v2.2.30-20261027-7b788479.zip` 为 139,882,958 B，
+SHA-256 `afd105559b05dbc7f67661ff0f494783a91b697782c36b44994cccd486241b55`。
+ZIP 中的 `maichat.exe` SHA-256 与 staging 一致，为
+`2d216e880d8814fdfedadd726117eaac43ff1bb0393847e26296b596ef68c3ce`。
+实际从 ZIP 解压到全新隔离目录后，核对 Qt5Sql.dll、qwindows.dll、
+qsqlite.dll 和 exe 均在，再以裸 PATH 运行解压出的程序，`--smoke` 退出 0。
+用户已安装 `D:\Program Files\MaiChat\maichat.exe` 仍是 2.2.29，SHA-256
+`3a1c25a73e7510ae1e35366854d9e673d03754748bc6a09277145c816ca37a70`；
+本轮未运行安装器、未覆盖该程序。

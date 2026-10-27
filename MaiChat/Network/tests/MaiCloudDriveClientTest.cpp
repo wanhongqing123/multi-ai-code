@@ -130,7 +130,7 @@ struct SequentialSource {
 int readSequential(void* context, unsigned char* output,
                    size_t capacity, size_t* readBytes) {
     auto* source = static_cast<SequentialSource*>(context);
-    *readBytes = std::min(capacity, source->contents->size() - source->offset);
+    *readBytes = (std::min)(capacity, source->contents->size() - source->offset);
     if (*readBytes)
         std::memcpy(output, source->contents->data() + source->offset, *readBytes);
     source->offset += *readBytes;

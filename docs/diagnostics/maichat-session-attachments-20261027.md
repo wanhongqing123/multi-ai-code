@@ -37,6 +37,16 @@
 - 还须以最终提交哈希复核 Windows VS2019/Qt 构建及真实跨设备、真实 OSS
   上传下载。
 
+## Windows 附件测试编译补正
+
+- Windows 在 `ff63b9d70` 上使用 VS2019/Qt Release 重链主程序及 Desktop
+  Host、Agent、布局、云盘工具和对话框目标均成功。单独启用 Network 测试后，
+  `MaiChat/Network/tests/MaiCloudDriveClientTest.cpp:133` 的 `std::min(...)`
+  被 Windows `min` 宏展开，MSVC 报 C2589/C2062/C2059；产品源码未受影响。
+- 将此处调用写成 `(std::min)(...)`，消除宏展开，同时保持原有最小值逻辑。
+  Mac 测试目标重链成功，本地 TLS 回归 1/1 通过（37.41 秒）；Windows
+  仍需从修复哈希在不加 `CL=/DNOMINMAX` 的环境下重新验证。
+
 ## 上线边界
 
 - 生产 ECS 尚未改动。Mac、Windows 对 `ichat.life` 当前 SSH 主机密钥没有

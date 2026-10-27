@@ -3,6 +3,10 @@
 // 资源边界：响应正文上限 1 MiB、响应头上限 16 KiB；请求完成即释放连接。
 #include "auth/DesktopCurlAuthTransport.h"
 
+#ifdef Q_OS_WIN
+#include "network/DesktopServiceRoute.h"
+#endif
+
 #include <QFile>
 #include <QResource>
 
@@ -95,11 +99,13 @@ QString transferError(CURLcode code) {
     return QString::fromLatin1(curl_easy_strerror(code));
 }
 
-}  // namespace
-
-DesktopCurlAuthResult DesktopCurlAuthTransport::perform(const QUrl& url, const QByteArray& method,
-                                                        const QByteArray& body, const QByteArray& bearer,
-                                                        const std::shared_ptr<std::atomic_bool>& cancelled) {
+DesktopCurlAuthResult performWithRoute(
+    const QUrl& url, const QByteArray& method, const QByteArray& body,
+    const QByteArray& bearer, const std::shared_ptr<std::atomic_bool>& cancelled,
+#ifdef Q_OS_WIN
+    const DesktopServiceProxyRoute* route,
+#endif
+    int probeTimeoutMs) {
     DesktopCurlAuthResult result;
     if (!cancelled || !validRequest(url, method, body, bearer)) {
         result.error = QStringLiteral("账号请求参数无效");
@@ -143,9 +149,11 @@ DesktopCurlAuthResult DesktopCurlAuthTransport::perform(const QUrl& url, const Q
     set(CURLOPT_FRESH_CONNECT, 1L);
     set(CURLOPT_FORBID_REUSE, 1L);
     set(CURLOPT_SSL_SESSIONID_CACHE, 0L);
-    set(CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+    set(CURLOPT_CONNECTTIMEOUT_MS, probeTimeoutMs > 0 ? long(probeTimeoutMs) : 10000L);
     const bool sessionSync = url.path().contains(QStringLiteral("/v1/session-sync/"));
-    set(CURLOPT_TIMEOUT_MS, sessionSync ? 35000L : 15000L);
+    const long timeoutMs = probeTimeoutMs > 0 ? long(probeTimeoutMs) :
+        (sessionSync ? 35000L : 15000L);
+    set(CURLOPT_TIMEOUT_MS, timeoutMs);
     set(CURLOPT_NOSIGNAL, 1L);
     set(CURLOPT_SSL_VERIFYPEER, 1L);
     set(CURLOPT_SSL_VERIFYHOST, 2L);
@@ -159,6 +167,22 @@ DesktopCurlAuthResult DesktopCurlAuthTransport::perform(const QUrl& url, const Q
     set(CURLOPT_NOPROGRESS, 0L);
     set(CURLOPT_XFERINFOFUNCTION, stopCancelledTransfer);
     set(CURLOPT_XFERINFODATA, cancelled.get());
+#ifdef Q_OS_WIN
+    const QByteArray proxyUrl = route ? route->proxyUrl.toUtf8() : QByteArray();
+    if (route != nullptr) {
+        if (route->mode == DesktopServiceProxyMode::Direct) {
+            set(CURLOPT_PROXY, "");
+            set(CURLOPT_NOPROXY, "*");
+        } else if (route->mode == DesktopServiceProxyMode::HttpProxy) {
+            set(CURLOPT_PROXY, proxyUrl.constData());
+            set(CURLOPT_NOPROXY, "");
+        } else {
+            result.error = QStringLiteral("当前系统代理类型不受支持");
+            curl_easy_cleanup(curl);
+            return result;
+        }
+    }
+#endif
     if (url.scheme() == QStringLiteral("http")) {
         // 本机测试服务不得经过环境代理，避免把测试中的令牌发到外部代理。
         set(CURLOPT_PROXY, "");
@@ -225,4 +249,39 @@ DesktopCurlAuthResult DesktopCurlAuthTransport::perform(const QUrl& url, const Q
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return result;
+}
+
+}  // namespace
+
+DesktopCurlAuthResult DesktopCurlAuthTransport::perform(
+    const QUrl& url, const QByteArray& method, const QByteArray& body,
+    const QByteArray& bearer, const std::shared_ptr<std::atomic_bool>& cancelled) {
+#ifdef Q_OS_WIN
+    if (url.scheme() == QStringLiteral("https") &&
+        url.host() == QStringLiteral("ichat.life")) {
+        const DesktopServiceProxyRoute configured = DesktopServiceRoute::configured(url);
+        const auto probe = [cancelled](const DesktopServiceProxyRoute& route) {
+            if (cancelled->load()) return false;
+            const DesktopCurlAuthResult check = performWithRoute(
+                QUrl(QStringLiteral("https://ichat.life/api/v1/auth/me")), "GET", {}, {},
+                cancelled, &route, 2500);
+            return check.error.isEmpty() && check.status == 401 && !check.body.isEmpty();
+        };
+        const DesktopServiceProxyRoute selected =
+            DesktopServiceRoute::choose(configured, probe);
+        if (cancelled->load()) {
+            DesktopCurlAuthResult result;
+            result.error = QStringLiteral("账号请求已取消");
+            return result;
+        }
+        const DesktopCurlAuthResult result = performWithRoute(
+            url, method, body, bearer, cancelled, &selected, 0);
+        if (!result.error.isEmpty() && !cancelled->load())
+            DesktopServiceRoute::invalidate(selected);
+        return result;
+    }
+    return performWithRoute(url, method, body, bearer, cancelled, nullptr, 0);
+#else
+    return performWithRoute(url, method, body, bearer, cancelled, 0);
+#endif
 }

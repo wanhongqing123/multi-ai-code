@@ -8,6 +8,10 @@
 #include <QPointer>
 #include <QUuid>
 
+#ifdef Q_OS_WIN
+#include "network/DesktopServiceRoute.h"
+#endif
+
 namespace {
 
 QString requestOperation(const QString& path, const QByteArray& method) {
@@ -24,6 +28,14 @@ QString requestOperation(const QString& path, const QByteArray& method) {
 QString proxyForUrl(const QUrl& socketUrl) {
     QUrl lookup = socketUrl;
     lookup.setScheme(QStringLiteral("https"));
+#ifdef Q_OS_WIN
+    const DesktopServiceProxyRoute route = DesktopServiceRoute::current(
+        DesktopServiceRoute::configured(lookup));
+    if (route.mode == DesktopServiceProxyMode::Unsupported ||
+        route.mode == DesktopServiceProxyMode::Unavailable)
+        return QStringLiteral("unsupported");
+    return route.proxyUrl;
+#else
     const auto proxies = QNetworkProxyFactory::systemProxyForQuery(QNetworkProxyQuery(lookup));
     if (proxies.isEmpty() || proxies.first().type() == QNetworkProxy::NoProxy ||
         proxies.first().type() == QNetworkProxy::DefaultProxy)
@@ -37,6 +49,7 @@ QString proxyForUrl(const QUrl& socketUrl) {
     address.setPort(proxy.port());
     address.setPath(QStringLiteral("/"));
     return address.toString(QUrl::FullyEncoded);
+#endif
 }
 
 }  // namespace

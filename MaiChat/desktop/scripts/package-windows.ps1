@@ -78,6 +78,18 @@ try {
 }
 if ($deployExitCode -ne 0) { throw "windeployqt 失败，退出码 $deployExitCode" }
 
+# Never validate or distribute the raw build/bin executable by itself. The Qt
+# imports are resolved before main(), so a missing Qt5Sql.dll produces a system
+# error dialog instead of an AppLog entry or a useful --smoke exit code.
+foreach ($requiredQtRuntime in @(
+    'Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Network.dll', 'Qt5Sql.dll',
+    'Qt5Widgets.dll', 'platforms\qwindows.dll', 'sqldrivers\qsqlite.dll'
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $staging $requiredQtRuntime))) {
+        throw "staging 缺少 Qt 运行时：$requiredQtRuntime"
+    }
+}
+
 # 视频播放的解码后端是插件，不是 Qt5Multimedia.dll 本身。缺了它 QMediaPlayer
 # 不报错也不崩，只是永远停在 StoppedState、画面全黑——和当年缺 OpenSSL 导致
 # 「文字能收、图片收不到」是同一类静默故障。windeployqt 在部分环境不会带上，

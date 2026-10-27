@@ -2,7 +2,7 @@
 # 平台 SDK 和可选媒体能力由配置阶段检查；真实编译命令可导出给 clangd。
 cmake_minimum_required(VERSION 3.21)
 # C 用于 MaiAgent/third_party/md4c（Markdown 解析，纯 C 实现）。
-project(MaiChatDesktop VERSION 2.2.29 LANGUAGES C CXX)
+project(MaiChatDesktop VERSION 2.2.30 LANGUAGES C CXX)
 if(MSVC AND CMAKE_CL_SHOWINCLUDES_PREFIX MATCHES "^娉")
   # Some CMake/VS2019 locale combinations double-decode /showIncludes. Ninja then
   # records no header dependencies, so changing a public header leaves stale objects.
@@ -447,6 +447,14 @@ if(MAICHAT_TRTC_AVAILABLE)
   target_compile_definitions(remote_im_core PRIVATE MAICHAT_HAVE_TRTC=1)
 endif()
 
+if(WIN32)
+  add_library(maichat_desktop_service_route STATIC
+    src/network/DesktopServiceRoute.h
+    src/network/DesktopServiceRoute.cpp)
+  target_include_directories(maichat_desktop_service_route PUBLIC src)
+  target_link_libraries(maichat_desktop_service_route PUBLIC Qt5::Network)
+endif()
+
 add_library(remote_im_desktop_app
   src/auth/DesktopAuthClient.h
   src/auth/DesktopAuthClient.cpp
@@ -470,7 +478,8 @@ target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui maiag
   PRIVATE Qt5::Concurrent CURL::libcurl)
 if(WIN32)
   # IShellItemImageFactory（资源管理器的缩略图提供程序）取视频首帧。
-  target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32 Advapi32)
+  target_link_libraries(remote_im_desktop_app PRIVATE shell32 ole32 Advapi32
+    maichat_desktop_service_route)
 elseif(APPLE)
   target_link_libraries(remote_im_desktop_app PRIVATE
     "-framework Security" "-framework CoreFoundation")
@@ -837,7 +846,8 @@ target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Network Qt5::Widgets Q
   maiagent maichat_markdown maichat_pdf_preview mai_video_circle_client)
 target_link_libraries(maichat_agent PRIVATE ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY})
 if(WIN32)
-  target_link_libraries(maichat_agent PRIVATE ws2_32 mswsock)
+  target_link_libraries(maichat_agent PRIVATE ws2_32 mswsock
+    maichat_desktop_service_route)
 endif()
 if(TARGET maiagent_embedded_fftools OR TARGET maichat_ffmpeg_tools)
   target_include_directories(maichat_agent PRIVATE
@@ -1405,6 +1415,12 @@ add_executable(maichat_host_tools_test tests/MaiChatHostToolsTest.cpp)
 target_link_libraries(maichat_host_tools_test PRIVATE remote_im_desktop_app remote_im_core maiagent Qt5::Test)
 
 add_executable(login_dialog_test tests/LoginDialogTest.cpp)
+if(WIN32)
+  add_executable(desktop_service_route_test tests/DesktopServiceRouteTest.cpp)
+  target_link_libraries(desktop_service_route_test PRIVATE
+    maichat_desktop_service_route Qt5::Test)
+  add_test(NAME desktop_service_route_test COMMAND desktop_service_route_test)
+endif()
 target_link_libraries(login_dialog_test PRIVATE remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
 
 add_executable(secure_refresh_token_store_test

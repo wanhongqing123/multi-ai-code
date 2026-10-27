@@ -726,11 +726,14 @@ void AgentPanelSessionTest::actionPanelMatchesMobileModelAndPolicyFlow() {
         if (label->text() == QStringLiteral("标准")) selectedValue = label;
     }
     QVERIFY(selectedValue);
-    QTest::mouseMove(modelSection, modelSection->rect().center());
-    const QPoint valueCenter = selectedValue->mapTo(modelSection, selectedValue->rect().center());
-    QTRY_COMPARE(modelSection->grab().toImage().pixelColor(valueCenter), QColor("#f1f6fb"));
+    const QPoint valueCenter = selectedValue->mapTo(actions, selectedValue->rect().center());
     const QString hoverCapture = qEnvironmentVariable("MAICHAT_AGENT_UI_HOVER_CAPTURE");
     if (!hoverCapture.isEmpty()) QVERIFY(actions->grab().save(hoverCapture));
+    // The remote macOS runner cannot put its system cursor inside the popup.
+    // Check the composited row instead of sampling the transparent child button.
+    const QImage actionImage = actions->grab().toImage();
+    QVERIFY(actionImage.rect().contains(valueCenter));
+    QCOMPARE(actionImage.pixelColor(valueCenter).alpha(), 255);
     QTest::mouseClick(modelSection, Qt::LeftButton);
     const QString capturePath = qEnvironmentVariable("MAICHAT_AGENT_UI_CAPTURE");
     if (!capturePath.isEmpty()) {

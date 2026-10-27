@@ -78,13 +78,29 @@ public:
     std::string parametersSchema() const override {
         switch (action_) {
             case Action::Create:
-                return R"({"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":120},"instruction":{"type":"string","minLength":1,"maxLength":16384},"execute_at":{"type":"string","minLength":20,"maxLength":25}},"required":["title","instruction","execute_at"],"additionalProperties":false})";
+                return R"({"type":"object","properties":{)"
+                       R"("title":{"type":"string","minLength":1,"maxLength":120},)"
+                       R"("instruction":{"type":"string","minLength":1,"maxLength":16384},)"
+                       R"("execute_at":{"type":"string","minLength":20,"maxLength":25}},)"
+                       R"("required":["title","instruction","execute_at"],)"
+                       R"("additionalProperties":false})";
             case Action::List:
-                return R"({"type":"object","properties":{"offset":{"type":"integer","minimum":0,"maximum":199},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false})";
+                return R"({"type":"object","properties":{)"
+                       R"("offset":{"type":"integer","minimum":0,"maximum":199},)"
+                       R"("limit":{"type":"integer","minimum":1,"maximum":50}},)"
+                       R"("additionalProperties":false})";
             case Action::Update:
-                return R"({"type":"object","properties":{"task_id":{"type":"string"},"expected_revision":{"type":"integer","minimum":1},"title":{"type":"string","minLength":1,"maxLength":120},"instruction":{"type":"string","minLength":1,"maxLength":16384},"execute_at":{"type":"string","minLength":20,"maxLength":25}},"required":["task_id","expected_revision"],"additionalProperties":false})";
+                return R"({"type":"object","properties":{)"
+                       R"("task_id":{"type":"string"},)"
+                       R"("expected_revision":{"type":"integer","minimum":1},)"
+                       R"("title":{"type":"string","minLength":1,"maxLength":120},)"
+                       R"("instruction":{"type":"string","minLength":1,"maxLength":16384},)"
+                       R"("execute_at":{"type":"string","minLength":20,"maxLength":25}},)"
+                       R"("required":["task_id","expected_revision"],)"
+                       R"("additionalProperties":false})";
             case Action::Cancel:
-                return R"({"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"],"additionalProperties":false})";
+                return R"({"type":"object","properties":{"task_id":{"type":"string"}},)"
+                       R"("required":["task_id"],"additionalProperties":false})";
         }
         return {};
     }

@@ -192,7 +192,14 @@ public:
                "other apps outside MaiChat.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"action":{"type":"string","enum":["open","observe","screenshot","click","type","close"]},"url":{"type":"string","maxLength":2048},"expected_url":{"type":"string","maxLength":2048},"snapshot_id":{"type":"string"},"element_id":{"type":"string"},"expected_label":{"type":"string"},"text":{"type":"string","maxLength":4000}},"required":["action"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{)"
+               R"("action":{"type":"string","enum":["open","observe","screenshot","click","type","close"]},)"
+               R"("url":{"type":"string","maxLength":2048},)"
+               R"("expected_url":{"type":"string","maxLength":2048},)"
+               R"("snapshot_id":{"type":"string"},"element_id":{"type":"string"},)"
+               R"("expected_label":{"type":"string"},)"
+               R"("text":{"type":"string","maxLength":4000}},)"
+               R"("required":["action"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string& raw) const override {
         return requiresPerCallApproval(raw);

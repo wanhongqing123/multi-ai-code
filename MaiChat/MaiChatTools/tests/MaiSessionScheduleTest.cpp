@@ -169,6 +169,9 @@ int main() {
     auto* list = tools.findForModel("maichat_session_task_list");
     auto* update = tools.findForModel("maichat_session_task_update");
     auto* cancel = tools.findForModel("maichat_session_task_cancel");
+    for (MaiTool* tool : {create, list, update, cancel})
+        require(tool && nlohmann::json::parse(tool->parametersSchema()).is_object(),
+                "scheduled task schema is invalid");
     require(create && list && update && cancel && create->requiresPerCallApproval("{}") &&
             !list->requiresApproval("{}") && update->requiresPerCallApproval("{}") &&
             cancel->requiresPerCallApproval("{}"),

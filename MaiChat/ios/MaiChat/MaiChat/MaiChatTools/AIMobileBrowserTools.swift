@@ -435,7 +435,9 @@ final class AIMobileBrowserTools: NSObject, ObservableObject, WKNavigationDelega
                                         "expected_url": firstURL,
                                         "output_path": images.appendingPathComponent("page.png").path])
         if screenshot.errorCode != nil { failures.append("screenshot: \(screenshot.errorMessage ?? "unknown")") }
-        let result = failures.isEmpty ? "PASS: observe, type, click, verify, screenshot" : failures.joined(separator: "\n")
+        let result = failures.isEmpty
+            ? "PASS: observe, type, click, verify, screenshot"
+            : failures.joined(separator: "\n")
         try? result.write(to: root.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
     }
     #endif

@@ -28,4 +28,8 @@
 - Windows 测试继续执行到工具结果断言时，旧测试把 JSON `file_path` 的
   规范化正斜杠与图片结果的本机反斜杠路径直接比较，错误报“未返回保存路径”。
   测试现将图片结果路径转为 `MaiFilePath::toGenericUtf8()` 后比较；生成器
-  返回值无需修改。Windows 完整 CTest 仍待新哈希复验。生产 App 未替换。
+  返回值无需修改。Windows 在 `d81b60f93f770f05e13575f8525ee2d62f32f7b9`
+  干净源码上用 VS2019/Qt 5.15.2 Release 重链主程序、QR 测试和 Host，
+  未加 `CL=/DNOMINMAX`；QR 与 Host CTest 2/2 PASS，`--smoke` exit 0。
+  QR 用例完整覆盖中文短图、768 字节长图、超限拒绝、普通调用与 Agent tool。
+  生产 App 未替换，也未打包或发布新版本。

@@ -331,13 +331,24 @@ add_library(maiagent STATIC
   Agent/MaiEventEmitter.cpp
   Agent/MaiSessionTitler.cpp
 )
-# 平台实现按目标挑选。文件系统走 Win32/POSIX；屏幕捕获目前只在 Windows 注册。
+# 平台实现按目标挑选。文件系统走 Win32/POSIX；桌面屏幕捕获走各自原生系统接口。
 if(WIN32)
   target_sources(maiagent PRIVATE
     Agent/MaiFileSystemWindows.cpp
     AgentTools/MaiProcessWindows.cpp
     AgentTools/MaiScreenshotWindows.cpp
   )
+elseif(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  enable_language(OBJCXX)
+  target_sources(maiagent PRIVATE
+    Agent/MaiFileSystemPosix.cpp
+    AgentTools/MaiProcessPosix.cpp
+    AgentTools/MaiScreenshotMac.mm
+  )
+  set_source_files_properties(AgentTools/MaiScreenshotMac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+  target_link_libraries(maiagent PRIVATE
+    "-framework ScreenCaptureKit" "-framework CoreGraphics" "-framework ImageIO"
+    "-framework Foundation")
 else()
   target_sources(maiagent PRIVATE
     Agent/MaiFileSystemPosix.cpp

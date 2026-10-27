@@ -4,9 +4,15 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#include <CoreGraphics/CoreGraphics.h>
+#endif
 #endif
 
 #include "MaiFilePath.h"
@@ -31,6 +37,7 @@ void test_tool_contract() {
     CHECK(tool != nullptr);
     CHECK(tool->name() == "screenshot");
     CHECK(tool->requiresApproval("{}"));
+    CHECK(tool->requiresPerCallApproval("{}"));
     CHECK(tool->parametersSchema().find("additionalProperties") != std::string::npos);
     CHECK(tool->parametersSchema().find("windowTitle") != std::string::npos);
 
@@ -81,6 +88,15 @@ void checkPngAndRemove(const MaiToolResult& captured) {
 
 void test_native_capture_returns_a_png() {
     if (!maiIsScreenshotSupported()) return;
+#if defined(__APPLE__) && TARGET_OS_OSX
+    if (!CGPreflightScreenCaptureAccess()) {
+        std::vector<std::string> titles;
+        const MaiError permission = maiListCaptureWindows(titles);
+        CHECK(permission.code() == MaiErrorCode::NotConfigured);
+        std::printf("live macOS capture skipped: Screen Recording permission is not granted\n");
+        return;
+    }
+#endif
 
     std::unique_ptr<MaiTool> tool = makeMaiScreenshotTool();
     MaiToolContext context;

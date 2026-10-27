@@ -42,6 +42,10 @@ public:
         return true;
     }
 
+    bool requiresPerCallApproval(const std::string&) const override {
+        return true;
+    }
+
     // 截图涉及屏幕隐私，审批后才解析窗口或显示器目标；目标无效时不能回退为整屏截图。
     // 图像交给受控工作区保存，结果只返回可引用路径和尺寸，不在工具回包里携带像素字节。
     MaiToolResult execute(const std::string& argumentsJson,

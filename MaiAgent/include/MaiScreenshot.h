@@ -8,8 +8,8 @@
 
 #include "MaiError.h"
 
-// 平台原生屏幕捕获的结果。像素在平台实现内编码成完整 PNG 文件，调用方不接触 D3D、DXGI
-// 或任何界面框架。成功时 pngBytes 非空、width/height 是编码后图片的像素尺寸；失败时三者清空。
+// 平台原生屏幕捕获的结果。像素在平台实现内编码成完整 PNG 文件，调用方不接触 D3D、DXGI、
+// ScreenCaptureKit 或界面框架。成功时 pngBytes 非空、width/height 是编码后图片的像素尺寸；失败时三者清空。
 struct MaiScreenshot {
     // 完整 PNG 文件字节，不是裸像素。
     std::vector<std::uint8_t> pngBytes;
@@ -36,9 +36,9 @@ bool maiIsScreenshotSupported();
 
 // 按 request 截取鼠标所在显示器或指定窗口，并编码为 PNG。
 //
-// 这是阻塞调用，只能在 agent 的工作线程调用。Windows 实现使用 Windows Graphics Capture
-// 从 D3D11 纹理读取显示器或窗口画面；不依赖 Qt、窗口系统控件或外部进程。失败时 screenshot
-// 会保持为空，并返回可供模型纠正的错误。
+// 这是阻塞调用，只能在 agent 的工作线程调用。Windows 使用 Windows Graphics Capture，
+// macOS 14+ 使用 ScreenCaptureKit；不依赖 Qt 或外部截屏进程。macOS 需要用户授予屏幕录制权限，
+// 授权后可能需要重启 App。失败时 screenshot 会保持为空，并返回可供模型纠正的错误。
 MaiError maiCaptureScreenshot(const MaiScreenshotRequest& request, MaiScreenshot& screenshot);
 
 // 枚举当前交互桌面上可按标题捕获的可见顶层窗口。成功但没有窗口时返回空数组；不支持时返回

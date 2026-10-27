@@ -183,8 +183,13 @@ public:
         if (context.root.empty())
             return MaiToolResult::failure(MaiErrorCode::NotConfigured,
                                           "the Agent workspace is not configured");
-        const MaiFilePath directory = MaiFilePath::fromUtf8(context.root)
-                                          .append(MaiFilePath::fromUtf8("screenshots"));
+        MaiFilePath directory = MaiFilePath::fromUtf8(context.root);
+#if defined(__ANDROID__)
+        // Android's host accepts only files excluded from OS backup. The Agent
+        // root is the app data directory, while getNoBackupFilesDir() is its child.
+        directory = directory.append(MaiFilePath::fromUtf8("no_backup"));
+#endif
+        directory = directory.append(MaiFilePath::fromUtf8("screenshots"));
         const MaiError directoryError = MaiFileSystem::createDirectories(directory);
         if (directoryError.hasError())
             return MaiToolResult::failure(directoryError.code(), directoryError.message());

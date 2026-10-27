@@ -169,7 +169,9 @@ public final class MobileScreenCaptureService extends Service {
                             throw new IOException("PNG 编码失败");
                     }
                     synchronized (frameLock) {
-                        if (!capturing) {
+                        // Returning to MaiChat can happen while PNG compression is in flight.
+                        // Do not let that transition frame replace the target app's last frame.
+                        if (!capturing || appForeground) {
                             temporary.delete();
                             return;
                         }

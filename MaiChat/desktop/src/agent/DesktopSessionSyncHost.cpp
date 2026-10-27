@@ -177,12 +177,12 @@ QJsonObject DesktopSessionSyncHost::applyCommand(const QString& sessionId, const
         QStringList documents;
         const QString root = QFileInfo(QString::fromUtf8(session.directory.c_str()))
             .canonicalFilePath();
-        const QString attachmentRoot = QDir(root).filePath(
-            QStringLiteral(".maichat/session-attachments")) + QDir::separator();
+        const QString attachmentRoot = QDir::fromNativeSeparators(QDir(root).filePath(
+            QStringLiteral(".maichat/session-attachments"))) + QLatin1Char('/');
         for (const QJsonValue& value : attachments) {
             const QJsonObject item = value.toObject();
-            const QString path = QFileInfo(item.value(QStringLiteral("path")).toString())
-                .canonicalFilePath();
+            const QString path = QDir::fromNativeSeparators(
+                QFileInfo(item.value(QStringLiteral("path")).toString()).canonicalFilePath());
             if (root.isEmpty() || path.isEmpty() || !path.startsWith(attachmentRoot) ||
                 !QFileInfo(path).isFile())
                 return failure(QStringLiteral("会话附件路径无效"));

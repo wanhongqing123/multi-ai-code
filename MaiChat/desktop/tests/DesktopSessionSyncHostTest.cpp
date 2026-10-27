@@ -126,7 +126,8 @@ void DesktopSessionSyncHostTest::coordinatorCreatesFirstRemoteSessionAndMatchesL
             if (path == QStringLiteral("session-sync/send") &&
                 body.value(QStringLiteral("kind")) == QStringLiteral("command"))
                 sent = body;
-            QTimer::singleShot(0, [completion = std::move(completion)] { completion({}, {}); });
+            QTimer::singleShot(0, &controller,
+                               [completion = std::move(completion)] { completion({}, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("mac-install"), QStringLiteral("Mac"));
     coordinator.start();
@@ -169,7 +170,8 @@ void DesktopSessionSyncHostTest::coordinatorAppliesPhoneLifecycleToDesktop() {
             if (path == QStringLiteral("session-sync/send")) sent.append(body);
             if (path == QStringLiteral("session-sync/presence"))
                 latestPresenceCount = body.value(QStringLiteral("sessions")).toArray().size();
-            QTimer::singleShot(0, [completion = std::move(completion)] { completion({}, {}); });
+            QTimer::singleShot(0, &controller,
+                               [completion = std::move(completion)] { completion({}, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("mac-install"), QStringLiteral("Mac"));
     coordinator.setDefaultWorkspaceDirectory(workspace.path());
@@ -552,7 +554,8 @@ void DesktopSessionSyncHostTest::coordinatorRoutesPhoneCommandToTheExistingDeskt
                 ++acknowledgements;
                 response = {{QStringLiteral("acknowledged"), true}};
             }
-            QTimer::singleShot(0, [completion = std::move(completion), response] { completion(response, {}); });
+            QTimer::singleShot(0, &controller,
+                               [completion = std::move(completion), response] { completion(response, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("desktop-test-install-id"), QStringLiteral("Test Mac"));
     coordinator.start();
@@ -591,7 +594,7 @@ void DesktopSessionSyncHostTest::coordinatorPublishesLocalMessagesToSharedRoom()
         [&](const QString& path, const QByteArray&, const QJsonObject& body,
             DesktopSessionSyncCoordinator::Completion completion) {
             if (path == QStringLiteral("session-sync/publish")) published.append(body);
-            QTimer::singleShot(0, [completion = std::move(completion)] {
+            QTimer::singleShot(0, &controller, [completion = std::move(completion)] {
                 completion({}, {});
             });
         },
@@ -643,7 +646,8 @@ void DesktopSessionSyncHostTest::coordinatorBackfillsOlderMessagesIntoSharedRoom
             if (path == QStringLiteral("session-sync/publish"))
                 for (const QJsonValue& value : body.value(QStringLiteral("messages")).toArray())
                     published.insert(value.toObject().value(QStringLiteral("id")).toString());
-            QTimer::singleShot(0, [completion = std::move(completion)] { completion({}, {}); });
+            QTimer::singleShot(0, &controller,
+                               [completion = std::move(completion)] { completion({}, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("test-install"), QStringLiteral("Mac"));
     coordinator.start();
@@ -662,7 +666,8 @@ void DesktopSessionSyncHostTest::coordinatorDeletesRoomWhenLocalSessionIsRemoved
             DesktopSessionSyncCoordinator::Completion completion) {
             if (path == QStringLiteral("session-sync/room-delete"))
                 removedRoom = body.value(QStringLiteral("session_id")).toString();
-            QTimer::singleShot(0, [completion = std::move(completion)] { completion({}, {}); });
+            QTimer::singleShot(0, &controller,
+                               [completion = std::move(completion)] { completion({}, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("test-install"), QStringLiteral("Mac"));
     coordinator.start();
@@ -706,7 +711,8 @@ void DesktopSessionSyncHostTest::coordinatorReadsRemoteHistoryWithVerifiedChunks
                 ++acknowledgements;
                 response = {{QStringLiteral("acknowledged"), true}};
             }
-            QTimer::singleShot(0, [completion = std::move(completion), response] { completion(response, {}); });
+            QTimer::singleShot(0, &controller,
+                               [completion = std::move(completion), response] { completion(response, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("mac-install"), QStringLiteral("Mac"));
     coordinator.setCatalogHandler([&](const QJsonArray& value) { catalog = value; });

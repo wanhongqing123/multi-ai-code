@@ -79,7 +79,7 @@ private:
     void fetchConversationList();
     void fetchRecentMessages(const QString& conversationId, int conversationType);
     void handleFriendListPayload(const QString& jsonPayload);
-    void handleConversationListPayload(const QString& jsonPayload);
+    void handleConversationListPayload(const QString& jsonPayload, bool includeDirectChats = true);
     void handleHistoryMessagesPayload(const QString& jsonPayload);
     qint64 orderedMessageTime(const QString& peerId, qint64 sdkTimeMillis);
     QString sdkConfigJson() const;
@@ -127,6 +127,8 @@ private:
     bool connected_ = false;
     quint64 profileSession_ = 0;
     quint64 selfProfileRevision_ = 0;
+    quint64 conversationRevision_ = 0;
+    quint64 conversationFetchGeneration_ = 0;
 
 public:
     RemoteDiagnostics::AccountTag currentAccount() const override;

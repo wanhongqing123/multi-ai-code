@@ -48,8 +48,13 @@ public:
 
     int getConversationList(TimSdkCompletion completion) override {
         conversationListRequested = true;
+        ++conversationListRequestCount;
         if (completion) completion(0, QString(), conversationListPayload);
         return 0;
+    }
+
+    void setConversationEventCallback(TimSdkConversationEventCallback callback) override {
+        conversationEventCallback = std::move(callback);
     }
 
     int createGroup(const QString& request, TimSdkCompletion completion) override {
@@ -105,6 +110,7 @@ public:
     QString selfProfileRequest;
     QString profilePayload;
     TimSdkReceiveMessagesCallback selfInfoCallback;
+    TimSdkConversationEventCallback conversationEventCallback;
 
     int deleteFriend(const QString& jsonRequest, TimSdkCompletion completion) override {
         operations.append(QStringLiteral("deleteFriend"));
@@ -192,6 +198,7 @@ public:
     bool joinedGroupRequested = false;
     QString sendPayload;
     bool conversationListRequested = false;
+    int conversationListRequestCount = 0;
     bool friendListRequested = false;
     int deleteFriendCode = 0;
     int deleteConversationCode = 0;
@@ -255,6 +262,7 @@ private slots:
     void mergesCaptionIntoIncomingVideoMessage();
     void rejectsMissingCredentials();
     void createsWorkGroupWithExactActivationAndKeepsGroupTrafficOutOfDirectChat();
+    void updatesGroupUnreadAfterConversationSyncCompletes();
     void pagesGroupTextHistoryBySequence();
     void reportsCreatedGroupWhenActivationFailsWithoutCreatingAgain();
 };
@@ -1167,6 +1175,33 @@ void TimSdkRemoteIMClientTest::rejectsMissingCredentials() {
 
     QVERIFY(!ok);
     QVERIFY(error.contains(QStringLiteral("SDK AppID")));
+}
+
+void TimSdkRemoteIMClientTest::updatesGroupUnreadAfterConversationSyncCompletes() {
+    auto api = std::make_unique<FakeTimSdkApi>();
+    auto* fake = api.get();
+    fake->conversationListPayload = QStringLiteral("[]");
+    TimSdkRemoteIMClient client(std::move(api));
+    QSignalSpy unread(&client, &RemoteIMClient::groupUnreadReceived);
+    client.connectToService(123456, QStringLiteral("owner"), QStringLiteral("sig"), {});
+    QCOMPARE(fake->conversationListRequestCount, 1);
+    QCOMPARE(unread.count(), 0);
+
+    QVERIFY(fake->conversationEventCallback);
+    fake->conversationListPayload = QStringLiteral(R"([{
+        "conv_type":2,"conv_id":"@TGS#offline","conv_unread_num":1
+    }])");
+    fake->conversationEventCallback(4, {});  // kTIMConvEvent_Finish
+    QCOMPARE(fake->conversationListRequestCount, 2);
+    QCOMPARE(unread.count(), 1);
+    QCOMPARE(unread.first().at(0).toString(), QStringLiteral("@TGS#offline"));
+    QCOMPARE(unread.first().at(1).toInt(), 1);
+
+    fake->conversationEventCallback(2, QStringLiteral(R"([{
+        "conv_type":2,"conv_id":"@TGS#offline","conv_unread_num":2
+    }])"));  // kTIMConvEvent_Update
+    QCOMPARE(unread.count(), 2);
+    QCOMPARE(unread.last().at(1).toInt(), 2);
 }
 
 void TimSdkRemoteIMClientTest::createsWorkGroupWithExactActivationAndKeepsGroupTrafficOutOfDirectChat() {

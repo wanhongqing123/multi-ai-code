@@ -513,6 +513,7 @@ qint64 TimSdkRemoteIMClient::orderedMessageTime(const QString& peerId, qint64 sd
 TimSdkRemoteIMClient::~TimSdkRemoteIMClient() {
     mai_download_cancel_request(downloadsCanceled_.get());
     if (api_) {
+        api_->setConversationEventCallback({});
         api_->setSelfInfoUpdatedCallback({});
         api_->removeReceiveMessageCallback();
         api_->uninit();
@@ -564,6 +565,20 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
         }, Qt::AutoConnection);
     });
     const auto account = currentAccount();
+    api_->setConversationEventCallback([self, account, profileSession](int event,
+                                                                         const QString& payload) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, profileSession, event, payload] {
+            if (!self || !self->connected_ || self->currentAccount() != account ||
+                self->profileSession_ != profileSession) return;
+            if (event == 4) {  // kTIMConvEvent_Finish: local conversation sync has completed.
+                self->fetchConversationList();
+            } else if (event == 0 || event == 2) {  // Add or Update.
+                ++self->conversationRevision_;
+                self->handleConversationListPayload(payload, false);
+            }
+        }, Qt::AutoConnection);
+    });
     api_->setSelfInfoUpdatedCallback([self, account, profileSession](const QString& payload) {
         if (!self) return;
         QMetaObject::invokeMethod(self, [self, account, profileSession, payload] {
@@ -584,6 +599,7 @@ void TimSdkRemoteIMClient::connectToService(int sdkAppId, const QString& userId,
                 qWarning().noquote() << QStringLiteral("[im] login failed: code=%1 %2").arg(code).arg(description);
             }
             if (!connected_) {
+                api_->setConversationEventCallback({});
                 api_->setSelfInfoUpdatedCallback({});
                 api_->removeReceiveMessageCallback();
             }
@@ -608,6 +624,7 @@ void TimSdkRemoteIMClient::disconnectFromService(RemoteIMCompletion completion) 
         return;
     }
     api_->removeReceiveMessageCallback();
+    api_->setConversationEventCallback({});
     api_->setSelfInfoUpdatedCallback({});
     ++profileSession_;
     api_->logout(
@@ -1380,17 +1397,31 @@ void TimSdkRemoteIMClient::fetchFriendList() {
 }
 
 void TimSdkRemoteIMClient::fetchConversationList() {
-    api_->getConversationList([this](int code, const QString& description, const QString& jsonPayload) {
-        if (code != 0) {
-            qWarning().noquote()
-                << QStringLiteral("[im] fetch conversation list failed: code=%1 %2").arg(code).arg(description);
-            return;
-        }
-        if (jsonPayload.trimmed().isEmpty()) {
-            qInfo().noquote() << QStringLiteral("[im] conversation list: empty payload");
-            return;
-        }
-        handleConversationListPayload(jsonPayload);
+    const auto account = currentAccount();
+    const quint64 session = profileSession_;
+    const quint64 revision = conversationRevision_;
+    const quint64 generation = ++conversationFetchGeneration_;
+    const QPointer<TimSdkRemoteIMClient> self(this);
+    api_->getConversationList([self, account, session, revision, generation](
+                                  int code, const QString& description, const QString& jsonPayload) {
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, account, session, revision, generation,
+                                         code, description, jsonPayload] {
+            if (!self || !self->connected_ || self->currentAccount() != account ||
+                self->profileSession_ != session || self->conversationRevision_ != revision ||
+                self->conversationFetchGeneration_ != generation) return;
+            if (code != 0) {
+                qWarning().noquote()
+                    << QStringLiteral("[im] fetch conversation list failed: code=%1 %2")
+                           .arg(code).arg(description);
+                return;
+            }
+            if (jsonPayload.trimmed().isEmpty()) {
+                qInfo().noquote() << QStringLiteral("[im] conversation list: empty payload");
+                return;
+            }
+            self->handleConversationListPayload(jsonPayload);
+        }, Qt::AutoConnection);
     });
 }
 
@@ -1442,7 +1473,8 @@ void TimSdkRemoteIMClient::handleFriendListPayload(const QString& jsonPayload) {
     if (!contacts.isEmpty()) emit contactsReceived(contacts);
 }
 
-void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayload) {
+void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayload,
+                                                         bool includeDirectChats) {
     QList<RemoteIMContact> contacts;
     const QJsonArray conversations = arrayPayload(jsonPayload, {
         QStringLiteral("conversation_list_result_conv_list")
@@ -1457,6 +1489,7 @@ void TimSdkRemoteIMClient::handleConversationListPayload(const QString& jsonPayl
             QStringLiteral("conv_id")
         });
         if (conversationType == kConversationTypeC2C) {
+            if (!includeDirectChats) continue;
             const QString avatarUrl = firstNonEmpty(conversation, {
                 QStringLiteral("conv_face_url")
             });

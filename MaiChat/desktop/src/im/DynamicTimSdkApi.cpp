@@ -87,6 +87,7 @@ DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(lib
     logout_ = resolve<LogoutFn>("TIMLogout");
     sendMessage_ = resolve<SendMessageFn>("TIMMsgSendMessage");
     getConversationList_ = resolve<GetConversationListFn>("TIMConvGetConvList");
+    setConversationEvent_ = resolve<SetConversationEventFn>("TIMSetConvEventCallback");
     createGroup_ = resolve<GroupCreateFn>("TIMGroupCreate");
     getJoinedGroupList_ = resolve<GetJoinedGroupListFn>("TIMGroupGetJoinedGroupList");
     getGroupInfoList_ = resolve<GroupCreateFn>("TIMGroupGetGroupInfoList");
@@ -106,6 +107,7 @@ DynamicTimSdkApi::DynamicTimSdkApi(QString libraryPath) : library_(std::move(lib
 }
 
 DynamicTimSdkApi::~DynamicTimSdkApi() {
+    setConversationEventCallback({});
     setSelfInfoUpdatedCallback({});
     removeReceiveMessageCallback();
 }
@@ -135,6 +137,21 @@ void DynamicTimSdkApi::setSelfInfoUpdatedCallback(TimSdkReceiveMessagesCallback 
     }
 }
 
+void DynamicTimSdkApi::setConversationEventCallback(TimSdkConversationEventCallback callback) {
+    conversationEventCallback_ = std::move(callback);
+    if (setConversationEvent_) {
+        setConversationEvent_(conversationEventCallback_ ? conversationEvent : nullptr,
+                              conversationEventCallback_ ? this : nullptr);
+    }
+}
+
+void DynamicTimSdkApi::conversationEvent(int event, const char* jsonConversations,
+                                         const void* userData) {
+    auto* api = reinterpret_cast<DynamicTimSdkApi*>(const_cast<void*>(userData));
+    if (api && api->conversationEventCallback_)
+        api->conversationEventCallback_(event, textFromC(jsonConversations));
+}
+
 void DynamicTimSdkApi::selfInfoUpdated(const char* profile, const void* userData) {
     auto* api = reinterpret_cast<DynamicTimSdkApi*>(const_cast<void*>(userData));
     if (api && api->selfInfoUpdatedCallback_) api->selfInfoUpdatedCallback_(textFromC(profile));
@@ -147,7 +164,8 @@ QString DynamicTimSdkApi::libraryPathFromEnvironment() {
 }
 
 bool DynamicTimSdkApi::isReady() const {
-    return init_ && uninit_ && login_ && logout_ && sendMessage_ && getConversationList_ && getFriendList_ &&
+    return init_ && uninit_ && login_ && logout_ && sendMessage_ && getConversationList_ &&
+           setConversationEvent_ && getFriendList_ &&
            deleteFriend_ && deleteConversation_ && getMessageList_ && addReceiveMessages_ && removeReceiveMessages_;
 }
 

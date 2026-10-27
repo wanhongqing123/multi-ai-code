@@ -28,6 +28,7 @@ public:
                     const QString& jsonMessage,
                     TimSdkCompletion completion) override;
     int getConversationList(TimSdkCompletion completion) override;
+    void setConversationEventCallback(TimSdkConversationEventCallback callback) override;
     int createGroup(const QString& request, TimSdkCompletion completion) override;
     int getJoinedGroupList(TimSdkCompletion completion) override;
     int getGroupInfoList(const QString& request, TimSdkCompletion completion) override;
@@ -54,6 +55,8 @@ public:
 private:
     using NativeCompletion = void (*)(int code, const char* description, const char* jsonPayload, const void* userData);
     using NativeReceiveMessages = void (*)(const char* jsonMessages, const void* userData);
+    using NativeConversationEvent = void (*)(int event, const char* jsonConversations,
+                                             const void* userData);
     using InitFn = int (*)(quint64 sdkAppId, const char* jsonConfig);
     using UninitFn = int (*)();
     using LoginFn = int (*)(const char* userId, const char* userSig, NativeCompletion completion, const void* userData);
@@ -65,6 +68,7 @@ private:
                                   NativeCompletion completion,
                                   const void* userData);
     using GetConversationListFn = int (*)(NativeCompletion completion, const void* userData);
+    using SetConversationEventFn = void (*)(NativeConversationEvent callback, const void* userData);
     using GroupCreateFn = int (*)(const char* request, NativeCompletion completion, const void* userData);
     using GetJoinedGroupListFn = int (*)(NativeCompletion completion, const void* userData);
     using CleanConversationUnreadFn = int (*)(const char* conversationId,
@@ -94,6 +98,7 @@ private:
     static void completeOnce(int code, const char* description, const char* jsonPayload, const void* userData);
     static void receiveMessages(const char* jsonMessages, const void* userData);
     static void selfInfoUpdated(const char* profile, const void* userData);
+    static void conversationEvent(int event, const char* jsonConversations, const void* userData);
     int completeIfImmediateFailure(int result, TimSdkCompletion completion);
     int callFriendApi(FriendOperationFn function, const QString& jsonRequest,
                       TimSdkCompletion completion);
@@ -106,6 +111,7 @@ private:
     LogoutFn logout_ = nullptr;
     SendMessageFn sendMessage_ = nullptr;
     GetConversationListFn getConversationList_ = nullptr;
+    SetConversationEventFn setConversationEvent_ = nullptr;
     GroupCreateFn createGroup_ = nullptr;
     GetJoinedGroupListFn getJoinedGroupList_ = nullptr;
     GroupCreateFn getGroupInfoList_ = nullptr;
@@ -124,4 +130,5 @@ private:
     RemoveReceiveMessagesFn removeReceiveMessages_ = nullptr;
     TimSdkReceiveMessagesCallback receiveMessagesCallback_;
     TimSdkReceiveMessagesCallback selfInfoUpdatedCallback_;
+    TimSdkConversationEventCallback conversationEventCallback_;
 };

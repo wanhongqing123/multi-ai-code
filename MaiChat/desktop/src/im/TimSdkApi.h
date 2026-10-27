@@ -7,6 +7,7 @@
 
 using TimSdkCompletion = std::function<void(int code, const QString& description, const QString& jsonPayload)>;
 using TimSdkReceiveMessagesCallback = std::function<void(const QString& jsonMessages)>;
+using TimSdkConversationEventCallback = std::function<void(int event, const QString& jsonConversations)>;
 
 class TimSdkApi {
 public:
@@ -24,6 +25,9 @@ public:
                             const QString& jsonMessage,
                             TimSdkCompletion completion) = 0;
     virtual int getConversationList(TimSdkCompletion completion) = 0;
+    virtual void setConversationEventCallback(TimSdkConversationEventCallback callback) {
+        Q_UNUSED(callback);
+    }
     virtual int createGroup(const QString& request, TimSdkCompletion completion) {
         Q_UNUSED(request);
         if (completion) completion(-1, QStringLiteral("Group API unavailable"), {});

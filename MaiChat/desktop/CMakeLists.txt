@@ -967,6 +967,7 @@ target_link_libraries(agent_controller_test PRIVATE remote_im_desktop_ui remote_
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 
 add_executable(desktop_session_sync_host_test tests/DesktopSessionSyncHostTest.cpp)
+target_include_directories(desktop_session_sync_host_test PRIVATE ../MaiChatTools)
 target_link_libraries(desktop_session_sync_host_test PRIVATE remote_im_desktop_ui
   remote_im_desktop_app remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 add_test(NAME desktop_session_sync_host_test COMMAND desktop_session_sync_host_test)

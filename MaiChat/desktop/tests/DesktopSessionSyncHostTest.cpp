@@ -18,7 +18,12 @@
 #include <QTimer>
 #include <QtConcurrent>
 
+#include <atomic>
+#include <string>
+#include <utility>
+
 #include "MaiTool.h"
+#include "MaiSessionSchedule.h"
 #include "MaiChatTools/DesktopRemoteSessionTools.h"
 #include "agent/AgentController.h"
 #include "agent/AgentSessionList.h"
@@ -29,11 +34,37 @@
 #include "ui/ComposerTextEdit.h"
 #include "ui/UiZoom.h"
 
+namespace {
+
+class ScheduledToolModel final : public MaiModelClient {
+public:
+    explicit ScheduledToolModel(std::string arguments) : arguments_(std::move(arguments)) {}
+
+    MaiError stream(const MaiModelRequest&, const MaiStreamSink& sink,
+                    const std::atomic<bool>&) override {
+        if (calls_++ == 0 && sink.onToolCall)
+            sink.onToolCall(MaiToolInvocation{"remote-schedule-create",
+                "maichat_session_task_create", arguments_});
+        else if (sink.onText)
+            sink.onText("Scheduled on the owner device");
+        return {};
+    }
+
+    MaiWireApi wireApi() const override { return MaiWireApi::ChatCompletions; }
+
+private:
+    std::string arguments_;
+    int calls_ = 0;
+};
+
+}  // namespace
+
 class DesktopSessionSyncHostTest : public QObject {
     Q_OBJECT
 
 private slots:
     void appliesRemotePromptToTheExistingLocalSession();
+    void remotePromptCreatesScheduledTaskOnItsOwner();
     void resolvedSessionFileStaysInsideItsOwnerWorkspace();
     void omitsLocalMediaPathsFromRemoteHistory();
     void coordinatorRoutesPhoneCommandToTheExistingDesktopSession();
@@ -508,6 +539,58 @@ void DesktopSessionSyncHostTest::appliesRemotePromptToTheExistingLocalSession() 
     }
     QVERIFY(sawPrompt);
     QCOMPARE(host.historyPage(QStringLiteral("ses_missing"), {}, 20).value(QStringLiteral("ok")).toBool(), false);
+}
+
+void DesktopSessionSyncHostTest::remotePromptCreatesScheduledTaskOnItsOwner() {
+    QTemporaryDir workspace;
+    QVERIFY(workspace.isValid());
+    const QString database = QDir(workspace.path()).filePath(QStringLiteral("sessions.sqlite"));
+    const QString when = QDateTime::currentDateTimeUtc().addSecs(300)
+        .toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss'Z'"));
+    const QJsonObject arguments{{QStringLiteral("title"), QStringLiteral("远程定时检查")},
+        {QStringLiteral("instruction"), QStringLiteral("检查桌面构建并总结")},
+        {QStringLiteral("execute_at"), when}};
+    const QByteArray encoded = QJsonDocument(arguments).toJson(QJsonDocument::Compact);
+    auto model = std::make_unique<ScheduledToolModel>(
+        std::string(encoded.constData(), std::size_t(encoded.size())));
+    AgentController controller(std::move(model), database);
+    const QString sessionId = controller.createSession(workspace.path());
+    QVERIFY(!sessionId.isEmpty());
+    DesktopSessionSyncHost host(controller);
+    const auto opened = MaiSessionScheduleStore::open(
+        database.toUtf8().toStdString() + ".schedule.sqlite");
+    QVERIFY(opened.isOk());
+
+    const QJsonObject sent = host.applyCommand(sessionId,
+        {{QStringLiteral("action"), QStringLiteral("prompt")},
+         {QStringLiteral("text"), QStringLiteral("五分钟后检查桌面构建")}});
+    QVERIFY2(sent.value(QStringLiteral("ok")).toBool(),
+             qPrintable(sent.value(QStringLiteral("error")).toString()));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.agent().listPendingPermissions().size(),
+                              std::size_t(1), 5000);
+    const QJsonArray permissions = host.historyPage(sessionId, {}, 20)
+        .value(QStringLiteral("permissions")).toArray();
+    QCOMPARE(permissions.size(), 1);
+    QCOMPARE(permissions.first().toObject().value(QStringLiteral("tool")).toString(),
+             QStringLiteral("maichat_session_task_create"));
+    QVERIFY(opened.value()->list(sessionId.toStdString()).value().empty());
+    const QString permissionId = permissions.first().toObject()
+        .value(QStringLiteral("id")).toString();
+    QVERIFY(!permissionId.isEmpty());
+    const QJsonObject approved = host.applyCommand(sessionId,
+        {{QStringLiteral("action"), QStringLiteral("permission")},
+         {QStringLiteral("id"), permissionId},
+         {QStringLiteral("decision"), QStringLiteral("approved")}});
+    QVERIFY2(approved.value(QStringLiteral("ok")).toBool(),
+             qPrintable(approved.value(QStringLiteral("error")).toString()));
+    controller.agent().waitIdle();
+    const auto tasks = opened.value()->list(sessionId.toStdString());
+    QVERIFY(tasks.isOk());
+    QCOMPARE(tasks.value().size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(tasks.value().front().status),
+             QStringLiteral("scheduled"));
+    QCOMPARE(QString::fromStdString(tasks.value().front().instruction),
+             QStringLiteral("检查桌面构建并总结"));
 }
 
 void DesktopSessionSyncHostTest::resolvedSessionFileStaysInsideItsOwnerWorkspace() {

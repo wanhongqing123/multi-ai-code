@@ -1323,6 +1323,25 @@ if(WIN32 AND MAICHAT_ENABLE_FFMPEG)
     FAIL_REGULAR_EXPRESSION "Seek to (inf|nan)%")
 endif()
 
+if(WIN32)
+  # A raw build/bin/maichat.exe must be runnable before anyone starts a GUI
+  # smoke test. Missing PE imports otherwise create a system dialog before main().
+  get_filename_component(maichat_qt_bin "${Qt5_DIR}/../../../bin" ABSOLUTE)
+  set(maichat_windeployqt "${maichat_qt_bin}/windeployqt.exe")
+  get_filename_component(maichat_linker_bin "${CMAKE_LINKER}" DIRECTORY)
+  set(maichat_dumpbin "${maichat_linker_bin}/dumpbin.exe")
+  if(NOT EXISTS "${maichat_windeployqt}" OR NOT EXISTS "${maichat_dumpbin}")
+    message(FATAL_ERROR "Windows MaiChat runtime verification requires windeployqt and dumpbin")
+  endif()
+  add_custom_command(TARGET maichat POST_BUILD
+    COMMAND "${maichat_windeployqt}" --release --no-translations
+      --dir "$<TARGET_FILE_DIR:maichat>" "$<TARGET_FILE:maichat>"
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-windows-runtime.ps1"
+      -AppDir "$<TARGET_FILE_DIR:maichat>" -DumpbinPath "${maichat_dumpbin}"
+    VERBATIM)
+endif()
+
 if((APPLE AND TARGET maiagent_embedded_fftools) OR
    (WIN32 AND TARGET maichat_ffmpeg_tools))
   add_executable(MaiEmbeddedFfmpegToolsTest tests/MaiEmbeddedFfmpegToolsTest.cpp)

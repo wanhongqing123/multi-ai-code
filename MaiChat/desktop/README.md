@@ -81,10 +81,12 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 - 按 `vendor/tencent-im/windows/shared_lib/Win64/` 相对路径附带 ImSDK.dll（exe 按此路径探测）；
 - 生成 `使用说明.txt` 并压缩打包。
 
-验证方式：只从 `dist\MaiChat-win64\maichat.exe` 运行 `--smoke`，并使用只含
-`C:\Windows\System32` 的裸 PATH；确认退出码为 0。不要直接从 `build/bin`
-启动产品 exe 做烟测：那里未旁挂 Qt5Sql.dll 等运行时，缺 DLL 时甚至可能先弹
-系统错误窗，程序日志和测试退出码都不能可靠说明问题。
+Windows 重链 `maichat` 目标会先用 `windeployqt` 给 `build/bin` 旁挂 Qt
+运行时，再用 `dumpbin` 核对 PE 直接依赖与 Qt 插件；检查失败时构建会失败。
+**构建退出码为 0 之前不要启动 `build/bin/maichat.exe`**，否则加载器可能先弹
+缺 DLL 的系统错误窗，程序日志还没机会记录。交付验收要从完整 staging 和
+实际 ZIP 解压目录分别运行 `--smoke`，使用只含 `C:\Windows\System32` 的
+裸 PATH，并核对退出码为 0、没有系统错误窗。
 
 产出的 zip 不提交进仓库（`dist/` 已被 gitignore），通过 GitHub Releases 发布下载：
 <https://github.com/wanhongqing123/multi-ai-code/releases>（tag 形如 `qt-im-<日期>`）。

@@ -98,3 +98,21 @@ qsqlite.dll 和 exe 均在，再以裸 PATH 运行解压出的程序，`--smoke`
 用户已安装 `D:\Program Files\MaiChat\maichat.exe` 仍是 2.2.29，SHA-256
 `3a1c25a73e7510ae1e35366854d9e673d03754748bc6a09277145c816ca37a70`；
 本轮未运行安装器、未覆盖该程序。
+
+## 防止再次弹出缺 DLL 系统窗
+
+用户随后指出桌面仍留有 `maichat.exe - 系统错误` 窗口。只读枚举定位到
+Windows 系统错误窗口，由系统进程承载，不能误杀系统进程；仅向标题完全
+匹配的窗口发送关闭消息，逐一清掉遗留的 4 个弹框。间隔复查后同名窗口为
+0、`maichat.exe` 测试进程为 0。
+
+以 VS2019 `dumpbin /dependents` 直接检查 `maichat.exe`：它有 88 项 PE
+导入；当时的裸 `build/bin` 缺 Qt5Sql.dll、Qt5Core.dll、Qt5Network.dll、
+Qt5Widgets.dll 等 8 个直接依赖及 qwindows/qsqlite 两个 Qt 插件，完整 staging
+则全部存在。此证据直接解释了为什么裸构建程序先弹系统错误窗、还没来得及
+写 AppLog。先写运行时校验脚本并对旧 `build/bin` 运行，准确报出这 10 项缺失；
+再将 `windeployqt` 和该校验加入 Windows `maichat` 目标的 POST_BUILD，
+把同一检查接入正式打包脚本。修后构建成功并核对 88 项 PE 导入及 Qt 插件，
+从 `build/bin` 和新完整 staging 分别用裸 PATH 运行 `--smoke`，均退出 0，
+系统错误窗为 0。`MaiChat/AGENTS.md`、`MaiChat/CLAUDE.md` 和桌面 README
+也加入构建结束前不得启动裸 exe、交付要验实际 ZIP 的约束。

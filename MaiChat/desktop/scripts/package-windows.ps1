@@ -250,6 +250,13 @@ MaiChat 桌面客户端（Windows 免安装版）
     [System.Text.UTF8Encoding]::new($true)
 )
 
+$linkerLine = Select-String -Path $cachePath -Pattern '^CMAKE_LINKER:FILEPATH=(.+)$'
+if (-not $linkerLine) { throw "CMakeCache.txt 里没有 CMAKE_LINKER，无法检查 PE 依赖" }
+$linkerPath = $linkerLine.Matches[0].Groups[1].Value
+$dumpbin = Join-Path (Split-Path -Parent $linkerPath) 'dumpbin.exe'
+& (Join-Path $PSScriptRoot 'verify-windows-runtime.ps1') `
+    -AppDir $staging -DumpbinPath $dumpbin
+
 if ($SkipZip) {
     Write-Host ""
     Write-Host "staging 组装完成（跳过 zip）："

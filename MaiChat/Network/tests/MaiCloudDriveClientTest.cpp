@@ -1,6 +1,7 @@
 #include "MaiCloudDriveClient.h"
 
 #include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -248,9 +249,12 @@ int main(int argc, char** argv) {
     MaiCloudDriveResult localTasks{};
     mai_cloud_drive_list_local_checkpoints(argv[4], &localTasks);
     const Call taskList = take(&localTasks);
+    const auto listed = nlohmann::json::parse(taskList.body, nullptr, false);
     require(taskList.status == MAI_CLOUD_DRIVE_OK &&
-            taskList.body.find("Holiday.MOV") != std::string::npos &&
-            taskList.body.find(filePath) != std::string::npos &&
+            listed.is_object() && listed.contains("uploads") &&
+            listed["uploads"].is_array() && listed["uploads"].size() == 1 &&
+            listed["uploads"][0].value("name", std::string()) == "Holiday.MOV" &&
+            listed["uploads"][0].value("source_id", std::string()) == filePath &&
             taskList.body.find("author-token") == std::string::npos &&
             taskList.body.find("upload_url") == std::string::npos,
             "restart task list lost source or exposed a credential");

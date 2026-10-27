@@ -60,6 +60,8 @@ if(MAICHAT_NETWORK_BUILD_TESTS)
       "$<TARGET_FILE:mai_video_circle_client_test>")
 
   add_executable(mai_cloud_drive_client_test tests/MaiCloudDriveClientTest.cpp)
+  target_include_directories(mai_cloud_drive_client_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party")
   target_link_libraries(mai_cloud_drive_client_test PRIVATE mai_cloud_drive_client)
   add_test(NAME mai_cloud_drive_local_tls
     COMMAND "${Python3_EXECUTABLE}"

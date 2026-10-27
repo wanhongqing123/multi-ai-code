@@ -46,6 +46,13 @@
 - 将此处调用写成 `(std::min)(...)`，消除宏展开，同时保持原有最小值逻辑。
   Mac 测试目标重链成功，本地 TLS 回归 1/1 通过（37.41 秒）；Windows
   仍需从修复哈希在不加 `CL=/DNOMINMAX` 的环境下重新验证。
+- Windows 从 `6ac40c9ac` 不加诊断编译参数后，Network 测试已编译链接；
+  本地 TLS 在取消上传后的“restart task list”断言失败。临时布尔诊断显示
+  状态 OK、名称匹配、两个凭据字段均未暴露，只有原始 JSON 文本查找
+  `filePath` 为 false。Windows 路径分隔符在 JSON 中需转义，测试的
+  字符串子串判断不适用。测试现解析 `uploads[0].source_id`，比较解码后
+  的路径，并保留原凭据未泄露断言。Mac 重链、本地 TLS 1/1 通过
+  （37.41 秒）；真实附件用例仍待 Windows 复跑。
 
 ## 上线边界
 

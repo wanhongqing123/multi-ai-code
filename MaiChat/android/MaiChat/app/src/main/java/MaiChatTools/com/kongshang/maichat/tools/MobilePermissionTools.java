@@ -130,7 +130,8 @@ final class MobilePermissionTools {
             case "sms":
                 required = new String[]{Manifest.permission.READ_SMS};
                 break;
-            case "calendar": required = new String[]{Manifest.permission.READ_CALENDAR}; break;
+            case "calendar": required = new String[]{Manifest.permission.READ_CALENDAR,
+                Manifest.permission.WRITE_CALENDAR}; break;
             case "notifications":
                 if (Build.VERSION.SDK_INT < 33) {
                     NotificationManager manager = (NotificationManager)

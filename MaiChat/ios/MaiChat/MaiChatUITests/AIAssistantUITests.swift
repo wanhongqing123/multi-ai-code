@@ -4,6 +4,27 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testSystemCalendarEventCreatesOnIsolatedSimulator() throws {
+        guard ProcessInfo.processInfo.environment["MAICHAT_ISOLATED_CALENDAR_TEST"] == "1" else {
+            throw XCTSkip("只在可删除的隔离模拟器上写入系统日历")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-calendar-ui-test"]
+        app.launch()
+        let create = app.buttons["ai-calendar-create-sample"]
+        XCTAssertTrue(create.waitForExistence(timeout: 15))
+        create.tap()
+        let result = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "\"state\":\"created\"")
+        ).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 15),
+                      "系统日历没有确认事件写入")
+        let verified = XCTAttachment(screenshot: app.screenshot())
+        verified.name = "isolated-system-calendar-created"
+        verified.lifetime = .keepAlways
+        add(verified)
+    }
+
     @MainActor func testCloudDriveAgentPlaybackCacheLifecycle() throws {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()

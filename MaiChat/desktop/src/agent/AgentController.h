@@ -199,6 +199,7 @@ private:
   // 事件从核心的线程过来，经这个信号排队到主线程。私有：界面不该直接连它，
   // 它带的是未经分类的原始事件。
   void rawEvent(const MaiEvent &event);
+  void startScheduledTasks();
   Q_SIGNAL void eventQueued(const MaiEvent &event);
   Q_SLOT void onEventQueued(const MaiEvent &event);
 

@@ -269,6 +269,8 @@ struct MaiChatApp: App {
                         AIVideoCircleUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--cloud-drive-ui-test") {
                         MaiCloudDriveUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-calendar-ui-test") {
+                        AICalendarUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--im-add-friend-menu-ui-test") {
                         ChatAddFriendMenuUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--permission-card-ui-test") {
@@ -498,6 +500,32 @@ private struct IMCurlDownloadUITestRoot: View {
                 signedURL: signedURL, targetURL: target,
                 maximumBytes: maximumBytes, certificatePEM: certificate
             ) { response in continuation.resume(returning: response) }
+        }
+    }
+}
+#endif
+
+#if DEBUG && targetEnvironment(simulator)
+private struct AICalendarUITestRoot: View {
+    @State private var result = "尚未创建日程"
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Button("创建系统日历测试事件") {
+                Task {
+                    let start = Int64(Date().timeIntervalSince1970 * 1_000) + 3_600_000
+                    let response = await AIMobileHostToolProvider.shared.createCalendarEvent([
+                        "title": "MaiChat 日历隔离测试",
+                        "notes": "仅在隔离模拟器中创建",
+                        "session_id": "ses_calendar_fixture",
+                        "starts_at_utc_ms": start,
+                        "ends_at_utc_ms": start + 1_800_000
+                    ])
+                    result = response.errorMessage ?? response.output ?? "日历没有返回结果"
+                }
+            }
+            .accessibilityIdentifier("ai-calendar-create-sample")
+            Text(result).accessibilityIdentifier("ai-calendar-result")
         }
     }
 }

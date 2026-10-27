@@ -4,6 +4,8 @@
 #include "MaiMobileHostTools.h"
 #include "MaiCloudDriveTools.h"
 #include "MaiQrCode.h"
+#include "MaiSessionSchedule.h"
+#include "MaiCalendarTools.h"
 
 #include "MaiAgent.h"
 #include "MaiAgentSendMediaTool.h"
@@ -31,6 +33,8 @@
 #include "MaiSqliteStore.h"
 #include "MaiSshTool.h"
 #include "MaiSystemResourcesTool.h"
+#include "MaiThread.h"
+#include "MaiTime.h"
 #include "MaiTemporalWatermark.h"
 #include "MaiTemporalWatermarkTool.h"
 #include "MaiTimeTool.h"
@@ -43,12 +47,16 @@
 #include "mai_fftools_embed.h"
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <json.hpp>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -355,10 +363,23 @@ struct MaiMobileAgent {
     const void* ortApiBase = nullptr;
     std::shared_ptr<MaiMobileHostDispatcher> hostTools = makeMaiMobileHostDispatcher();
     MaiMobileAgentChangeHandler changeHandler = nullptr;
+    std::shared_ptr<MaiSessionScheduleStore> scheduleStore;
+    std::unique_ptr<MaiSessionScheduleRunner> scheduleRunner;
+    std::thread scheduleThread;
+    std::mutex scheduleMutex;
+    std::condition_variable scheduleWake;
+    std::atomic<bool> stopSchedule{false};
+    struct ScheduleEvent {
+        std::string sessionId;
+        MaiEventType type;
+        std::string error;
+    };
+    std::vector<ScheduleEvent> scheduleEvents;
     // 最后销毁 agent：回调捕获的字段必须活到工作线程退出。
     std::unique_ptr<MaiAgent> agent;
 
     ~MaiMobileAgent() {
+        stopSchedulePolling();
         agent.reset();
         clearMaiMobileHostToolHandler(hostTools);
     }
@@ -375,13 +396,69 @@ struct MaiMobileAgent {
         return false;
     }
 
+    void stopSchedulePolling() {
+        stopSchedule.store(true, std::memory_order_relaxed);
+        scheduleWake.notify_all();
+        if (scheduleThread.joinable()) scheduleThread.join();
+    }
+
+    void startSchedulePolling() {
+        if (!scheduleStore || !agent) return;
+        if (!scheduleRunner) {
+            scheduleStore->markInterruptedUncertain();
+            scheduleRunner = std::make_unique<MaiSessionScheduleRunner>(scheduleStore,
+                [this](const std::string& sessionId) {
+                    MaiSession session;
+                    return agent->getSession(sessionId, session) && session.isRoot();
+                },
+                [this](const std::string& sessionId) {
+                    return !configured || agent->isBusy(sessionId);
+                },
+                [this](const std::string& sessionId, const std::string& instruction)
+                    -> MaiResult<std::string> {
+                    return agent->submit(MaiSendPrompt{sessionId, instruction});
+                });
+        }
+        stopSchedule.store(false, std::memory_order_relaxed);
+        scheduleThread = std::thread([this] {
+            MaiThread::setCurrentName("mai-schedule");
+            while (!stopSchedule.load(std::memory_order_relaxed)) {
+                std::vector<ScheduleEvent> events;
+                {
+                    std::lock_guard<std::mutex> lock(scheduleMutex);
+                    events.swap(scheduleEvents);
+                }
+                for (const auto& event : events) {
+                    if (event.type == MaiEventType::SessionDeleted)
+                        scheduleStore->cancelSession(event.sessionId);
+                    else if (event.type == MaiEventType::SessionError)
+                        scheduleRunner->finish(event.sessionId, event.error);
+                    else if (event.type == MaiEventType::SessionIdle)
+                        scheduleRunner->finish(event.sessionId);
+                }
+                scheduleRunner->poll(MaiTime::getCurrentTime());
+                std::unique_lock<std::mutex> lock(scheduleMutex);
+                scheduleWake.wait_for(lock, std::chrono::seconds(1), [this] {
+                    return stopSchedule.load(std::memory_order_relaxed) ||
+                        !scheduleEvents.empty();
+                });
+            }
+        });
+    }
+
     // 作用：按宿主配置装配移动 Agent 的模型、工具和工作区能力。
     // 先校验外部输入，再更新本地状态；失败路径不能覆盖已有有效结果。
     void configure(const Json& request) {
         // 切换主模型时不能中断正在运行的任务；先创建共享存储，再配置线协议和工具集。
         if (anyBusy()) throw std::runtime_error("Stop active tasks before changing the model.");
-        auto store = makeMaiSqliteStore(request.at("database").get<std::string>());
+        const std::string databasePath = request.at("database").get<std::string>();
+        auto store = makeMaiSqliteStore(databasePath);
         if (!store) throw std::runtime_error(store.error().message());
+        const auto scheduleOpened = MaiSessionScheduleStore::open(
+            databasePath == ":memory:" ? databasePath :
+                databasePath + ".schedule.sqlite");
+        const auto nextScheduleStore = scheduleOpened.isOk() ? scheduleOpened.value() :
+            std::shared_ptr<MaiSessionScheduleStore>();
         MaiModelConfig config;
         config.baseUrl = request.at("baseUrl").get<std::string>();
         config.apiKey = request.value("apiKey", "");
@@ -565,6 +642,23 @@ struct MaiMobileAgent {
         }));
         registerMaiChatHostTools(*tools, hostTools);
         registerMaiQrCodeTools(*tools);
+#if defined(__ANDROID__)
+        const std::string scheduleDevice = request.value("scheduleDeviceName", "Android");
+#else
+        const std::string scheduleDevice = request.value("scheduleDeviceName", "iPhone or iPad");
+#endif
+        registerMaiSessionScheduleTools(*tools, nextScheduleStore,
+            scheduleDevice.size() <= 40 ? scheduleDevice : scheduleDevice.substr(0, 40));
+        registerMaiCalendarTools(*tools,
+            [dispatcher = hostTools](const MaiCalendarEventInput& event,
+                                     const MaiToolContext&) {
+                const Json request{{"title", event.title}, {"notes", event.notes},
+                    {"session_id", event.sessionId},
+                    {"starts_at_utc_ms", event.startsAtUtcMs},
+                    {"ends_at_utc_ms", event.endsAtUtcMs}};
+                return callMaiMobileHostTool(dispatcher,
+                    "maichat_calendar_create_event", request.dump());
+            });
         registerMaiCloudDriveTools(
             *tools, [dispatcher = hostTools](const std::string& name,
                                              const std::string& argumentsJson,
@@ -599,7 +693,18 @@ struct MaiMobileAgent {
             throw std::runtime_error("Unknown approval policy.");
         auto replacement =
             std::make_unique<MaiAgent>(std::move(store.value()), makeMaiModelClient(config), std::move(tools), options);
+        stopSchedulePolling();
+        if (anyBusy()) {
+            startSchedulePolling();
+            throw std::runtime_error("Stop active tasks before changing the model.");
+        }
         agent.reset();
+        scheduleRunner.reset();
+        scheduleStore = nextScheduleStore;
+        {
+            std::lock_guard<std::mutex> lock(scheduleMutex);
+            scheduleEvents.clear();
+        }
         pendingDeltas.clear();
         liveParts.clear();
         errors.clear();
@@ -626,7 +731,15 @@ struct MaiMobileAgent {
             if (changeHandler != nullptr && !event.sessionId.empty() &&
                 event.type != MaiEventType::SessionStatus)
                 changeHandler(event.sessionId.c_str());
+            if (event.type == MaiEventType::SessionIdle ||
+                event.type == MaiEventType::SessionError ||
+                event.type == MaiEventType::SessionDeleted) {
+                std::lock_guard<std::mutex> lock(scheduleMutex);
+                scheduleEvents.push_back({event.sessionId, event.type, event.detail});
+                scheduleWake.notify_one();
+            }
         });
+        startSchedulePolling();
     }
 
     // 将持久化消息转为移动端可读快照，并保留最新消息和未完成任务的状态。
@@ -887,8 +1000,11 @@ struct MaiMobileAgent {
                 throw std::runtime_error("quoteMessageId must be a string.");
             id = result(agent->submit(MaiSendPrompt{session, r.at("text"), std::move(images), std::move(videos),
                                                     r.value("quoteMessageId", std::string{})}));
-        } else if (op == "stop")
+        } else if (op == "stop") {
             result(agent->submit(MaiInterrupt{session}));
+            if (scheduleRunner)
+                scheduleRunner->finish(session, "Interrupted by user");
+        }
         else if (op == "delete")
             result(agent->submit(MaiDeleteSession{session}));
         else if (op == "clear")

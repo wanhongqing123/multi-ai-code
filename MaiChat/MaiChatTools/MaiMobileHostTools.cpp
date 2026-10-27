@@ -383,7 +383,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Use photos before reading the system gallery. Ask only for the capability needed by "
         "the current task. Returns status, whether the system prompted, whether Settings is "
         "required, and the access level (including approximate or precise location). A limited "
-        "photo grant can still expose selected items. Location is foreground-only.",
+        "photo grant can still expose selected items; write-only calendar access can create "
+        "events. Location is foreground-only.",
         permissionSchema);
 #if defined(__ANDROID__)
     // Android 号码可能由运营商留空，读取结果不能当作已验证身份。

@@ -208,7 +208,7 @@ extension AIMobileHostToolProvider {
             prompted = initial == .notDetermined
             if prompted {
                 if #available(iOS 17.0, *) {
-                    _ = try? await store.requestFullAccessToEvents()
+                    _ = try? await store.requestWriteOnlyAccessToEvents()
                 } else {
                     _ = await withCheckedContinuation { continuation in
                         store.requestAccess(to: .event) { granted, _ in

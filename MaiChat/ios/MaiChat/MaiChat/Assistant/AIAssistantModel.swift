@@ -1114,6 +1114,7 @@ actor AIAssistantBackend {
             values: [
                 "database": root.appendingPathComponent("sessions.sqlite").path,
                 "workspace": workspace.path, "baseUrl": config.baseUrl, "apiKey": key,
+            "scheduleDeviceName": UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone",
             "wire": config.effectiveWire,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
             "reasoningEffort": config.effectiveReasoningEffort,

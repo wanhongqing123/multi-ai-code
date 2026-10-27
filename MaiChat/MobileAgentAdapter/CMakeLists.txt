@@ -245,6 +245,10 @@ add_library(maichat_mobile STATIC
   ../Media/MaiVideoCircleMark.cpp
   ../MaiChatTools/MaiCloudDriveTools.cpp
   ../MaiChatTools/MaiQrCode.cpp
+  ../MaiChatTools/MaiSessionSchedule.cpp
+  ../MaiChatTools/MaiSessionScheduleTools.cpp
+  ../MaiChatTools/MaiScheduleTime.cpp
+  ../MaiChatTools/MaiCalendarTools.cpp
   ../third_party/qrcodegen/qrcodegen.c
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
@@ -262,6 +266,7 @@ target_include_directories(maichat_mobile PRIVATE
   "${ffmpeg_source}/fftools" ../../MaiAgent/include)
 target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media ../SessionSync
   PRIVATE ../third_party/qrcodegen ../../MaiAgent/third_party/nlohmann
+    ../../MaiAgent/third_party/sqlite
     ../../MaiAgent/third_party/websocketpp
     ../../MaiAgent/third_party/asio/asio/include
     ${MAI_OPENSSL_INCLUDE_DIR})

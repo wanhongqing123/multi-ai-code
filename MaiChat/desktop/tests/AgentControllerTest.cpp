@@ -28,6 +28,8 @@
 #include "agent/DesktopAccountModelClient.h"
 #include "MaiScreenshot.h"
 #include "MaiScreenshotTool.h"
+#include "MaiSessionSchedule.h"
+#include "MaiTime.h"
 
 // AgentController 的活儿只有一件：把 MaiAgent 的事件从**核心的线程**搬到 Qt 主线程。
 // 所以这份用例的重点不是"信号发出来了没有"，而是"它们到达的时候人在哪个线程上"。
@@ -191,7 +193,65 @@ private slots:
     void desktopReadsOutsideSessionWorkingDirectory();
     void desktopWriteOutsideWaitsForApproval();
     void accountModelClientRoutesBySelectedModelAndFreshKey();
+    void scheduledSessionPromptRunsOnceOnOwner();
+    void scheduledSessionCatchesUpAfterOwnerRestarts();
 };
+
+void AgentControllerTest::scheduledSessionCatchesUpAfterOwnerRestarts() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString database = QDir(directory.path()).filePath(QStringLiteral("sessions.sqlite"));
+    QString session;
+    {
+        auto model = std::make_unique<ScriptedModel>(std::string(), "old instance");
+        AgentController original(std::move(model), database);
+        session = original.createSession(directory.path());
+        QVERIFY(!session.isEmpty());
+        const auto opened = MaiSessionScheduleStore::open(
+            database.toUtf8().toStdString() + ".schedule.sqlite");
+        QVERIFY(opened.isOk());
+        QVERIFY(opened.value()->create(session.toStdString(), "恢复后检查",
+            "设备恢复后继续", MaiTime::getCurrentTime() + 2'000,
+            MaiTime::getCurrentTime()).isOk());
+    }
+    QTest::qWait(2'300);
+    auto model = std::make_unique<ScriptedModel>(std::string(), "resumed");
+    ScriptedModel* scripted = model.get();
+    AgentController resumed(std::move(model), database);
+    QSignalSpy finished(&resumed, &AgentController::turnFinished);
+    QTRY_COMPARE_WITH_TIMEOUT(scripted->requests(), 1, 6'000);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 6'000);
+    const auto opened = MaiSessionScheduleStore::open(
+        database.toUtf8().toStdString() + ".schedule.sqlite");
+    QVERIFY(opened.isOk());
+    QCOMPARE(QString::fromStdString(opened.value()->list(session.toStdString())
+        .value().front().status), QStringLiteral("completed"));
+}
+
+void AgentControllerTest::scheduledSessionPromptRunsOnceOnOwner() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString database = QDir(directory.path()).filePath(QStringLiteral("sessions.sqlite"));
+    auto model = std::make_unique<ScriptedModel>(std::string(), "scheduled reply");
+    ScriptedModel* scripted = model.get();
+    AgentController controller(std::move(model), database);
+    const QString session = controller.createSession(directory.path());
+    QVERIFY(!session.isEmpty());
+    const auto opened = MaiSessionScheduleStore::open(
+        database.toUtf8().toStdString() + ".schedule.sqlite");
+    QVERIFY(opened.isOk());
+    const auto due = opened.value()->create(session.toStdString(), "测试提醒",
+        "只执行一次", MaiTime::getCurrentTime() + 2'000, MaiTime::getCurrentTime());
+    QVERIFY(due.isOk());
+    QSignalSpy finished(&controller, &AgentController::turnFinished);
+    QTRY_COMPARE_WITH_TIMEOUT(scripted->requests(), 1, 6'000);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 6'000);
+    QTRY_COMPARE_WITH_TIMEOUT(QString::fromStdString(
+        opened.value()->list(session.toStdString()).value().front().status),
+        QStringLiteral("completed"), 6'000);
+    QTest::qWait(1'300);
+    QCOMPARE(scripted->requests(), 1);
+}
 
 void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
     struct Probe {

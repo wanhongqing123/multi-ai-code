@@ -25,6 +25,8 @@
 	</dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>仅在你要求创作中心读取或管理日历时请求完整日历权限。</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>仅在你要求创作中心添加日程时写入系统日历。</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>仅在你要求创作中心使用日历时访问日历信息。</string>
 	<key>NSCameraUsageDescription</key>

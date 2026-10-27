@@ -5,6 +5,7 @@ import Foundation
 import CoreFoundation
 import Darwin
 import CoreImage
+import EventKit
 import ImageIO
 import Metal
 import MessageUI
@@ -45,6 +46,8 @@ final class AIMobileHostToolProvider {
 
         switch name {
         case "mobile_export_diagnostics": return await exportDiagnostics()
+        case "maichat_calendar_create_event":
+            return await createCalendarEvent(arguments)
         case "maichat_remote_session_list":
             let model = AIAssistantModel.shared
             let devices: [[String: Any]] = model.remoteDevices.map { device in
@@ -486,6 +489,67 @@ final class AIMobileHostToolProvider {
             return await broadcastText(appState: appState, arguments: arguments)
         default:
             return .failure(code: "invalid_input", message: "unknown MaiChat host tool")
+        }
+    }
+
+    func createCalendarEvent(_ arguments: [String: Any]) async
+        -> AIMaiChatHostToolExecution {
+        let title = Self.string(arguments, key: "title")
+        let notes = Self.string(arguments, key: "notes")
+        let sessionID = Self.string(arguments, key: "session_id")
+        guard !title.isEmpty, !sessionID.isEmpty,
+              let start = arguments["starts_at_utc_ms"] as? NSNumber,
+              let end = arguments["ends_at_utc_ms"] as? NSNumber,
+              end.int64Value > start.int64Value else {
+            return .failure(code: "invalid_input", message: "日历事件或所属会话无效")
+        }
+        let store = EKEventStore()
+        let initial = EKEventStore.authorizationStatus(for: .event)
+        if initial == .notDetermined {
+            do {
+                if #available(iOS 17.0, *) {
+                    _ = try await store.requestWriteOnlyAccessToEvents()
+                } else {
+                    _ = await withCheckedContinuation { continuation in
+                        store.requestAccess(to: .event) { granted, _ in
+                            continuation.resume(returning: granted)
+                        }
+                    }
+                }
+            } catch {
+                return .failure(code: "not_configured",
+                                message: "日历授权失败：\(error.localizedDescription)")
+            }
+        }
+        let access = EKEventStore.authorizationStatus(for: .event)
+        let writable: Bool
+        if #available(iOS 17.0, *) {
+            writable = access == .fullAccess || access == .writeOnly
+        } else {
+            writable = access == .authorized
+        }
+        guard writable else {
+            return .failure(code: "not_configured", message: "请先允许 MaiChat 写入系统日历")
+        }
+        guard let calendar = store.defaultCalendarForNewEvents else {
+            return .failure(code: "not_configured", message: "系统没有可写入的日历")
+        }
+        let event = EKEvent(eventStore: store)
+        event.title = title
+        event.notes = notes
+        event.startDate = Date(timeIntervalSince1970: Double(start.int64Value) / 1_000)
+        event.endDate = Date(timeIntervalSince1970: Double(end.int64Value) / 1_000)
+        event.calendar = calendar
+        event.addAlarm(EKAlarm(relativeOffset: 0))
+        do {
+            try store.save(event, span: .thisEvent, commit: true)
+            return Self.jsonSuccess(["state": "created",
+                                     "event_id": event.eventIdentifier ?? "",
+                                     "calendar": calendar.title,
+                                     "reminder_created": true,
+                                     "starts_at_utc_ms": start.int64Value])
+        } catch {
+            return .failure(code: "internal", message: "写入系统日历失败：\(error.localizedDescription)")
         }
     }
 

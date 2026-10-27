@@ -373,6 +373,22 @@ public final class AIAssistantController {
                     .toString().getBytes(StandardCharsets.UTF_8);
             } catch (Throwable failure) { return hostToolFailure(safeMessage(failure)); }
         }
+        if (tool.equals("maichat_calendar_create_event")) {
+            try {
+                JSONObject input = new JSONObject(arguments);
+                if (input.optString("session_id").isEmpty())
+                    return hostToolFailure("所属 Session 无效", "invalid_input");
+                JSONObject output = MaiSystemCalendarEvents.create(context, input);
+                return new JSONObject().put("ok", true).put("output", output)
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (SecurityException failure) {
+                return hostToolFailure(safeMessage(failure), "not_configured");
+            } catch (IllegalArgumentException failure) {
+                return hostToolFailure(safeMessage(failure), "invalid_input");
+            } catch (Exception failure) {
+                return hostToolFailure(safeMessage(failure));
+            }
+        }
         if (target == null)
             return hostToolFailure("MaiChat 宿主工具尚未连接");
 
@@ -578,6 +594,9 @@ public final class AIAssistantController {
                 .put("reasoningEffort", reasoningEffort)
                 .put("policy", approval)
                 .put("database", new File(root, "sessions.sqlite").getPath())
+                .put("scheduleDeviceName",
+                    context.getResources().getConfiguration().smallestScreenWidthDp >= 600
+                        ? "Android tablet" : "Android phone")
                 .put("workspace", workspace.getPath())
                 .put("appRoot", context.getFilesDir().getParentFile().getCanonicalPath())
                 .put("rvmModelPath", rvmModelFile != null ? rvmModelFile.getPath() : "")

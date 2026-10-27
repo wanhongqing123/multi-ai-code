@@ -16,6 +16,9 @@
 #include "MaiSessionTools.h"
 #include "MaiSystemResourcesTool.h"
 #include "MaiQrCode.h"
+#include "MaiSessionSchedule.h"
+#include "MaiCalendarTools.h"
+#include "MaiTime.h"
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
 #include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
@@ -30,6 +33,7 @@
 #include "mai_fftools_embed.h"
 #endif
 #include "MaiChatTools/DesktopPdfRenderer.h"
+#include "MaiChatTools/DesktopCalendarEvents.h"
 #if defined(Q_OS_MAC) || defined(Q_OS_WIN)
 #include "agent/MaiDesktopGpu.h"
 #endif
@@ -44,6 +48,7 @@
 #include <QMetaType>
 #include <QMimeDatabase>
 #include <QStandardPaths>
+#include <QTimer>
 #include <cstddef>
 #include <variant>
 
@@ -191,6 +196,9 @@ enum class PartKind { Unknown, Text, Reasoning, Tool };
 
 struct AgentController::Runtime {
     std::unique_ptr<MaiAgent> agent;
+    std::shared_ptr<MaiSessionScheduleStore> scheduleStore;
+    std::unique_ptr<MaiSessionScheduleRunner> scheduleRunner;
+    QTimer scheduleTimer;
     MaiEventBus::Token token = 0;
     QString openError;
     QString lastError;
@@ -219,18 +227,35 @@ std::unique_ptr<MaiSessionStore> openStore(const QString& databasePath, QString&
     return std::move(opened.value());
 }
 
+std::shared_ptr<MaiSessionScheduleStore> openScheduleStore(const QString& databasePath) {
+    const std::string path = databasePath.isEmpty() ? ":memory:" :
+        toUtf8(databasePath) + ".schedule.sqlite";
+    const auto opened = MaiSessionScheduleStore::open(path);
+    return opened ? opened.value() : nullptr;
+}
+
 std::unique_ptr<MaiAgent>
 // 为桌面端装配 MaiAgent 核心、模型客户端和平台宿主工具。
 // 工具的权限及工作目录在这里统一传入，实际操作仍由工具入口负责校验。
 buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStore> store, const QString& defaultModel,
            MaiApprovalPolicy approvalPolicy, const AgentController::ToolRegistrar& hostTools,
-           const AgentController::ModelConfig& credentials, const QString& databasePath) {
+           const AgentController::ModelConfig& credentials, const QString& databasePath,
+           const std::shared_ptr<MaiSessionScheduleStore>& scheduleStore) {
     // MaiAgent 内置工具总是装着；平台不支持的能力由核心在注册时排除。
     // 会话没有工作目录时工具层会明确拒绝，
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
     registerMaiQrCodeTools(*tools);
+#if defined(Q_OS_MAC)
+    registerMaiSessionScheduleTools(*tools, scheduleStore, "Mac");
+#else
+    registerMaiSessionScheduleTools(*tools, scheduleStore, "Windows");
+#endif
+    registerMaiCalendarTools(*tools,
+        [](const MaiCalendarEventInput& event, const MaiToolContext& context) {
+            return prepareDesktopCalendarImport(event, context);
+        });
     const QString defaultWorkspace = databasePath.isEmpty() ? QString() :
         QDir(QFileInfo(databasePath).absolutePath()).filePath(QStringLiteral("Workspace"));
     tools->add(makeMaiCreateSessionTool(MaiSessionCreateMode::DefaultOrExplicitDirectory,
@@ -381,8 +406,10 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model, const QS
     // 而全局静态的初始化顺序不好讲。
     qRegisterMetaType<MaiEvent>("MaiEvent");
 
+    runtime_->scheduleStore = openScheduleStore(databasePath);
     runtime_->agent = buildAgent(std::move(model), openStore(databasePath, runtime_->openError), QString(),
-                                 MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{}, databasePath);
+                                 MaiApprovalPolicy::OnRequest, hostTools, AgentController::ModelConfig{},
+                                 databasePath, runtime_->scheduleStore);
 
     // **显式 QueuedConnection，不用 Auto。**
     //
@@ -398,6 +425,7 @@ AgentController::AgentController(std::unique_ptr<MaiModelClient> model, const QS
     // 订阅要放在最后：前面几步没做完就收到事件的话，onEventQueued
     // 会碰到半个对象。
     runtime_->token = runtime_->agent->eventBus().subscribe([this](const MaiEvent& event) { rawEvent(event); });
+    startScheduledTasks();
 }
 
 AgentController::AgentController(const ModelConfig& model, const QString& databasePath, QObject* parent)
@@ -407,6 +435,7 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
                                  QObject* parent)
     : QObject(parent), runtime_(std::make_unique<Runtime>()) {
     qRegisterMetaType<MaiEvent>("MaiEvent");
+    runtime_->scheduleStore = openScheduleStore(databasePath);
 
     // baseUrl 为空 = 空转。建会话、翻历史照常，发消息会以 NotConfigured 收场。
     std::unique_ptr<MaiModelClient> client;
@@ -438,10 +467,34 @@ AgentController::AgentController(const ModelConfig& model, const QString& databa
 
     runtime_->modelName = model.modelName;
     runtime_->agent = buildAgent(std::move(client), openStore(databasePath, runtime_->openError), model.modelName,
-                                 model.approvalPolicy, hostTools, model, databasePath);
+                                 model.approvalPolicy, hostTools, model, databasePath,
+                                 runtime_->scheduleStore);
 
     connect(this, &AgentController::eventQueued, this, &AgentController::onEventQueued, Qt::QueuedConnection);
     runtime_->token = runtime_->agent->eventBus().subscribe([this](const MaiEvent& event) { rawEvent(event); });
+    startScheduledTasks();
+}
+
+void AgentController::startScheduledTasks() {
+    if (!runtime_->scheduleStore) return;
+    runtime_->scheduleStore->markInterruptedUncertain();
+    runtime_->scheduleRunner = std::make_unique<MaiSessionScheduleRunner>(
+        runtime_->scheduleStore,
+        [this](const std::string& id) {
+            MaiSession session;
+            return runtime_->agent->getSession(id, session) && session.isRoot();
+        },
+        [this](const std::string& id) { return runtime_->agent->isBusy(id); },
+        [this](const std::string& id, const std::string& instruction)
+            -> MaiResult<std::string> {
+            return runtime_->agent->submit(MaiSendPrompt{id, instruction});
+        });
+    runtime_->scheduleTimer.setInterval(1000);
+    connect(&runtime_->scheduleTimer, &QTimer::timeout, this, [this] {
+        if (runtime_->scheduleRunner)
+            runtime_->scheduleRunner->poll(MaiTime::getCurrentTime());
+    });
+    runtime_->scheduleTimer.start();
 }
 
 AgentController::~AgentController() {
@@ -455,6 +508,7 @@ AgentController::~AgentController() {
     //
     // 反过来写（先 reset 再退订）也能跑，
     // 但析构过程中发出的最后几条事件会打到一个正在销毁的 QObject 上。
+    runtime_->scheduleTimer.stop();
     runtime_->agent->eventBus().unsubscribe(runtime_->token);
     runtime_->agent.reset();
 }
@@ -602,6 +656,8 @@ bool AgentController::interrupt(const QString& sessionId) {
         runtime_->lastError = fromUtf8(stopped.error().message());
         return false;
     }
+    if (runtime_->scheduleRunner)
+        runtime_->scheduleRunner->finish(toUtf8(sessionId), "Interrupted by user");
     return true;
 }
 
@@ -686,6 +742,8 @@ void AgentController::onEventQueued(const MaiEvent& event) {
     const QString partId = fromUtf8(event.partId);
     if (event.type == MaiEventType::SessionCreated ||
         event.type == MaiEventType::SessionDeleted) {
+        if (event.type == MaiEventType::SessionDeleted && runtime_->scheduleStore)
+            runtime_->scheduleStore->cancelSession(event.sessionId);
         emit sessionStructureChanged();
         return;
     }
@@ -753,11 +811,17 @@ void AgentController::onEventQueued(const MaiEvent& event) {
         case MaiEventType::SessionIdle:
             // 一轮结束，这一轮的片段表可以丢了。不丢的话长会话会一直涨。
             runtime_->partKindsBySession.remove(sessionId);
+            if (runtime_->scheduleRunner)
+                runtime_->scheduleRunner->finish(event.sessionId);
             emit turnFinished(sessionId);
             runtime_->livePartTextBySession.remove(sessionId);
             return;
 
-        case MaiEventType::SessionError: emit turnFailed(sessionId, fromUtf8(event.detail)); return;
+        case MaiEventType::SessionError:
+            if (runtime_->scheduleRunner)
+                runtime_->scheduleRunner->finish(event.sessionId, event.detail);
+            emit turnFailed(sessionId, fromUtf8(event.detail));
+            return;
 
         case MaiEventType::SessionUpdated:
             if (!event.detail.empty()) {

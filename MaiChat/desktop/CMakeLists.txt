@@ -782,6 +782,14 @@ add_library(maichat_agent
   src/agent/AgentController.cpp
   ../MaiChatTools/MaiQrCode.h
   ../MaiChatTools/MaiQrCode.cpp
+  ../MaiChatTools/MaiSessionSchedule.h
+  ../MaiChatTools/MaiSessionSchedule.cpp
+  ../MaiChatTools/MaiSessionScheduleTools.cpp
+  ../MaiChatTools/MaiScheduleTime.cpp
+  ../MaiChatTools/MaiCalendarTools.h
+  ../MaiChatTools/MaiCalendarTools.cpp
+  src/MaiChatTools/DesktopCalendarEvents.h
+  src/MaiChatTools/DesktopCalendarEvents.cpp
   ../third_party/qrcodegen/qrcodegen.c
   src/agent/DesktopSessionSyncHost.h
   src/agent/DesktopSessionSyncHost.cpp
@@ -819,6 +827,7 @@ endif()
 target_include_directories(maichat_agent PUBLIC src ../SessionSync)
 target_include_directories(maichat_agent PRIVATE ../Media ../MaiChatTools
   ../third_party/qrcodegen ../../MaiAgent/third_party/nlohmann
+  ../../MaiAgent/third_party/sqlite
   ../../MaiAgent/third_party/websocketpp
   ../../MaiAgent/third_party/asio/asio/include
   ${OPENSSL_INCLUDE_DIR}
@@ -952,7 +961,8 @@ target_link_libraries(markdown_label_test PRIVATE maichat_markdown Qt5::Widgets 
 
 add_executable(agent_controller_test tests/AgentControllerTest.cpp)
 target_include_directories(agent_controller_test PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/httplib)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/httplib
+  ../MaiChatTools)
 target_link_libraries(agent_controller_test PRIVATE remote_im_desktop_ui remote_im_desktop_app
   remote_im_core maichat_agent maichat_markdown Qt5::Widgets Qt5::Test)
 
@@ -1038,6 +1048,27 @@ target_include_directories(mai_qr_code_test PRIVATE
   ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
 target_link_libraries(mai_qr_code_test PRIVATE maiagent Qt5::Gui)
 add_test(NAME mai_qr_code COMMAND mai_qr_code_test)
+
+add_executable(mai_session_schedule_test
+  ../MaiChatTools/tests/MaiSessionScheduleTest.cpp
+  ../MaiChatTools/MaiSessionSchedule.cpp
+  ../MaiChatTools/MaiSessionScheduleTools.cpp
+  ../MaiChatTools/MaiScheduleTime.cpp)
+target_include_directories(mai_session_schedule_test PRIVATE
+  ../MaiChatTools ../../MaiAgent/include
+  ../../MaiAgent/third_party/nlohmann ../../MaiAgent/third_party/sqlite)
+target_link_libraries(mai_session_schedule_test PRIVATE maiagent mai_sqlite)
+add_test(NAME mai_session_schedule COMMAND mai_session_schedule_test)
+
+add_executable(desktop_calendar_events_test
+  tests/DesktopCalendarEventsTest.cpp
+  src/MaiChatTools/DesktopCalendarEvents.cpp
+  ../MaiChatTools/MaiCalendarTools.cpp
+  ../MaiChatTools/MaiScheduleTime.cpp)
+target_include_directories(desktop_calendar_events_test PRIVATE
+  src ../MaiChatTools ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
+target_link_libraries(desktop_calendar_events_test PRIVATE maiagent Qt5::Gui)
+add_test(NAME desktop_calendar_events COMMAND desktop_calendar_events_test)
 
 add_executable(cloud_drive_agent_tools_integration_test
   tests/CloudDriveAgentToolsIntegrationTest.cpp)

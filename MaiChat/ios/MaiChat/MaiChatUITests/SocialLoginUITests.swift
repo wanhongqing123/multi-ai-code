@@ -64,8 +64,12 @@ final class SocialLoginUITests: XCTestCase {
         let privateChat = app.buttons["im-conversation-sim-friend-b"]
         XCTAssertTrue(privateChat.exists)
         privateChat.tap()
-        XCTAssertFalse(app.staticTexts["群内测试消息"].exists)
-        XCTAssertFalse(app.staticTexts["已收到群消息"].exists)
+        XCTAssertTrue(app.staticTexts["群内测试消息"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["已收到群消息"].waitForNonExistence(timeout: 5))
+        let privateScreenshot = XCTAttachment(screenshot: app.screenshot())
+        privateScreenshot.name = "im-private-chat-after-group"
+        privateScreenshot.lifetime = .keepAlways
+        add(privateScreenshot)
         app.buttons["返回会话列表"].tap()
         groupRow.tap()
         XCTAssertTrue(app.staticTexts["群内测试消息"].waitForExistence(timeout: 5))

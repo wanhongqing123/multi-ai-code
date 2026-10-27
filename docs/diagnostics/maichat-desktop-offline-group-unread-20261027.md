@@ -16,6 +16,8 @@
 ## Fix and verification
 
 - Register the native conversation event callback, refresh after sync finish, and apply group Add/Update events as they arrive. Ignore replies from an older list fetch after a newer event and unregister the callback on logout/destruction.
-- The focused test changed from failing to passing. Mac Qt Release `tim_sdk_remote_im_client_test`, `remote_im_application_test`, and `main_window_layout_test` passed (3/3). The normal Mac app target built successfully.
-- Fix commit: `2190c81e`. Mac 2.2.29 staged package hash: pending package build.
-- Remaining boundary: the exact offline three-account test must be rerun with the new Mac binary before calling the live unread scenario verified. Windows build and UI remain separately unverified at this point.
+- The focused test changed from failing to passing. Mac Qt Release `tim_sdk_remote_im_client_test`, `remote_im_application_test`, and `main_window_layout_test` passed (3/3). The normal Mac 2.2.29 app target and staged app smoke check passed.
+- On 2026-10-27, source `6ae35846d7278f47cfe81a6422d8ac744c89cdd6` and the new Mac Release probe used three fresh isolated accounts in Work group `@TGS#1J4XVD4UX`. A sent a message while C was offline. After C logged in, the group had `unread_before_open=1`, the message appeared exactly once in history, and opening the group gave `unread_after_open=0`. I inspected the captured Mac conversation screenshot.
+- The group was destroyed. All three test accounts completed the account deletion workflow; Tencent IM purge succeeded, Session Sync rows were zero, account-scoped OSS objects and unfinished uploads were zero, and the completion records were read back. Local and server test credential files were removed.
+- Fix commit: `2190c81e`. Final release asset hash is recorded with the GitHub Release.
+- Remaining boundary: Windows must be built and inspected on Windows. The user's installed Mac App was not replaced by this isolated test.

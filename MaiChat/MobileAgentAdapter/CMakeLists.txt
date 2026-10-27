@@ -244,8 +244,11 @@ add_library(maichat_mobile STATIC
   ../Media/MaiImageEncode.cpp
   ../Media/MaiVideoCircleMark.cpp
   ../MaiChatTools/MaiCloudDriveTools.cpp
+  ../MaiChatTools/MaiQrCode.cpp
+  ../third_party/qrcodegen/qrcodegen.c
   ../MaiChatTools/MaiImageFilter.cpp
   ../MaiChatTools/MaiMobileHostTools.cpp)
+target_compile_features(maichat_mobile PRIVATE c_std_11)
 if(ANDROID)
   target_sources(maichat_mobile PRIVATE
     ../android/MaiChat/app/src/main/cpp/MaiChatTools/MaiMobilePhotoAlbumTool.cpp)
@@ -258,7 +261,7 @@ target_include_directories(maichat_mobile PRIVATE "${ffmpeg_build}/install/inclu
 target_include_directories(maichat_mobile PRIVATE
   "${ffmpeg_source}/fftools" ../../MaiAgent/include)
 target_include_directories(maichat_mobile PUBLIC . ../MaiChatTools ../Media ../SessionSync
-  PRIVATE ../../MaiAgent/third_party/nlohmann
+  PRIVATE ../third_party/qrcodegen ../../MaiAgent/third_party/nlohmann
     ../../MaiAgent/third_party/websocketpp
     ../../MaiAgent/third_party/asio/asio/include
     ${MAI_OPENSSL_INCLUDE_DIR})

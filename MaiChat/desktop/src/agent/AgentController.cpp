@@ -15,6 +15,7 @@
 #include "MaiSqliteStore.h"
 #include "MaiSessionTools.h"
 #include "MaiSystemResourcesTool.h"
+#include "MaiQrCode.h"
 #if defined(MAICHAT_CV_VIDEO_ANALYSIS)
 #include "MaiCvImageTools.h"
 #include "MaiCvVideoAnalysis.h"
@@ -229,6 +230,7 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
     // 要不要把工具声明给模型看是 MaiContextBuilder 的事，不是这里的。
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
+    registerMaiQrCodeTools(*tools);
     const QString defaultWorkspace = databasePath.isEmpty() ? QString() :
         QDir(QFileInfo(databasePath).absolutePath()).filePath(QStringLiteral("Workspace"));
     tools->add(makeMaiCreateSessionTool(MaiSessionCreateMode::DefaultOrExplicitDirectory,

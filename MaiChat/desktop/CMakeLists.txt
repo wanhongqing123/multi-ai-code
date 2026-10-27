@@ -780,6 +780,9 @@ add_library(maichat_agent
   src/ui/ComposerTextEdit.cpp
   src/agent/AgentController.h
   src/agent/AgentController.cpp
+  ../MaiChatTools/MaiQrCode.h
+  ../MaiChatTools/MaiQrCode.cpp
+  ../third_party/qrcodegen/qrcodegen.c
   src/agent/DesktopSessionSyncHost.h
   src/agent/DesktopSessionSyncHost.cpp
   src/agent/DesktopSessionAttachments.h
@@ -803,6 +806,7 @@ add_library(maichat_agent
   src/agent/ReplySuggestionController.h
   src/agent/ReplySuggestionController.cpp
 )
+target_compile_features(maichat_agent PRIVATE c_std_11)
 if(APPLE)
   target_sources(maichat_agent PRIVATE
     src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuMac.mm)
@@ -813,7 +817,8 @@ elseif(WIN32)
   target_link_libraries(maichat_agent PRIVATE dxgi)
 endif()
 target_include_directories(maichat_agent PUBLIC src ../SessionSync)
-target_include_directories(maichat_agent PRIVATE ../Media
+target_include_directories(maichat_agent PRIVATE ../Media ../MaiChatTools
+  ../third_party/qrcodegen ../../MaiAgent/third_party/nlohmann
   ../../MaiAgent/third_party/websocketpp
   ../../MaiAgent/third_party/asio/asio/include
   ${OPENSSL_INCLUDE_DIR}
@@ -1018,6 +1023,21 @@ target_include_directories(cloud_drive_agent_tools_test PRIVATE
 target_link_libraries(cloud_drive_agent_tools_test PRIVATE maiagent mai_cloud_drive_client
   mai_cloud_vod)
 add_test(NAME cloud_drive_agent_tools COMMAND cloud_drive_agent_tools_test)
+
+add_executable(mai_qr_code_test
+  ../MaiChatTools/tests/MaiQrCodeTest.cpp
+  ../MaiChatTools/MaiQrCode.cpp
+  ../third_party/qrcodegen/qrcodegen.c
+  third_party/quirc/identify.c
+  third_party/quirc/quirc.c
+  third_party/quirc/decode.c
+  third_party/quirc/version_db.c)
+target_compile_features(mai_qr_code_test PRIVATE c_std_11)
+target_include_directories(mai_qr_code_test PRIVATE
+  ../MaiChatTools ../third_party/qrcodegen third_party/quirc
+  ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
+target_link_libraries(mai_qr_code_test PRIVATE maiagent Qt5::Gui)
+add_test(NAME mai_qr_code COMMAND mai_qr_code_test)
 
 add_executable(cloud_drive_agent_tools_integration_test
   tests/CloudDriveAgentToolsIntegrationTest.cpp)

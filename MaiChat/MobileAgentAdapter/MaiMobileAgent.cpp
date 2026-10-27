@@ -3,6 +3,7 @@
 #include "MaiMobileAgent.h"
 #include "MaiMobileHostTools.h"
 #include "MaiCloudDriveTools.h"
+#include "MaiQrCode.h"
 
 #include "MaiAgent.h"
 #include "MaiAgentSendMediaTool.h"
@@ -563,6 +564,7 @@ struct MaiMobileAgent {
                                          Json{{"html", html}, {"output_path", output}}.dump());
         }));
         registerMaiChatHostTools(*tools, hostTools);
+        registerMaiQrCodeTools(*tools);
         registerMaiCloudDriveTools(
             *tools, [dispatcher = hostTools](const std::string& name,
                                              const std::string& argumentsJson,

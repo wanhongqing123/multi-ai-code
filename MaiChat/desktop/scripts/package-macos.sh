@@ -115,6 +115,10 @@ for framework in TXLiteAVSDK_TRTC_Mac TXFFmpeg TXSoundTouch; do
 done
 
 "$macdeployqt" "$staged_app" -always-overwrite
+if [[ ! -f "$staged_app/Contents/Frameworks/QtWebSockets.framework/Versions/5/QtWebSockets" ]]; then
+  echo "Missing QtWebSockets framework in staged MaiChat App." >&2
+  exit 1
+fi
 
 sdk_source="$project_root/vendor/tencent-im/macos/ImSDKForMac_Plus.framework"
 if [[ ! -d "$sdk_source" ]]; then

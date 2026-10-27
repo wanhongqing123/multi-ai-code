@@ -54,7 +54,8 @@ endif()
 # Multimedia/MultimediaWidgets：视频消息的播放窗（QMediaPlayer + QVideoWidget）。
 # 注意 QMediaPlayer 的解码后端是插件（plugins/mediaservice 下的 wmfengine/dsengine），
 # 链接通过不代表能播——打包脚本会校验插件是否随包部署。
-find_package(Qt5 REQUIRED COMPONENTS Core Network Sql Widgets Svg Multimedia MultimediaWidgets Concurrent Test)
+find_package(Qt5 REQUIRED COMPONENTS
+  Core Network Sql Widgets Svg Multimedia MultimediaWidgets Concurrent Test WebSockets)
 find_package(ZLIB REQUIRED)
 
 # md4c：CommonMark + GFM 扩展的 Markdown 解析器（与 Qt 内嵌同源，MIT）。
@@ -799,6 +800,13 @@ add_library(maichat_agent
   ../MaiChatTools/MaiCalendarTools.cpp
   src/MaiChatTools/DesktopCalendarEvents.h
   src/MaiChatTools/DesktopCalendarEvents.cpp
+  src/MaiChatTools/DesktopProcessTools.h
+  src/MaiChatTools/DesktopProcessTools.cpp
+  src/MaiChatTools/DesktopBrowserTools.h
+  src/MaiChatTools/DesktopBrowserTools.cpp
+  src/MaiChatTools/DesktopComputerPlatform.h
+  src/MaiChatTools/DesktopComputerTools.h
+  src/MaiChatTools/DesktopComputerTools.cpp
   ../third_party/qrcodegen/qrcodegen.c
   src/agent/DesktopSessionSyncHost.h
   src/agent/DesktopSessionSyncHost.cpp
@@ -826,12 +834,15 @@ add_library(maichat_agent
 target_compile_features(maichat_agent PRIVATE c_std_11)
 if(APPLE)
   target_sources(maichat_agent PRIVATE
-    src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuMac.mm)
-  target_link_libraries(maichat_agent PRIVATE "-framework Metal")
+    src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuMac.mm
+    src/MaiChatTools/DesktopComputerMac.mm)
+  target_link_libraries(maichat_agent PRIVATE "-framework Metal"
+    "-framework ApplicationServices" "-framework AppKit" "-framework Carbon")
 elseif(WIN32)
   target_sources(maichat_agent PRIVATE
-    src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuWindows.cpp)
-  target_link_libraries(maichat_agent PRIVATE dxgi)
+    src/agent/MaiDesktopGpu.h src/agent/MaiDesktopGpuWindows.cpp
+    src/MaiChatTools/DesktopComputerWindows.cpp)
+  target_link_libraries(maichat_agent PRIVATE dxgi dwmapi uiautomationcore ole32)
 endif()
 target_include_directories(maichat_agent PUBLIC src ../SessionSync)
 target_include_directories(maichat_agent PRIVATE ../Media ../MaiChatTools
@@ -842,7 +853,8 @@ target_include_directories(maichat_agent PRIVATE ../Media ../MaiChatTools
   ${OPENSSL_INCLUDE_DIR}
   ../../MaiAgent/third_party/openssl/include)
 target_compile_definitions(maichat_agent PRIVATE ASIO_STANDALONE _WEBSOCKETPP_CPP11_STRICT_)
-target_link_libraries(maichat_agent PUBLIC Qt5::Core Qt5::Network Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
+target_link_libraries(maichat_agent PUBLIC
+  Qt5::Core Qt5::Network Qt5::WebSockets Qt5::Widgets Qt5::Multimedia Qt5::Concurrent
   maiagent maichat_markdown maichat_pdf_preview mai_video_circle_client)
 target_link_libraries(maichat_agent PRIVATE ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY})
 if(WIN32)
@@ -1070,6 +1082,24 @@ target_include_directories(mai_session_schedule_test PRIVATE
   ../../MaiAgent/third_party/nlohmann ../../MaiAgent/third_party/sqlite)
 target_link_libraries(mai_session_schedule_test PRIVATE maiagent mai_sqlite)
 add_test(NAME mai_session_schedule COMMAND mai_session_schedule_test)
+
+add_executable(desktop_process_tools_test tests/DesktopProcessToolsTest.cpp)
+target_link_libraries(desktop_process_tools_test PRIVATE maichat_agent Qt5::Core)
+target_include_directories(desktop_process_tools_test PRIVATE
+  src ../../MaiAgent/third_party/nlohmann)
+add_test(NAME desktop_process_tools COMMAND desktop_process_tools_test)
+
+add_executable(desktop_browser_tools_test tests/DesktopBrowserToolsTest.cpp)
+target_link_libraries(desktop_browser_tools_test PRIVATE maichat_agent Qt5::Core Qt5::Network)
+target_include_directories(desktop_browser_tools_test PRIVATE
+  src ../../MaiAgent/third_party/nlohmann)
+add_test(NAME desktop_browser_tools COMMAND desktop_browser_tools_test)
+
+add_executable(desktop_computer_tools_test tests/DesktopComputerToolsTest.cpp)
+target_link_libraries(desktop_computer_tools_test PRIVATE maichat_agent Qt5::Widgets)
+target_include_directories(desktop_computer_tools_test PRIVATE
+  src ../../MaiAgent/third_party/nlohmann)
+add_test(NAME desktop_computer_tools COMMAND desktop_computer_tools_test)
 
 add_executable(desktop_calendar_events_test
   tests/DesktopCalendarEventsTest.cpp

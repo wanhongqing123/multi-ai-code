@@ -34,6 +34,9 @@
 #endif
 #include "MaiChatTools/DesktopPdfRenderer.h"
 #include "MaiChatTools/DesktopCalendarEvents.h"
+#include "MaiChatTools/DesktopProcessTools.h"
+#include "MaiChatTools/DesktopBrowserTools.h"
+#include "MaiChatTools/DesktopComputerTools.h"
 #if defined(Q_OS_MAC) || defined(Q_OS_WIN)
 #include "agent/MaiDesktopGpu.h"
 #endif
@@ -260,6 +263,9 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
         QDir(QFileInfo(databasePath).absolutePath()).filePath(QStringLiteral("Workspace"));
     tools->add(makeMaiCreateSessionTool(MaiSessionCreateMode::DefaultOrExplicitDirectory,
                                         toUtf8(defaultWorkspace)));
+    registerDesktopProcessTools(*tools, std::make_shared<DesktopProcessManager>());
+    registerDesktopBrowserTools(*tools, std::make_shared<DesktopBrowserManager>());
+    registerDesktopComputerTools(*tools, std::make_shared<DesktopComputerController>());
 #if defined(MAICHAT_EMBEDDED_FFMPEG)
     const MaiFfmpegEngine ffmpegEngine{mai_ffmpeg_execute,       mai_ffmpeg_set_cancel_check,
                                        mai_ffprobe_execute,      mai_ffprobe_set_cancel_check,

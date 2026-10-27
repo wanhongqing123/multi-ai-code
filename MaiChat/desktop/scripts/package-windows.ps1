@@ -82,7 +82,7 @@ if ($deployExitCode -ne 0) { throw "windeployqt 失败，退出码 $deployExitCo
 # imports are resolved before main(), so a missing Qt5Sql.dll produces a system
 # error dialog instead of an AppLog entry or a useful --smoke exit code.
 foreach ($requiredQtRuntime in @(
-    'Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Network.dll', 'Qt5Sql.dll',
+    'Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Network.dll', 'Qt5WebSockets.dll', 'Qt5Sql.dll',
     'Qt5Widgets.dll', 'platforms\qwindows.dll', 'sqldrivers\qsqlite.dll'
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $staging $requiredQtRuntime))) {

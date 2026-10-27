@@ -15,6 +15,12 @@
 #include <cstring>
 #include <mutex>
 
+#ifdef Q_OS_MACOS
+static void initializeAuthCertificates() {
+    Q_INIT_RESOURCE(AuthCertificates);
+}
+#endif
+
 namespace {
 
 constexpr int kMaximumResponseBytes = 1024 * 1024;
@@ -194,7 +200,7 @@ DesktopCurlAuthResult performWithRoute(
     set(CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
 #elif defined(Q_OS_MACOS)
     // macOS OpenSSL 后端显式使用随程序内嵌的 Mozilla CA，避免依赖开发机路径。
-    Q_INIT_RESOURCE(AuthCertificates);
+    initializeAuthCertificates();
     QByteArray caBundle;
     if (url.scheme() == QStringLiteral("https")) {
         QFile certificates(QStringLiteral(":/maichat/auth/cacert.pem"));

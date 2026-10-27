@@ -460,6 +460,9 @@ private actor AIRemoteSessionTransport {
     private var socket: OpaquePointer?
     private var socketSink: AIRemoteSocketSink?
     private var connected = false
+    private var connectionGeneration = 0
+    private var announcedGeneration: Int?
+    private var lastPresenceBody: [String: Any]?
     private var authorizedBearer: String?
     private var reauthTask: Task<Void, Error>?
     private var connectionWaiters: [CheckedContinuation<Void, any Error>] = []
@@ -482,6 +485,9 @@ private actor AIRemoteSessionTransport {
         guard socket != nil else { return }
         if event == 1 {
             connected = true
+            connectionGeneration += 1
+            announcedGeneration = nil
+            localLoginSessionID = nil
             let waiters = connectionWaiters
             connectionWaiters.removeAll()
             waiters.forEach { $0.resume() }
@@ -489,6 +495,8 @@ private actor AIRemoteSessionTransport {
         }
         if event == 2 || event == 4 {
             connected = false
+            announcedGeneration = nil
+            localLoginSessionID = nil
             authorizedBearer = nil
             let failure = AIBackendError(message: "设备同步连接中断")
             let waiters = connectionWaiters
@@ -644,7 +652,28 @@ private actor AIRemoteSessionTransport {
 
     private func request(_ operation: String, body: [String: Any] = [:]) async throws -> Data {
         try await connect()
+        if operation != "presence" { try await ensurePresence() }
         return try await requestConnected(operation, body: body)
+    }
+
+    private func announcePresence(_ body: [String: Any]) async throws {
+        let generation = connectionGeneration
+        let response = try await requestConnected("presence", body: body)
+        guard connected, generation == connectionGeneration,
+              let value = try JSONSerialization.jsonObject(with: response) as? [String: Any],
+              let login = value["login_session_id"] as? String, !login.isEmpty else {
+            throw AIBackendError(message: "设备同步连接已更新，请重试")
+        }
+        localLoginSessionID = login
+        announcedGeneration = generation
+    }
+
+    private func ensurePresence() async throws {
+        guard announcedGeneration != connectionGeneration else { return }
+        guard let lastPresenceBody else {
+            throw AIBackendError(message: "设备同步正在登记本机，请稍后重试")
+        }
+        try await announcePresence(lastPresenceBody)
     }
 
     private func requestConnected(_ operation: String,
@@ -672,6 +701,7 @@ private actor AIRemoteSessionTransport {
 
     func catalog() async throws -> [AIRemoteSession] {
         try await connect()
+        try await ensurePresence()
         return cachedCatalog
     }
 
@@ -703,17 +733,19 @@ private actor AIRemoteSessionTransport {
             return ["id": item.id, "title": safeTitle,
                     "busy": item.busy, "updated_at": updated - Int64(index)]
         }
-        let response = try await request("presence", body: [
+        let body: [String: Any] = [
             "device_id": deviceID, "name": name, "sessions": entries
-        ])
-        let value = try JSONSerialization.jsonObject(with: response) as? [String: Any]
-        localLoginSessionID = value?["login_session_id"] as? String
+        ]
+        lastPresenceBody = body
+        try await connect()
+        try await announcePresence(body)
     }
 
     func currentLoginSessionID() -> String? { localLoginSessionID }
 
     func poll() async throws -> [Envelope] {
         try await connect()
+        try await ensurePresence()
         if !inbox.isEmpty {
             let messages = inbox
             inbox.removeAll()

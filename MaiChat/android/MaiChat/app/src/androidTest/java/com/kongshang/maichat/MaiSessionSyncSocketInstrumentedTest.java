@@ -4,6 +4,7 @@ package com.kongshang.maichat;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 import android.content.Context;
 import android.os.Bundle;
@@ -12,9 +13,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.File;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -28,6 +31,40 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class MaiSessionSyncSocketInstrumentedTest {
+    @Test public void reconnectWaitsForFreshDevicePresence() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        AndroidSessionSyncCoordinator coordinator =
+            new AndroidSessionSyncCoordinator(context, null, null);
+        try {
+            Field lastPresence = AndroidSessionSyncCoordinator.class
+                .getDeclaredField("lastPresence");
+            Field presenceReady = AndroidSessionSyncCoordinator.class
+                .getDeclaredField("presenceReady");
+            lastPresence.setAccessible(true);
+            presenceReady.setAccessible(true);
+            lastPresence.setLong(coordinator, System.currentTimeMillis());
+            CompletableFuture<Void> previous = new CompletableFuture<>();
+            previous.complete(null);
+            presenceReady.set(coordinator, previous);
+            Method receive = AndroidSessionSyncCoordinator.class.getDeclaredMethod(
+                "onNativeSocketEvent", int.class, byte[].class);
+            receive.setAccessible(true);
+            receive.invoke(coordinator, 1, new byte[0]);
+            assertEquals(0, lastPresence.getLong(coordinator));
+            assertFalse(((CompletableFuture<?>) presenceReady.get(coordinator)).isDone());
+            Method request = AndroidSessionSyncCoordinator.class.getDeclaredMethod(
+                "request", String.class, JSONObject.class, int.class);
+            request.setAccessible(true);
+            try {
+                request.invoke(coordinator, "send", new JSONObject(), 100);
+                throw new AssertionError("Device command bypassed fresh presence");
+            } catch (InvocationTargetException failure) {
+                assertTrue(failure.getCause() instanceof IOException);
+                assertTrue(failure.getCause().getMessage().contains("重新登记"));
+            }
+        } finally { coordinator.close(); }
+    }
+
     @Test public void lifecycleReplyCompletesBeforeMailboxConsumerRuns() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         AndroidSessionSyncCoordinator coordinator =

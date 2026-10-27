@@ -987,7 +987,7 @@ final class AIAssistantUITests: XCTestCase {
             return
         }
         // iOS 26 的底栏图标偶尔给出 {-1,-1} 的辅助功能命中点；点真实底栏位置。
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.375, dy: 0.93)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.93)).tap()
         let conversations = app.buttons["对话列表"]
         guard conversations.waitForExistence(timeout: 20) else {
             XCTFail("未打开创作中心")
@@ -1054,6 +1054,73 @@ final class AIAssistantUITests: XCTestCase {
         rejected.name = "normal-app-remote-rejection-restores-draft"
         rejected.lifetime = .keepAlways
         add(rejected)
+    }
+
+    @MainActor func testRemoteHistoryReannouncesPhoneAfterSocketReconnect() async throws {
+        let statusURL = URL(string: "http://127.0.0.1:18190/test/status")!
+        guard let probe = try? await URLSession.shared.data(from: statusURL),
+              (probe.1 as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机 Session 同步测试服务")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from:
+            URL(string: "http://127.0.0.1:18190/test/cert")!)
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 30))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.93)).tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 20))
+        let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.5))
+        swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
+        let drawer = app.scrollViews["ai-session-drawer"]
+        let remote = app.buttons["ai-remote-conversation-mac:localmacfixture:ses_mock_mac"]
+        for _ in 0..<8 where !remote.isHittable { drawer.swipeUp() }
+        XCTAssertTrue(remote.waitForExistence(timeout: 30))
+
+        func fixtureStatus() async throws -> [String: Any] {
+            let (data, response) = try await URLSession.shared.data(from: statusURL)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        var before = try await fixtureStatus()
+        let freshDeadline = Date().addingTimeInterval(20)
+        while Date() < freshDeadline &&
+            Date().timeIntervalSince1970 * 1_000 -
+                Double(before["phonePresenceMs"] as? Int64 ?? 0) > 2_000 {
+            try await Task.sleep(for: .milliseconds(200))
+            before = try await fixtureStatus()
+        }
+        let initialSocket = try XCTUnwrap(before["phoneSocketGeneration"] as? Int)
+        XCTAssertGreaterThan(initialSocket, 0)
+        let disconnectURL = URL(string:
+            "http://127.0.0.1:18190/test/disconnect-phone-socket")!
+        let (_, disconnected) = try await URLSession.shared.data(from: disconnectURL)
+        XCTAssertEqual((disconnected as? HTTPURLResponse)?.statusCode, 200)
+        let reconnectDeadline = Date().addingTimeInterval(10)
+        var after = try await fixtureStatus()
+        while Date() < reconnectDeadline &&
+            (after["phoneSocketGeneration"] as? Int ?? 0) <= initialSocket {
+            try await Task.sleep(for: .milliseconds(200))
+            after = try await fixtureStatus()
+        }
+        XCTAssertGreaterThan(after["phoneSocketGeneration"] as? Int ?? 0, initialSocket)
+
+        remote.tap()
+        let history = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "这条历史来自本机假 Mac Session")
+        ).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 15),
+                      "重连后读取远端历史应先重新登记本机")
+        XCTAssertFalse(app.staticTexts["Device presence is required"].exists)
+        let recovered = XCTAttachment(screenshot: app.screenshot())
+        recovered.name = "remote-history-after-phone-websocket-reconnect"
+        recovered.lifetime = .keepAlways
+        add(recovered)
     }
 
     @MainActor func testRemoteSessionCanBeCreatedAndDeletedOnFakeMac() async throws {

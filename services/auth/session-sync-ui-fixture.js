@@ -51,6 +51,8 @@ const sync = createSessionSyncService({ db: syncDb,
   authorize: createAccountAuthorizer(`http://127.0.0.1:${port}`) });
 let macToken;
 let phoneSession;
+let phoneSocket;
+let phoneSocketGeneration = 0;
 let macCreatedCount = 0;
 let macSessions = [{ id: sessionID, title: 'Mac 本地测试任务',
   updated_at: Date.now(), busy: false }];
@@ -266,6 +268,9 @@ async function start() {
         'SELECT kind,from_slot,to_slot,acked_at FROM sync_envelopes ORDER BY id').all();
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ slots: devices.map(device => device.slot),
+        phoneSocketGeneration,
+        phonePresenceMs: syncDb.prepare(`SELECT last_seen FROM sync_devices
+          WHERE slot='ios_phone'`).get()?.last_seen || 0,
         messages: messages.length, envelopes, phoneSession: phoneSession?.id,
         phoneEvents: decodedPhoneEvents(), modelCalls, modelRequests,
         macSessions: macSessions.map(session => session.id), workspaceSwitches,
@@ -273,6 +278,17 @@ async function start() {
         phoneLifecycleResults: phoneLifecycleResults(),
         phoneSessions: syncDb.prepare(`SELECT session_id FROM sync_sessions
           WHERE slot='ios_phone'`).all().map(row => row.session_id) }));
+      return;
+    }
+    if (request.url === '/test/disconnect-phone-socket') {
+      if (!phoneSocket) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+      phoneSocket.destroy();
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ phoneSocketGeneration }));
       return;
     }
     if (request.url === '/test/video-circle/status') {
@@ -426,6 +442,14 @@ async function start() {
       response.end();
     }), sync, createAccountAuthorizer(`http://127.0.0.1:${port}`)
   );
+  socketServer.on('upgrade', (request, socket) => {
+    if (request.url !== '/v1/session-sync/ws') return;
+    phoneSocket = socket;
+    phoneSocketGeneration += 1;
+    socket.on('close', () => {
+      if (phoneSocket === socket) phoneSocket = undefined;
+    });
+  });
   await new Promise(resolve => socketServer.listen(socketPort, '127.0.0.1', resolve));
   const circleServer = https.createServer({ key, cert: certificate },
     async (request, response) => {

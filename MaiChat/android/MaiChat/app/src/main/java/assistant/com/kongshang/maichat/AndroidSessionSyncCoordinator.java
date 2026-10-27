@@ -69,6 +69,7 @@ final class AndroidSessionSyncCoordinator {
     private final Object socketLock = new Object();
     private volatile boolean closed;
     private volatile boolean connected;
+    private volatile CompletableFuture<Void> presenceReady = new CompletableFuture<>();
     private volatile long socketHandle;
     private Thread listener;
     private volatile long lastPresence;
@@ -109,6 +110,7 @@ final class AndroidSessionSyncCoordinator {
 
     void close() {
         closed = true;
+        presenceReady.completeExceptionally(new IOException("设备同步连接已关闭"));
         if (listener != null) listener.interrupt();
         outbound.shutdownNow();
         lifecycleTimeouts.shutdownNow();
@@ -147,9 +149,18 @@ final class AndroidSessionSyncCoordinator {
 
     private void onNativeSocketEvent(int event, byte[] bytes) {
         if (closed) return;
-        if (event == 1) { connected = true; return; }
+        if (event == 1) {
+            lastPresence = 0;
+            localLoginSessionId = "";
+            presenceReady = new CompletableFuture<>();
+            connected = true;
+            return;
+        }
         if (event == 2 || event == 4) {
             connected = false;
+            lastPresence = 0;
+            localLoginSessionId = "";
+            presenceReady.completeExceptionally(new IOException("设备同步连接中断"));
             initiallyPublishedSessions.clear();
             publishedMessageDigests.clear();
             publishedStateDigests.clear();
@@ -187,6 +198,16 @@ final class AndroidSessionSyncCoordinator {
 
     private JSONObject request(String operation, JSONObject body, int timeoutMs) throws Exception {
         if (!connected) throw new IOException("所属设备同步连接尚未建立");
+        if (!operation.equals("presence")) {
+            try { presenceReady.get(timeoutMs, TimeUnit.MILLISECONDS); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw interrupted;
+            }
+            catch (Exception failure) {
+                throw new IOException("所属设备同步正在重新登记，请稍后重试", failure);
+            }
+        }
         String id = newId();
         CompletableFuture<JSONObject> future = new CompletableFuture<>();
         responses.put(id, future);
@@ -280,6 +301,7 @@ final class AndroidSessionSyncCoordinator {
                         .put("name", deviceName.isEmpty() ? "Android" : deviceName)
                         .put("sessions", entries), 15000);
                     localLoginSessionId = presence.optString("login_session_id");
+                    presenceReady.complete(null);
                     Set<String> currentIds = new java.util.HashSet<>();
                     for (int i = 0; i < entries.length(); i++) {
                         String id = entries.getJSONObject(i).optString("id");

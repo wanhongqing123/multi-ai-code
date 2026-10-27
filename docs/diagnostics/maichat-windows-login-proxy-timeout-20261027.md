@@ -116,3 +116,18 @@ Qt5Widgets.dll 等 8 个直接依赖及 qwindows/qsqlite 两个 Qt 插件，完�
 从 `build/bin` 和新完整 staging 分别用裸 PATH 运行 `--smoke`，均退出 0，
 系统错误窗为 0。`MaiChat/AGENTS.md`、`MaiChat/CLAUDE.md` 和桌面 README
 也加入构建结束前不得启动裸 exe、交付要验实际 ZIP 的约束。
+
+这项构建与测试防护提交为 `2883d56e7c8fbb928e9610e3807088cf49a41826`。
+从该精确提交重链后，`maichat` POST_BUILD 自动部署 Qt，校验 88 项 PE
+直接导入和动态 Qt 插件。正式打包脚本也执行同一校验。最终 ZIP 解压到全新
+隔离目录后，同一依赖校验通过；仅带 Windows 系统目录的裸 PATH 执行解压
+目录中的 2.2.30 `--smoke` 退出 0，缺 DLL 系统错误窗为 0。
+
+`2883d56e` 的最终本地 Windows 资产仍未上传、未安装：安装器
+`MaiChat-Setup-win64-v2.2.30-2883d56e.exe` 为 112,896,438 B，SHA-256
+`8bd18726afce047b3e9a9adf396740a7703d7adc6de1d9b267ed00103670141a`，
+无 Authenticode 签名；ZIP
+`MaiChat-win64-v2.2.30-20261027-2883d56e.zip` 为 139,882,958 B，
+SHA-256 `91059c55d89375d5a06bb4f2e3b20f292aacf6d565ca9e79c86fdad95d9ebc25`。
+包内 exe SHA-256 为
+`7c3371255ad61d01afdade7b0de3ac374007c249beed516c7221421b317bc5bb`。

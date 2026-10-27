@@ -333,6 +333,14 @@ struct AIRemoteSession: Decodable, Identifiable, Sendable, Equatable {
     }
 }
 
+struct AISessionAttachmentReference: Decodable, Sendable {
+    let attachmentID: String
+
+    enum CodingKeys: String, CodingKey {
+        case attachmentID = "attachment_id"
+    }
+}
+
 struct AIRemoteDevice: Decodable, Identifiable, Sendable, Equatable {
     let deviceSlot: String
     let deviceName: String
@@ -423,6 +431,7 @@ private actor AIRemoteSessionTransport {
         let limit: Int?
         let action: String?
         let text: String?
+        let attachments: [AISessionAttachmentReference]?
         let requestID: String?
         let decision: String?
         let title: String?
@@ -438,7 +447,7 @@ private actor AIRemoteSessionTransport {
             case chunkCount = "chunk_count"
             case sha256
             case dataBase64 = "data_base64"
-            case before, limit, action, text, decision, title
+            case before, limit, action, text, attachments, decision, title
             case requestID = "id"
             case workspacePath = "workspace_path"
             case targetSessionID = "target_session_id"
@@ -458,6 +467,7 @@ private actor AIRemoteSessionTransport {
     private var waitingInbox: CheckedContinuation<[Envelope], any Error>?
     private var inbox: [Envelope] = []
     private var cachedCatalog: [AIRemoteSession] = []
+    private var localLoginSessionID: String?
     private var cachedDevices: [AIRemoteDevice] = []
     private var catalogHandler: (@Sendable ([AIRemoteSession], [AIRemoteDevice]) -> Void)?
 
@@ -693,10 +703,14 @@ private actor AIRemoteSessionTransport {
             return ["id": item.id, "title": safeTitle,
                     "busy": item.busy, "updated_at": updated - Int64(index)]
         }
-        _ = try await request("presence", body: [
+        let response = try await request("presence", body: [
             "device_id": deviceID, "name": name, "sessions": entries
         ])
+        let value = try JSONSerialization.jsonObject(with: response) as? [String: Any]
+        localLoginSessionID = value?["login_session_id"] as? String
     }
+
+    func currentLoginSessionID() -> String? { localLoginSessionID }
 
     func poll() async throws -> [Envelope] {
         try await connect()
@@ -835,6 +849,14 @@ struct AIPart: Codable, Identifiable, Sendable, Equatable {
     var mimeType: String?
     var messageId: String? = nil
     var preview: String? = nil
+    var attachmentID: String? = nil
+    var name: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, text, tool, input, output, error, state, path
+        case mimeType, messageId, preview, name
+        case attachmentID = "attachment_id"
+    }
 }
 struct AIMessage: Codable, Identifiable, Sendable, Equatable {
     let id: String
@@ -893,6 +915,7 @@ struct AIImportedFile: Sendable, Equatable {
 struct AIAttachmentImportTarget: Sendable, Hashable {
     let sessionID: String
     let emptyDraftToken: UUID?
+    let remoteRoomKey: String?
 }
 struct AIImagePreview: Identifiable, Equatable {
     let id: UUID
@@ -1221,6 +1244,33 @@ actor AIAssistantBackend {
             isImage: false
         )
     }
+
+    func importSessionFile(_ source: URL, displayName: String? = nil)
+        async throws -> AIImportedFile {
+        guard let root else { throw AIBackendError(message: "创作中心尚未准备好") }
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let name = displayName ?? source.lastPathComponent
+        var info = MaiCloudDriveMediaInfo()
+        guard name.withCString({ mai_session_attachment_media_info($0, &info) != 0 }),
+              let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, UInt64(size) <= info.max_size_bytes else {
+            throw AIBackendError(message: "会话附件格式或大小无效")
+        }
+        let relative = String(UUID().uuidString.prefix(8)) + "-" + name
+        let target = root.appendingPathComponent("Workspace", isDirectory: true)
+            .appendingPathComponent(relative)
+        try await RemoteIMBackgroundWork.file {
+            do { try FileManager.default.copyItem(at: source, to: target) }
+            catch {
+                try? FileManager.default.removeItem(at: target)
+                throw error
+            }
+        }
+        let mime = String(cString: info.content_type_utf8)
+        return AIImportedFile(relativePath: relative, mimeType: mime,
+                              isImage: mime.hasPrefix("image/"))
+    }
 }
 
 @MainActor
@@ -1259,6 +1309,7 @@ final class AIAssistantModel: ObservableObject {
     @Published private(set) var hasOlderMessages = false
     @Published private(set) var visibleMessageLimit = AIAssistantModel.recentMessageCount
     @Published var isSubmitting = false
+    @Published private(set) var remoteUploadStatus = ""
     @Published private(set) var isCreatingConversation = false
     @Published var scrollRequest = 0
     @Published private(set) var workspacePath = ""
@@ -1286,11 +1337,13 @@ final class AIAssistantModel: ObservableObject {
     private var pendingRemoteSelectionStarted = Date.distantPast
     private var remoteTransfers: [String: AIRemoteTransfer] = [:]
     private var pendingRemoteCommands: [String: Date] = [:]
+    private var attachmentRemoteCommands: Set<String> = []
     private var remoteRetryIDByFingerprint: [String: String] = [:]
     private var remoteFingerprintByCommandID: [String: String] = [:]
     private var remoteDraftByCommandID: [String: String] = [:]
     private var remoteOptimisticByCommandID: [String: String] = [:]
     private var remoteResultByCommandID: [String: Bool] = [:]
+    private var remoteFilesByCommandID: [String: (key: String, files: [AIImportedFile])] = [:]
     private var remoteDeliveryPendingIDs: Set<String> = []
     private struct PendingLifecycle {
         let deviceSlot: String
@@ -1397,6 +1450,16 @@ final class AIAssistantModel: ObservableObject {
             loginSessionID: "fixturelogin", online: false)]
         selected = "switch-A"
         messages = sessionSwitchUITestMessages("A")
+        ready = true
+        historyLoaded = true
+    }
+
+    func installWelcomeUITestFixture() {
+        sessions = []
+        selected = ""
+        selectedRemote = nil
+        messages = []
+        configured = true
         ready = true
         historyLoaded = true
     }
@@ -1771,6 +1834,11 @@ final class AIAssistantModel: ObservableObject {
                             ? self.initiallyPublishedSessions.subtracting(currentIDs) : Set<String>()
                         for removed in removedSessions {
                             try await self.remoteTransport.deleteRoom(sessionID: removed)
+                            do { try await self.cleanupLocalSessionAttachments(removed) }
+                            catch {
+                                logAIHistoryEvent("session attachment cleanup retry: \(error.localizedDescription)")
+                                continue
+                            }
                             self.initiallyPublishedSessions.remove(removed)
                             self.pendingBackfillSessions.removeAll { $0 == removed }
                             self.publishedRemoteStateDigests.removeValue(forKey: removed)
@@ -1805,11 +1873,16 @@ final class AIAssistantModel: ObservableObject {
 
     private func expireRemoteRequests() {
         let timedOut = pendingRemoteCommands.filter {
-            Date().timeIntervalSince($0.value) > 30
+            Date().timeIntervalSince($0.value) >
+                (attachmentRemoteCommands.contains($0.key) ? 2 * 60 * 60 : 30)
         }
         if !timedOut.isEmpty {
             for id in timedOut.keys {
                 pendingRemoteCommands.removeValue(forKey: id)
+                attachmentRemoteCommands.remove(id)
+                if let pending = remoteFilesByCommandID.removeValue(forKey: id) {
+                    pendingAttachments[pending.key, default: []].append(contentsOf: pending.files)
+                }
                 if let temporaryID = remoteOptimisticByCommandID.removeValue(forKey: id) {
                     messages.removeAll { $0.id == temporaryID }
                 }
@@ -1929,8 +2002,17 @@ final class AIAssistantModel: ObservableObject {
            object["type"] as? String == "command_result" {
             if let id = object["command_id"] as? String,
                pendingRemoteCommands.removeValue(forKey: id) != nil {
+                attachmentRemoteCommands.remove(id)
                 let pendingDraft = remoteDraftByCommandID.removeValue(forKey: id)
                 let result = object["result"] as? [String: Any]
+                if let pending = remoteFilesByCommandID.removeValue(forKey: id) {
+                    if result?["ok"] as? Bool == true {
+                        discardImportedFiles(pending.files)
+                    } else {
+                        pendingAttachments[pending.key, default: []]
+                            .append(contentsOf: pending.files)
+                    }
+                }
                 if let temporaryID = remoteOptimisticByCommandID.removeValue(forKey: id),
                    let position = messages.firstIndex(where: { $0.id == temporaryID }) {
                     if result?["ok"] as? Bool == true,
@@ -1959,6 +2041,9 @@ final class AIAssistantModel: ObservableObject {
                     }
                     showTransientError(result["error"] as? String ?? "所属设备未执行操作",
                                        duration: .seconds(8))
+                }
+                if let warning = result?["warning"] as? String, !warning.isEmpty {
+                    showTransientError(warning, duration: .seconds(8))
                 }
             }
             return
@@ -2014,12 +2099,12 @@ final class AIAssistantModel: ObservableObject {
                 // 所属设备的相对路径不能在本机工作区解析，否则可能显示同名的其他文件。
                 part.path = nil
                 parts.append(part)
-                parts.append(AIPart(
+                if part.attachmentID == nil { parts.append(AIPart(
                     id: part.id + "-remote-placeholder", kind: "text",
                     text: part.kind == "image" ? "[图片在所属设备，暂不可跨设备预览]" :
                         "[视频在所属设备，暂不可跨设备预览]",
                     tool: nil, input: nil, output: nil, error: nil, state: nil,
-                    path: nil, mimeType: nil))
+                    path: nil, mimeType: nil)) }
             } else {
                 parts.append(part)
             }
@@ -2080,16 +2165,93 @@ final class AIAssistantModel: ObservableObject {
         do {
             switch envelope.payload.action {
             case "prompt":
-                guard let text = envelope.payload.text, !text.isEmpty,
+                guard let text = envelope.payload.text,
+                      !text.isEmpty || !(envelope.payload.attachments ?? []).isEmpty,
                       text.utf8.count <= 16 * 1024 else {
                     throw AIBackendError(message: "消息为空或过长")
                 }
-                _ = try await backend.send(session: envelope.sessionID, text: text,
-                                           images: [], videos: [], quoteMessageId: "")
+                let references = envelope.payload.attachments ?? []
+                guard references.count <= 10 else {
+                    throw AIBackendError(message: "附件数量过多")
+                }
+                guard let ownLogin = await remoteTransport.currentLoginSessionID() else {
+                    throw AIBackendError(message: "会话同步登录状态不可用")
+                }
+                let room = MaiCloudDriveClient.SessionRoom(
+                    ownerSlot: syncDeviceSlot,
+                    ownerLoginSessionID: ownLogin,
+                    sessionID: envelope.sessionID)
+                var images: [AIImportedFile] = []
+                var videos: [AIImportedFile] = []
+                var documents: [AIImportedFile] = []
+                var synced: [(id: String, name: String, kind: String,
+                              mimeType: String, path: String)] = []
+                for reference in references {
+                    let downloaded = try await MaiCloudDriveClient.shared
+                        .downloadSessionAttachment(id: reference.attachmentID, room: room)
+                    defer { try? FileManager.default.removeItem(at: downloaded.fileURL) }
+                    let imported = downloaded.mediaType == "image"
+                        ? try await backend.importDocument(downloaded.fileURL)
+                        : try await backend.importSessionFile(
+                            downloaded.fileURL, displayName: downloaded.name)
+                    synced.append((reference.attachmentID, downloaded.name,
+                                   downloaded.mediaType, downloaded.contentType,
+                                   imported.relativePath))
+                    if imported.isImage { images.append(imported) }
+                    else if imported.mimeType.hasPrefix("video/") { videos.append(imported) }
+                    else { documents.append(imported) }
+                }
+                var prompt = text
+                if !documents.isEmpty {
+                    prompt += "\n\n会话附件已保存到本机工作目录：\n" +
+                        documents.map { "- \($0.relativePath)" }.joined(separator: "\n")
+                }
+                _ = try await backend.send(session: envelope.sessionID, text: prompt,
+                                           images: images, videos: videos,
+                                           quoteMessageId: "")
                 let latest = try? await backend.remoteSnapshot(
                     session: envelope.sessionID, limit: 2)
                 if let userMessage = latest?.messages?.first(where: { $0.role == "user" }) {
                     result["user_message_id"] = userMessage.id
+                    if !synced.isEmpty, let latest {
+                        var parts = remoteHistoryMessage(userMessage).parts
+                        for item in synced {
+                            if let original = userMessage.parts.first(where: {
+                                $0.path == item.path && $0.kind == item.kind
+                            }), let index = parts.firstIndex(where: { $0.id == original.id }) {
+                                parts[index].attachmentID = item.id
+                                parts[index].name = item.name
+                            } else {
+                                parts.append(AIPart(id: "session_attachment_" + item.id,
+                                    kind: item.kind, text: item.name, tool: nil,
+                                    input: nil, output: nil, error: nil, state: nil,
+                                    path: nil, mimeType: item.mimeType,
+                                    attachmentID: item.id, name: item.name))
+                            }
+                        }
+                        let decorated = AIMessage(id: userMessage.id, role: userMessage.role,
+                            created: userMessage.created, completed: userMessage.completed,
+                            active: userMessage.active, parts: parts)
+                        var payload = try remoteHistoryPayload(latest)
+                        payload["messages"] = try JSONSerialization.jsonObject(
+                            with: JSONEncoder().encode([decorated]))
+                        let encoded = try JSONSerialization.data(withJSONObject: payload)
+                        do {
+                            try await remoteTransport.publish(sessionID: envelope.sessionID,
+                                data: encoded)
+                        } catch {
+                            result["warning"] = "附件已送达，历史记录正在重试同步"
+                            Task {
+                                for _ in 0..<5 {
+                                    try? await Task.sleep(for: .seconds(2))
+                                    if (try? await remoteTransport.publish(
+                                        sessionID: envelope.sessionID, data: encoded)) != nil {
+                                        return
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             case "stop":
                 let closeCamera = AIMobileLocalMediaRequests.shared.cameraSessionID == envelope.sessionID
@@ -2153,8 +2315,10 @@ final class AIAssistantModel: ObservableObject {
                     historyLoaded = true
                     scrollRequest += 1
                 }
-                initiallyPublishedSessions.remove(target)
                 try? await remoteTransport.deleteRoom(sessionID: target)
+                if (try? await cleanupLocalSessionAttachments(target)) != nil {
+                    initiallyPublishedSessions.remove(target)
+                }
                 result = ["ok": true, "session_id": target]
             case "session_set_workspace":
                 throw AIBackendError(message: "iPhone 的对话只能使用本机应用工作目录")
@@ -2603,6 +2767,8 @@ final class AIAssistantModel: ObservableObject {
             UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         remoteRetryIDByFingerprint[fingerprint] = id
         pendingRemoteCommands[id] = Date()
+        if let attachments = payload["attachments"] as? [[String: String]],
+           !attachments.isEmpty { attachmentRemoteCommands.insert(id) }
         remoteFingerprintByCommandID[id] = fingerprint
         remoteDeliveryPendingIDs.insert(id)
         defer { remoteDeliveryPendingIDs.remove(id) }
@@ -2626,28 +2792,68 @@ final class AIAssistantModel: ObservableObject {
     /// 输入不合法或任务忙碌时不改动草稿；新建会话也必须保持一个可见的加载状态。
     func sendMessage(_ text: String, expectedSession: String? = nil) async -> Bool {
         if let remote = selectedRemote {
+            let draftKey = remoteDraftKey(remote)
+            let selectedFiles = pendingAttachments[draftKey] ?? []
             guard expectedSession == nil || expectedSession == remote.sessionID,
                   remoteIsOnline(remote), !busy, !isSubmitting,
-                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-            guard attachments(for: remote.sessionID).isEmpty, quotedMessage == nil else {
-                showTransientError("跨设备暂只支持文字消息，请移除附件或引用后重试")
+                  pendingRemoteCommands.isEmpty,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    !selectedFiles.isEmpty else { return false }
+            guard quotedMessage == nil else {
+                showTransientError("跨设备会话暂不支持引用消息")
                 return false
             }
             isSubmitting = true
-            defer { isSubmitting = false }
+            defer { isSubmitting = false; remoteUploadStatus = "" }
+            let room = MaiCloudDriveClient.SessionRoom(
+                ownerSlot: remote.deviceSlot,
+                ownerLoginSessionID: remote.loginSessionID,
+                sessionID: remote.sessionID)
+            var references: [[String: String]] = []
+            do {
+                for (index, file) in selectedFiles.enumerated() {
+                    remoteUploadStatus = "正在上传附件 \(index + 1)/\(selectedFiles.count)…"
+                    guard let path = AIAssistantPathPolicy.resolve(
+                        file.relativePath, workspacePath: workspacePath),
+                        FileManager.default.fileExists(atPath: path.path) else {
+                        throw AIBackendError(message: "附件文件已丢失，请移除后重新选择")
+                    }
+                    let name = file.relativePath.count > 9 &&
+                        file.relativePath[file.relativePath.index(
+                            file.relativePath.startIndex, offsetBy: 8)] == "-"
+                        ? String(file.relativePath.dropFirst(9)) : file.relativePath
+                    let receipt = try await MaiCloudDriveClient.shared
+                        .uploadSessionAttachment(fileURL: path,
+                                                 displayName: name, room: room)
+                    references.append(["attachment_id": receipt.attachmentId])
+                }
+            } catch {
+                showTransientError("附件上传失败：" + error.localizedDescription,
+                                   duration: .seconds(8))
+                return false
+            }
             let temporaryID = "msg_z_pending_" + UUID().uuidString
             let created = Int64(Date().timeIntervalSince1970 * 1_000)
             mergeMessages([AIMessage(id: temporaryID, role: "user", created: created,
                 completed: created, active: false,
                 parts: [AIPart(id: "part_" + UUID().uuidString, kind: "text",
-                    text: text, tool: nil, input: nil, output: nil, error: nil,
+                    text: text.isEmpty ? "已发送\(references.count)个附件" : text,
+                    tool: nil, input: nil, output: nil, error: nil,
                     state: nil, path: nil, mimeType: nil)])])
             do {
+                var payload: [String: Any] = ["action": "prompt", "text": text]
+                if !references.isEmpty { payload["attachments"] = references }
                 let id = try await enqueueRemoteCommand(
-                    to: remote, payload: ["action": "prompt", "text": text],
+                    to: remote, payload: payload,
                     optimisticID: temporaryID)
+                pendingAttachments.removeValue(forKey: draftKey)
                 if let confirmed = remoteResultByCommandID.removeValue(forKey: id) {
+                    if confirmed { discardImportedFiles(selectedFiles) }
+                    else { pendingAttachments[draftKey] = selectedFiles }
                     return confirmed
+                }
+                if !selectedFiles.isEmpty {
+                    remoteFilesByCommandID[id] = (draftKey, selectedFiles)
                 }
                 return true
             } catch {
@@ -2761,6 +2967,7 @@ final class AIAssistantModel: ObservableObject {
                 discardImportedFiles(pendingAttachments.removeValue(forKey: target) ?? [])
                 drafts.removeValue(forKey: target)
                 createdEmptyDraftSessions = createdEmptyDraftSessions.filter { $0.value != target }
+                try? await cleanupLocalSessionAttachments(target)
             }
             if op == "delete", selected == target {
                 selected = ""; messages = []; historyLoaded = true
@@ -2778,6 +2985,15 @@ final class AIAssistantModel: ObservableObject {
             self.error = error.localizedDescription
         }
     }
+
+    private func cleanupLocalSessionAttachments(_ session: String) async throws {
+        guard let login = await remoteTransport.currentLoginSessionID() else {
+            throw AIBackendError(message: "会话同步登录状态不可用")
+        }
+        let room = MaiCloudDriveClient.SessionRoom(ownerSlot: syncDeviceSlot,
+            ownerLoginSessionID: login, sessionID: session)
+        try await MaiCloudDriveClient.shared.cleanupSessionRoom(room)
+    }
     func save(_ config: AIModelSettings) async -> Bool {
         do {
             var normalized = config
@@ -2789,13 +3005,59 @@ final class AIAssistantModel: ObservableObject {
         } catch { self.error = error.localizedDescription; return false }
     }
     func attachments(for session: String) -> [AIImportedFile] {
-        pendingAttachments[session] ?? []
+        pendingAttachments[attachmentKey(for: session)] ?? []
+    }
+
+    func downloadRemoteAttachment(_ part: AIPart)
+        async throws -> MaiCloudDriveClient.DownloadedSessionAttachment {
+        guard let remote = selectedRemote, let id = part.attachmentID else {
+            throw AIBackendError(message: "会话附件已不可用")
+        }
+        let room = MaiCloudDriveClient.SessionRoom(ownerSlot: remote.deviceSlot,
+            ownerLoginSessionID: remote.loginSessionID,
+            sessionID: remote.sessionID)
+        let downloaded = try await MaiCloudDriveClient.shared
+            .downloadSessionAttachment(id: id, room: room)
+        guard selectedRemote?.id == remote.id else {
+            try? FileManager.default.removeItem(at: downloaded.fileURL)
+            throw AIBackendError(message: "会话已切换")
+        }
+        return downloaded
+    }
+
+    func openLocalSessionAttachmentForAgent(id: String, sessionID: String)
+        async throws -> AIImportedFile {
+        guard sessions.contains(where: { $0.id == sessionID }),
+              let login = await remoteTransport.currentLoginSessionID() else {
+            throw AIBackendError(message: "本机会话或同步登录状态不可用")
+        }
+        let room = MaiCloudDriveClient.SessionRoom(ownerSlot: syncDeviceSlot,
+            ownerLoginSessionID: login, sessionID: sessionID)
+        let downloaded = try await MaiCloudDriveClient.shared
+            .downloadSessionAttachment(id: id, room: room)
+        defer { try? FileManager.default.removeItem(at: downloaded.fileURL) }
+        return downloaded.mediaType == "image"
+            ? try await backend.importDocument(downloaded.fileURL)
+            : try await backend.importSessionFile(
+                downloaded.fileURL, displayName: downloaded.name)
+    }
+
+    private func remoteDraftKey(_ remote: AIRemoteSession) -> String {
+        "remote:\(remote.deviceSlot):\(remote.loginSessionID):\(remote.sessionID)"
+    }
+
+    private func attachmentKey(for session: String) -> String {
+        if let remote = selectedRemote, remote.sessionID == session {
+            return remoteDraftKey(remote)
+        }
+        return session
     }
 
     func importTarget() -> AIAttachmentImportTarget {
         AIAttachmentImportTarget(
             sessionID: selected,
-            emptyDraftToken: selected.isEmpty ? emptyDraftToken : nil
+            emptyDraftToken: selected.isEmpty ? emptyDraftToken : nil,
+            remoteRoomKey: selectedRemote.map(remoteDraftKey)
         )
     }
 
@@ -2820,12 +3082,13 @@ final class AIAssistantModel: ObservableObject {
             showTransientError("原会话已关闭，请重新选择媒体")
             return 0
         }
-        let remaining = max(0, 10 - pendingAttachments[session, default: []].count)
-        pendingAttachments[session, default: []].append(contentsOf: files.prefix(remaining))
+        let key = target.remoteRoomKey ?? session
+        let remaining = max(0, 10 - pendingAttachments[key, default: []].count)
+        pendingAttachments[key, default: []].append(contentsOf: files.prefix(remaining))
         let extra = Array(files.dropFirst(remaining))
         if !extra.isEmpty {
             discardImportedFiles(extra)
-            showTransientError("每条消息最多添加 10 项图片或视频，超出的媒体未加入草稿")
+            showTransientError("每条消息最多添加 10 项附件，超出的文件未加入草稿")
         }
         return min(files.count, remaining)
     }
@@ -2844,12 +3107,13 @@ final class AIAssistantModel: ObservableObject {
     }
 
     func removeAttachment(_ file: AIImportedFile, from session: String) {
-        let removed = pendingAttachments[session]?.filter {
+        let key = attachmentKey(for: session)
+        let removed = pendingAttachments[key]?.filter {
             $0.relativePath == file.relativePath
         } ?? []
-        pendingAttachments[session]?.removeAll { $0.relativePath == file.relativePath }
-        if pendingAttachments[session]?.isEmpty == true {
-            pendingAttachments.removeValue(forKey: session)
+        pendingAttachments[key]?.removeAll { $0.relativePath == file.relativePath }
+        if pendingAttachments[key]?.isEmpty == true {
+            pendingAttachments.removeValue(forKey: key)
         }
         discardImportedFiles(removed)
     }
@@ -2860,6 +3124,11 @@ final class AIAssistantModel: ObservableObject {
 
     func importVideoFile(_ url: URL) async -> AIImportedFile? {
         do { return try await backend.importVideo(url) }
+        catch { self.error = error.localizedDescription; return nil }
+    }
+
+    func importSessionFile(_ url: URL) async -> AIImportedFile? {
+        do { return try await backend.importSessionFile(url) }
         catch { self.error = error.localizedDescription; return nil }
     }
 }

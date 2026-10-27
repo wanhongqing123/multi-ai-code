@@ -76,6 +76,15 @@ POLICY_DOCUMENT = {
     ],
 }
 
+LEGACY_POLICY_DOCUMENT = json.loads(json.dumps(POLICY_DOCUMENT))
+POLICY_DOCUMENT["Statement"][2]["Condition"]["StringLike"]["oss:Prefix"] += [
+    "session-attachments/", "session-attachments/*"
+]
+POLICY_DOCUMENT["Statement"][3]["Resource"] = [
+    f"acs:oss:*:*:{BUCKET}/cloud-drive/*",
+    f"acs:oss:*:*:{BUCKET}/session-attachments/*",
+]
+
 
 class ProvisionError(Exception):
     pass

@@ -17,7 +17,8 @@ namespace {
 
 using Json = nlohmann::json;
 
-enum class Action { List, Pending, Upload, Pause, Resume, Abort, Play, Delete };
+enum class Action { List, Pending, Upload, Pause, Resume, Abort, Play, Delete,
+                    SessionOpen };
 
 const char* toolName(Action action) {
     switch (action) {
@@ -29,6 +30,7 @@ const char* toolName(Action action) {
         case Action::Abort: return "maichat_cloud_drive_abort_upload";
         case Action::Play: return "maichat_cloud_drive_open_media";
         case Action::Delete: return "maichat_cloud_drive_delete_media";
+        case Action::SessionOpen: return "maichat_session_attachment_open";
     }
     return "";
 }
@@ -69,6 +71,10 @@ const char* toolDescription(Action action) {
         case Action::Delete:
             return "Only while this account's private cloud drive is enabled, permanently "
                    "delete one of its images or videos. Requires approval for every call.";
+        case Action::SessionOpen:
+            return "Open an attachment ID already shared in this MaiChat Agent Session. "
+                   "Download it from the account's separate private Session space into this "
+                   "device so local file tools can inspect it. The ID must belong to this Session.";
     }
     return "";
 }
@@ -78,6 +84,8 @@ const char* toolSchema(Action action) {
         case Action::List:
             return R"({"type":"object","properties":{"before":{"type":"string","minLength":1,"maxLength":512}},"additionalProperties":false})";
         case Action::Pending: return R"({"type":"object","properties":{},"additionalProperties":false})";
+        case Action::SessionOpen:
+            return R"({"type":"object","properties":{"attachment_id":{"type":"string","minLength":36,"maxLength":36}},"required":["attachment_id"],"additionalProperties":false})";
         case Action::Upload:
             return R"({"type":"object","properties":{"file_path":{"type":"string","minLength":1,"maxLength":4096}},"required":["file_path"],"additionalProperties":false})";
         case Action::Pause:
@@ -156,6 +164,20 @@ public:
             case Action::Pending:
                 if (!arguments.empty()) return invalid("this tool accepts no arguments");
                 break;
+            case Action::SessionOpen: {
+                if (!onlyKeys(arguments, "attachment_id") ||
+                    !arguments.contains("attachment_id") ||
+                    !arguments["attachment_id"].is_string() ||
+                    !validUuid(arguments["attachment_id"].get<std::string>()) ||
+                    context.sessionId.empty())
+                    return invalid("attachment_id must belong to the current Session");
+                std::string id = arguments["attachment_id"].get<std::string>();
+                std::transform(id.begin(), id.end(), id.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                arguments["attachment_id"] = id;
+                arguments["session_id"] = context.sessionId;
+                break;
+            }
             case Action::Upload: {
                 if (!onlyKeys(arguments, "file_path") || !arguments.contains("file_path") ||
                     !arguments["file_path"].is_string())
@@ -210,7 +232,8 @@ private:
 void registerMaiCloudDriveTools(MaiToolRegistry& tools, MaiCloudDriveToolHandler handler) {
     for (Action action :
          {Action::List, Action::Pending, Action::Upload, Action::Pause,
-          Action::Resume, Action::Abort, Action::Play, Action::Delete}) {
+          Action::Resume, Action::Abort, Action::Play, Action::Delete,
+          Action::SessionOpen}) {
         tools.add(std::make_unique<MaiCloudDriveTool>(action, handler));
     }
 }

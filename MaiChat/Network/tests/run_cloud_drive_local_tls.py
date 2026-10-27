@@ -37,9 +37,16 @@ class Fixture(http.server.ThreadingHTTPServer):
         self.name = ""
         self.content_type = ""
         self.size = 0
+        self.room_key = ""
 
     def media_type(self):
-        return "image" if self.content_type.startswith("image/") else "video"
+        if self.content_type.startswith("image/"):
+            return "image"
+        if self.content_type.startswith("audio/"):
+            return "audio"
+        if self.content_type.startswith("video/"):
+            return "video"
+        return "file"
 
     def handle_error(self, *_args):
         # Cancel tests intentionally close sockets during an OSS PUT.
@@ -77,7 +84,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
 
     def path_only(self):
-        return urlsplit(self.path).path
+        return urlsplit(self.path).path.replace(
+            "/auth/v1/session-attachments", "/auth/v1/cloud-drive/videos")
 
     def origin(self):
         return f"https://localhost:{self.server.server_port}"
@@ -175,7 +183,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, {"read_url": self.origin() + "/oss/play?signature=fixture",
                 "read_expires_in": 60, "size_bytes": size,
                 "content_type": content_type,
-                "media_type": self.server.media_type()})
+                "media_type": self.server.media_type(),
+                "name": self.server.name, "room_key": self.server.room_key})
             return
         if path == f"/auth/v1/cloud-drive/videos/{VIDEO_ID}/thumbnail-link":
             with self.server.lock:
@@ -191,6 +200,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path_only()
+        session_mode = urlsplit(self.path).path.startswith(
+            "/auth/v1/session-attachments")
         account = self.account()
         if not account:
             self.reply(401, {"error": "auth_required"})
@@ -199,11 +210,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self.reply(400, {"error": "invalid_json"})
             return
+        if session_mode and path == "/auth/v1/cloud-drive/videos/cleanup-room":
+            room = ":".join(str(body.get(key, "")) for key in (
+                "owner_slot", "session_id"))
+            if account != "author" or room != self.server.room_key:
+                self.reply(404, {"error": "not_found"})
+                return
+            self.server.status = "deleted"
+            self.reply(202, {"room_key": room, "deleted": 1})
+            return
         if path == "/auth/v1/cloud-drive/videos/uploads":
             content_type = body.get("content_type")
             if (account != "author" or content_type not in (
                     "video/mp4", "video/quicktime", "image/jpeg", "image/png",
-                    "image/webp", "image/heic") or
+                    "image/webp", "image/heic") and not session_mode or
+                    session_mode and content_type not in (
+                        "video/mp4", "video/quicktime", "image/jpeg", "image/png",
+                        "image/webp", "image/heic", "audio/mp4",
+                        "application/octet-stream") or
                     not isinstance(body.get("size_bytes"), int) or
                     not 0 < body["size_bytes"] <=
                         (20_000_000 if content_type.startswith("image/") else 2_000_000_000)):
@@ -215,9 +239,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.server.size = body["size_bytes"]
                 self.server.name = body["name"]
                 self.server.content_type = body["content_type"]
+                self.server.room_key = ":".join(str(body.get(key, "")) for key in (
+                    "owner_slot", "session_id")) if session_mode else ""
                 self.server.part_bytes.clear()
             self.reply(201, {"video_id": VIDEO_ID, "upload_id": "oss-upload-1",
                 "media_type": self.server.media_type(),
+                "room_key": self.server.room_key,
                 "part_size": PART_SIZE,
                 "parts_total": (body["size_bytes"] + PART_SIZE - 1) // PART_SIZE,
                 "upload_expires_at": "2026-10-31T00:00:00Z"})
@@ -271,6 +298,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "name": name, "size_bytes": size,
                 "content_type": content_type,
                 "media_type": self.server.media_type(),
+                "room_key": self.server.room_key,
                 "created_at": "2026-10-24T00:00:00Z"})
             return
         self.reply(404, {"error": "not_found"})

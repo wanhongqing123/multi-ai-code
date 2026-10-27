@@ -199,6 +199,16 @@ public final class AIAssistantController {
     private String remoteCommandStatus = "";
     private String remoteRestoreDraft = "";
     private int remoteRestoreGeneration;
+    private static final class PendingRemoteFiles {
+        final String session;
+        final java.util.List<ImportedFile> files;
+        PendingRemoteFiles(String session, java.util.List<ImportedFile> files) {
+            this.session = session;
+            this.files = files;
+        }
+    }
+    private final Map<String, PendingRemoteFiles> pendingRemoteFilesById = new HashMap<>();
+    private final Map<String, java.util.List<ImportedFile>> remoteRestoreFiles = new HashMap<>();
     private final Set<String> pendingRemoteCommandIds = new HashSet<>();
     private final Set<String> remoteDeliveryPendingIds = new HashSet<>();
     private final Map<String, String> pendingRemoteDraftById = new HashMap<>();
@@ -340,6 +350,29 @@ public final class AIAssistantController {
             }
         }
         HostToolHandler target = hostToolHandler;
+        if (tool.equals("maichat_session_attachment_open")) {
+            if (Looper.myLooper() == Looper.getMainLooper())
+                return hostToolFailure("会话附件工具不能在 UI 线程执行", "internal");
+            try {
+                JSONObject input = new JSONObject(arguments);
+                String session = input.optString("session_id");
+                String id = input.optString("attachment_id");
+                if (sessionSync == null || !hasLocalSession(session) ||
+                    sessionSync.localLoginSessionId().isEmpty() || id.isEmpty())
+                    return hostToolFailure("本机会话或同步登录状态不可用", "not_found");
+                MaiSessionAttachments.Room room = new MaiSessionAttachments.Room(
+                    sessionSync.localSlot(),sessionSync.localLoginSessionId(),session);
+                MaiSessionAttachments.Downloaded downloaded =
+                    new MaiSessionAttachments(context).download(id,room);
+                ImportedFile file;
+                try { file = importDownloadedSessionFile(downloaded); }
+                finally { downloaded.file.delete(); }
+                JSONObject output = new JSONObject().put("path",file.relativePath)
+                    .put("mime_type",file.mimeType);
+                return new JSONObject().put("ok",true).put("output",output)
+                    .toString().getBytes(StandardCharsets.UTF_8);
+            } catch (Throwable failure) { return hostToolFailure(safeMessage(failure)); }
+        }
         if (target == null)
             return hostToolFailure("MaiChat 宿主工具尚未连接");
 
@@ -910,12 +943,53 @@ public final class AIAssistantController {
                 String operation = action.optString("action");
                 JSONObject request = new JSONObject(action.toString()).put("op", operation)
                     .put("session", sessionId);
+                JSONArray synced = new JSONArray();
                 if (operation.equals("prompt")) {
                     String text = action.optString("text");
-                    if (text.isEmpty() || text.getBytes(StandardCharsets.UTF_8).length > 16 * 1024)
+                    JSONArray attachments = action.optJSONArray("attachments");
+                    if ((text.isEmpty() && (attachments == null || attachments.length() == 0)) ||
+                        text.getBytes(StandardCharsets.UTF_8).length > 16 * 1024 ||
+                        (attachments != null && attachments.length() > 10))
                         throw new IOException("消息为空或过长");
-                    request.put("op", "send").put("images", new JSONArray())
-                        .put("videos", new JSONArray()).put("quoteMessageId", "");
+                    JSONArray images = new JSONArray();
+                    JSONArray videos = new JSONArray();
+                    StringBuilder documents = new StringBuilder();
+                    if (attachments != null && attachments.length() > 0) {
+                        String login = sessionSync == null ? "" :
+                            sessionSync.localLoginSessionId();
+                        if (login.isEmpty()) throw new IOException("会话同步登录状态不可用");
+                        MaiSessionAttachments transfer = new MaiSessionAttachments(context);
+                        MaiSessionAttachments.Room room = new MaiSessionAttachments.Room(
+                            sessionSync.localSlot(),login,sessionId);
+                        for (int i = 0; i < attachments.length(); i++) {
+                            JSONObject reference = attachments.optJSONObject(i);
+                            if (reference == null || reference.optString("attachment_id").isEmpty())
+                                throw new IOException("会话附件引用无效");
+                            MaiSessionAttachments.Downloaded downloaded = transfer.download(
+                                reference.optString("attachment_id"),room);
+                            ImportedFile file;
+                            try { file = importDownloadedSessionFile(downloaded); }
+                            finally { downloaded.file.delete(); }
+                            JSONObject record = new JSONObject()
+                                .put("attachment_id",reference.optString("attachment_id"))
+                                .put("name",downloaded.name)
+                                .put("kind",downloaded.mediaType)
+                                .put("mimeType",downloaded.contentType)
+                                .put("path",file.relativePath);
+                            synced.put(record);
+                            if (file.image) images.put(new JSONObject()
+                                .put("path",file.relativePath).put("mimeType",file.mimeType));
+                            else if (file.mimeType.startsWith("video/"))
+                                videos.put(new JSONObject().put("path",file.relativePath)
+                                    .put("mimeType",file.mimeType));
+                            else documents.append("\n- ").append(file.relativePath);
+                        }
+                    }
+                    if (documents.length() > 0)
+                        text += "\n\n会话附件已保存到本机工作目录：" + documents;
+                    request.put("op", "send").put("text",text)
+                        .put("images", images).put("videos", videos)
+                        .put("quoteMessageId", "");
                 } else if (!operation.equals("stop") && !operation.equals("permission") &&
                     !operation.equals("answer") && !operation.equals("rename")) {
                     throw new IOException("不支持的远端操作");
@@ -932,6 +1006,42 @@ public final class AIAssistantController {
                             JSONObject message = recent.optJSONObject(i);
                             if (message != null && message.optString("role").equals("user")) {
                                 result.put("user_message_id", message.optString("id"));
+                                if (synced.length() > 0 && sessionSync != null) {
+                                    JSONObject decorated = new JSONObject(message.toString());
+                                    JSONArray parts = decorated.optJSONArray("parts");
+                                    if (parts == null) parts = new JSONArray();
+                                    for (int j = 0; j < synced.length(); j++) {
+                                        JSONObject record = synced.getJSONObject(j);
+                                        JSONObject matching = null;
+                                        for (int k = 0; k < parts.length(); k++) {
+                                            JSONObject part = parts.optJSONObject(k);
+                                            if (part != null &&
+                                                record.optString("path").equals(part.optString("path")) &&
+                                                record.optString("kind").equals(part.optString("kind"))) {
+                                                matching = part;
+                                                break;
+                                            }
+                                        }
+                                        if (matching != null) matching
+                                            .put("attachment_id",record.optString("attachment_id"))
+                                            .put("name",record.optString("name"));
+                                        else parts.put(new JSONObject()
+                                            .put("id","session_attachment_" +
+                                                record.optString("attachment_id"))
+                                            .put("kind",record.optString("kind"))
+                                            .put("mimeType",record.optString("mimeType"))
+                                            .put("attachment_id",record.optString("attachment_id"))
+                                            .put("name",record.optString("name")));
+                                    }
+                                    for (int k = 0; k < parts.length(); k++) {
+                                        JSONObject part = parts.optJSONObject(k);
+                                        if (part != null) part.remove("path");
+                                    }
+                                    decorated.put("parts",parts);
+                                    sessionSync.publishAttachedMessage(sessionId,decorated,
+                                        latest.optJSONArray("permissions"),
+                                        latest.optJSONArray("questions"));
+                                }
                                 break;
                             }
                         }
@@ -1228,6 +1338,13 @@ public final class AIAssistantController {
                 JSONObject result = payload.optJSONObject("result");
                 String id = payload.optString("command_id");
                 boolean ok = result != null && result.optBoolean("ok");
+                boolean deliveryPending = remoteDeliveryPendingIds.contains(id);
+                PendingRemoteFiles pendingFiles = pendingRemoteFilesById.remove(id);
+                if (pendingFiles != null) {
+                    if (ok) for (ImportedFile file : pendingFiles.files)
+                        discardComposerMedia(file);
+                    else if (!deliveryPending) restoreRemoteFiles(pendingFiles);
+                }
                 if (remoteDeliveryPendingIds.contains(id)) remoteCommandResultsById.put(id, ok);
                 pendingRemoteCommandIds.remove(id);
                 String draft = pendingRemoteDraftById.remove(id);
@@ -1255,6 +1372,7 @@ public final class AIAssistantController {
                     String kind = part.optString("kind");
                     if (!kind.equals("image") && !kind.equals("video")) continue;
                     part.remove("path");
+                    if (!part.optString("attachment_id").isEmpty()) continue;
                     try {
                         parts.put(new JSONObject().put("id", part.optString("id") + "-remote-placeholder")
                             .put("kind", "text").put("text", kind.equals("image")
@@ -1312,6 +1430,28 @@ public final class AIAssistantController {
     }
 
     private void beginRemoteCommand(String id, String draft) {
+        beginRemoteCommand(id,draft,30000);
+    }
+
+    private void restoreRemoteFiles(PendingRemoteFiles pending) {
+        if (pending == null || pending.files.isEmpty()) return;
+        synchronized (remoteRestoreFiles) {
+            remoteRestoreFiles.computeIfAbsent(pending.session,
+                ignored -> new java.util.ArrayList<>()).addAll(pending.files);
+        }
+        remoteRestoreGeneration++;
+    }
+
+    Map<String, java.util.List<ImportedFile>> consumeRemoteRestoredFiles() {
+        synchronized (remoteRestoreFiles) {
+            Map<String, java.util.List<ImportedFile>> result =
+                new HashMap<>(remoteRestoreFiles);
+            remoteRestoreFiles.clear();
+            return result;
+        }
+    }
+
+    private void beginRemoteCommand(String id, String draft, long timeoutMs) {
         pendingRemoteCommandIds.add(id);
         remoteDeliveryPendingIds.add(id);
         if (draft != null && !draft.isEmpty()) pendingRemoteDraftById.put(id, draft);
@@ -1319,6 +1459,7 @@ public final class AIAssistantController {
         worker.postDelayed(() -> {
             if (!pendingRemoteCommandIds.remove(id)) return;
             String saved = pendingRemoteDraftById.remove(id);
+            restoreRemoteFiles(pendingRemoteFilesById.remove(id));
             settleRemoteOptimistic(id, null);
             if (saved != null) {
                 remoteRestoreDraft = saved;
@@ -1327,7 +1468,7 @@ public final class AIAssistantController {
             if (pendingRemoteCommandIds.isEmpty()) remoteCommandStatus = "";
             error = "所属设备是否执行了操作尚未确定，请先查看会话记录，不要直接重复发送";
             publishState();
-        }, 30000);
+        }, timeoutMs);
     }
 
     private boolean settleRemoteDelivery(String id, String failure) {
@@ -1338,6 +1479,7 @@ public final class AIAssistantController {
         if (!stillPending) return false;
         if (failure.isEmpty()) return true;
         pendingRemoteCommandIds.remove(id);
+        pendingRemoteFilesById.remove(id);
         pendingRemoteDraftById.remove(id);
         settleRemoteOptimistic(id, null);
         if (pendingRemoteCommandIds.isEmpty()) remoteCommandStatus = "";
@@ -1504,9 +1646,9 @@ public final class AIAssistantController {
                     return;
                 }
                 if (sessionSync == null || !selectedRemote.optBoolean("online") ||
-                    !intendedAttachments.isEmpty() || !quotedMessageId.isEmpty() ||
-                    text.trim().isEmpty()) {
-                    error = "远端设备离线，或消息包含暂不支持的附件/引用";
+                    !quotedMessageId.isEmpty() ||
+                    (text.trim().isEmpty() && intendedAttachments.isEmpty())) {
+                    error = "远端设备离线，或消息包含暂不支持的引用";
                     publishState();
                     main.post(() -> completion.accept(false));
                     return;
@@ -1515,7 +1657,27 @@ public final class AIAssistantController {
                 String temporaryId = "msg_z_pending_" + UUID.randomUUID();
                 try {
                     JSONObject request = new JSONObject().put("action", "prompt").put("text", text);
-                    appendRemoteOptimistic(temporaryId, text);
+                    if (!intendedAttachments.isEmpty()) {
+                        MaiSessionAttachments transfer = new MaiSessionAttachments(context);
+                        MaiSessionAttachments.Room room = new MaiSessionAttachments.Room(
+                            destination.optString("device_slot"),
+                            destination.optString("login_session_id"),
+                            destination.optString("id"));
+                        JSONArray references = new JSONArray();
+                        remoteCommandStatus = "正在上传会话附件…";
+                        publishState();
+                        for (ImportedFile attachment : intendedAttachments) {
+                            File file = workspaceFile(attachment.relativePath);
+                            if (file == null || !file.isFile())
+                                throw new IOException("附件文件已丢失，请重新选择");
+                            JSONObject receipt = transfer.upload(file,attachment.displayName,room);
+                            references.put(new JSONObject().put("attachment_id",
+                                receipt.getString("attachment_id")));
+                        }
+                        request.put("attachments",references);
+                    }
+                    appendRemoteOptimistic(temporaryId,text.isEmpty()
+                        ? "已发送" + intendedAttachments.size() + "个附件" : text);
                     String id = sessionSync.sendToRemote(destination, "command", request,
                         (messageId, failure) -> {
                         worker.post(() -> {
@@ -1534,9 +1696,14 @@ public final class AIAssistantController {
                         });
                     });
                     remoteOptimisticByCommandId.put(id, temporaryId);
-                    beginRemoteCommand(id, text);
+                    if (!intendedAttachments.isEmpty())
+                        pendingRemoteFilesById.put(id,
+                            new PendingRemoteFiles(intendedSession,intendedAttachments));
+                    beginRemoteCommand(id, text,
+                        intendedAttachments.isEmpty() ? 30000 : 2L * 60 * 60 * 1000);
                     publishState();
                 } catch (Exception failure) {
+                    remoteCommandStatus = "";
                     JSONArray current = remoteData.optJSONArray("messages");
                     if (current != null) {
                         JSONArray kept = new JSONArray();
@@ -1798,6 +1965,80 @@ public final class AIAssistantController {
         });
     }
 
+    void importSessionFile(Uri uri, Consumer<ImportedFile> completion) {
+        worker.post(() -> {
+            ImportedFile imported = null;
+            try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IOException("无法读取会话附件");
+                imported = copySessionFile(input,
+                    sourceDisplayName(uri, uri.getLastPathSegment()));
+            } catch (Exception failure) {
+                error = safeMessage(failure);
+                publishState();
+            }
+            ImportedFile result = imported;
+            main.post(() -> completion.accept(result));
+        });
+    }
+
+    private ImportedFile copySessionFile(InputStream input, String name) throws Exception {
+        if (root == null) throw new IOException("AI 工作区尚未准备好");
+        MaiCloudDrive.MediaInfo info = MaiSessionAttachments.mediaInfo(name);
+        if (info == null) throw new IOException("会话附件文件名或格式无效");
+        String relative = "ses-" + UUID.randomUUID().toString().substring(0,8) + "-" + name;
+        File target = new File(new File(root,"Workspace"),relative);
+        try (FileOutputStream output = new FileOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            long copied = 0;
+            int count;
+            while ((count = input.read(buffer)) >= 0) {
+                copied += count;
+                if (copied > info.maxBytes) throw new IOException("会话附件超过大小限制");
+                output.write(buffer,0,count);
+            }
+            if (copied == 0) throw new IOException("会话附件为空");
+        } catch (Exception failure) {
+            target.delete();
+            throw failure;
+        }
+        return new ImportedFile(relative,info.contentType,
+            "image".equals(info.mediaType),name);
+    }
+
+    private ImportedFile importDownloadedSessionFile(
+        MaiSessionAttachments.Downloaded downloaded) throws Exception {
+        try (InputStream input = new java.io.FileInputStream(downloaded.file)) {
+            return "image".equals(downloaded.mediaType)
+                ? importStream(input,downloaded.contentType,downloaded.name)
+                : copySessionFile(input,downloaded.name);
+        }
+    }
+
+    void downloadRemoteAttachment(JSONObject part,
+                                  Consumer<MaiSessionAttachments.Downloaded> completion) {
+        worker.post(() -> {
+            MaiSessionAttachments.Downloaded value = null;
+            try {
+                JSONObject remote = selectedRemote;
+                String id = part == null ? "" : part.optString("attachment_id");
+                if (remote == null || id.isEmpty()) throw new IOException("会话附件已不可用");
+                MaiSessionAttachments.Room room = new MaiSessionAttachments.Room(
+                    remote.optString("device_slot"),remote.optString("login_session_id"),
+                    remote.optString("id"));
+                value = new MaiSessionAttachments(context).download(id,room);
+                if (!sameRemote(remote,selectedRemote)) {
+                    value.file.delete();
+                    throw new IOException("会话已切换");
+                }
+            } catch (Exception failure) {
+                error = safeMessage(failure);
+                publishState();
+            }
+            MaiSessionAttachments.Downloaded result = value;
+            main.post(() -> completion.accept(result));
+        });
+    }
+
     // 相册输入在工作线程导入；图片转换为模型支持的格式，视频保留原件供 Agent 读取。
     void importComposerMedia(Uri uri, Consumer<ImportedFile> completion) {
         worker.post(() -> {
@@ -1916,7 +2157,7 @@ public final class AIAssistantController {
                 if (source != null) source.delete();
             }
             if (imported != null)
-                imported = new ImportedFile(imported.relativePath, imported.mimeType, true, "拍摄照片");
+                imported = new ImportedFile(imported.relativePath, imported.mimeType, true, "拍摄照片.jpg");
             ImportedFile result = imported;
             main.post(() -> completion.accept(result));
         });
@@ -1973,7 +2214,7 @@ public final class AIAssistantController {
             String path = file.relativePath;
             if (root == null || path == null || path.contains("/") || path.contains("\\")
                 || !(path.startsWith("image-") || path.startsWith("gallery-")
-                    || path.startsWith("import-"))) return;
+                    || path.startsWith("import-") || path.startsWith("ses-"))) return;
             File workspace = new File(root, "Workspace");
             File candidate = new File(workspace, path);
             try {

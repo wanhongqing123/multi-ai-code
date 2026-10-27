@@ -33,7 +33,7 @@ int main() {
                                    lastArguments = arguments;
                                    return MaiToolResult::success("{\"ok\":true}");
                                });
-    require(tools.specs().size() == 8, "cloud tool count changed");
+    require(tools.specs().size() == 9, "cloud tool count changed");
     for (const auto& spec : tools.specs()) {
         require(nlohmann::json::parse(spec.parametersJson, nullptr, false).is_object(),
                 "cloud tool schema is invalid JSON");
@@ -102,6 +102,21 @@ int main() {
                 "123e4567-e89b-42d3-a456-426614174000", "pause ID was not normalized");
     require(!abort->execute(R"({"task_id":"123e4567-e89b-42d3-a456-426614174000"})", context)
                  .hasError(), "valid abort ID was rejected");
+    MaiTool* attachment = tools.findForModel("maichat_session_attachment_open");
+    require(attachment != nullptr && !attachment->requiresApproval("{}"),
+            "Session attachment open tool is unavailable");
+    require(attachment->execute(R"({"attachment_id":"123e4567-e89b-42d3-a456-426614174000"})",
+                                context).hasError(),
+            "Session attachment tool accepted a missing current Session");
+    context.sessionId = "ses_local";
+    require(!attachment->execute(R"({"attachment_id":"123E4567-E89B-42D3-A456-426614174000"})",
+                                 context).hasError(),
+            "valid Session attachment was rejected");
+    require(lastName == attachment->name() &&
+            nlohmann::json::parse(lastArguments)["attachment_id"] ==
+                "123e4567-e89b-42d3-a456-426614174000" &&
+            nlohmann::json::parse(lastArguments)["session_id"] == "ses_local",
+            "Session attachment tool did not bind the current Session");
     MaiFileSystem::removeRecursively(directory);
     std::cout << "cloud drive Agent tool contract PASS\n";
 }

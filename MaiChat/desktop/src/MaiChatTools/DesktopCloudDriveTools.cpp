@@ -461,7 +461,8 @@ MaiToolResult queueUpload(const DesktopVideoCircleAccess& access, const QString&
 void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<DesktopVideoCircleAccess()> accessProvider,
                                     QObject* presenter,
                                     std::function<bool(const QString&, bool isImage,
-                                                       std::shared_ptr<MaiCloudVod>)> openMedia) {
+                                                       std::shared_ptr<MaiCloudVod>)> openMedia,
+                                    std::function<DesktopSessionRoom(const QString&)> roomProvider) {
     QPointer<QObject> target(presenter);
     auto transfers = std::make_shared<ActiveTransfers>();
     if (presenter) {
@@ -478,11 +479,50 @@ void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<Des
     }
     registerMaiCloudDriveTools(
         registry,
-        [provider = std::move(accessProvider), target, open = std::move(openMedia), transfers](
+        [provider = std::move(accessProvider), target, open = std::move(openMedia),
+         roomProvider = std::move(roomProvider), transfers](
             const std::string& name, const std::string& argumentsJson, const MaiToolContext& context) -> MaiToolResult {
             const DesktopVideoCircleAccess access = provider ? provider() : DesktopVideoCircleAccess{};
             if (!access.isValid() || target.isNull())
                 return failure(MaiErrorCode::NotConfigured, "sign in to MaiChat to use the private cloud drive");
+            if (name == "maichat_session_attachment_open") {
+                const QJsonObject args = parseObject(argumentsJson);
+                const QString session = args.value(QStringLiteral("session_id")).toString();
+                const QString id = args.value(QStringLiteral("attachment_id")).toString();
+                if (!roomProvider || session != QString::fromStdString(context.sessionId) ||
+                    context.root.empty())
+                    return failure(MaiErrorCode::InvalidInput,
+                        "Session attachment must belong to the current workspace");
+                const DesktopSessionRoom room = roomProvider(session);
+                if (room.login.isEmpty())
+                    return failure(MaiErrorCode::NotConfigured,
+                        "Session sync login is unavailable");
+                const auto downloaded = DesktopSessionAttachments::download(access, room, id);
+                if (!downloaded.ok())
+                    return failure(MaiErrorCode::Network,
+                        downloaded.error.toUtf8().toStdString().c_str());
+                const QString root = QString::fromStdString(context.root);
+                const QString relative = QStringLiteral(".maichat/session-attachments/") +
+                    QUuid::createUuid().toString(QUuid::WithoutBraces).left(8) +
+                    QLatin1Char('-') +
+                    downloaded.metadata.value(QStringLiteral("name")).toString();
+                const QString destination = QDir(root).filePath(relative);
+                if (!QDir().mkpath(QFileInfo(destination).absolutePath()) ||
+                    !QFile::copy(downloaded.path, destination) ||
+                    context.resolvePath(relative.toUtf8().toStdString()).empty()) {
+                    QFile::remove(destination);
+                    QFile::remove(downloaded.path);
+                    return failure(MaiErrorCode::Internal,
+                        "could not retain the Session attachment in the workspace");
+                }
+                QFile::remove(downloaded.path);
+                const QJsonObject output{
+                    {QStringLiteral("path"), relative},
+                    {QStringLiteral("mime_type"),
+                     downloaded.metadata.value(QStringLiteral("content_type"))}};
+                return MaiToolResult::success(
+                    QJsonDocument(output).toJson(QJsonDocument::Compact).toStdString());
+            }
             Operation operation(access, provider, context);
             if (!operation.cancel || !operation.downloadCancel)
                 return failure(MaiErrorCode::Internal, "could not start cloud drive operation");

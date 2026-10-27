@@ -128,6 +128,27 @@ test('image uploads and thumbnails use fixed private OSS processing parameters',
     queries:{ 'x-oss-process':'video/snapshot,t_0,f_jpg,w_320,ar_auto' } }]);
 });
 
+test('Session files use the private bucket with a separate key and safe download MIME', async () => {
+  const key = 'session-attachments/account_a/2026-10-27/' +
+    '123e4567-e89b-42d3-a456-426614174002.pdf';
+  const seen = [];
+  const handler = createHandler({ env:ENV,makeClient:() => ({
+    initMultipartUpload:async (object,options) => {
+      seen.push([object,options.mime]); return { uploadId:'session_upload' };
+    },
+    signatureUrlV4:async () => 'https://private-test-bucket.oss-cn-hangzhou.aliyuncs.com/signed'
+  }) });
+  assert.equal((await call(handler,'init',{ object_key:key,
+    content_type:'application/octet-stream' })).statusCode,200);
+  assert.deepEqual(seen,[[key,'application/octet-stream']]);
+  assert.equal((await call(handler,'read',{ object_key:key })).statusCode,200);
+  assert.equal((await call(handler,'thumbnail',{ object_key:key })).statusCode,400);
+  assert.equal((await call(handler,'init',{ object_key:key,account_id:'account_b',
+    content_type:'application/octet-stream' })).statusCode,400);
+  assert.equal((await call(handler,'init',{ object_key:KEY.replace('.mov','.pdf'),
+    content_type:'application/octet-stream' })).statusCode,400);
+});
+
 test('real ali-oss V4 thumbnail URL signs its processing query', async () => {
   const handler = createHandler({ env:ENV });
   const image = KEY.replace(/\.mov$/,'.jpg');

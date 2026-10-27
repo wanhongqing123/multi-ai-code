@@ -76,6 +76,27 @@ OSS 事实；核对成功可直接删除元数据，不重新占用用户容量�
 | `GET /v1/cloud-drive/videos/{id}/thumbnail-link` | 只向所有者签发 60 秒私有 OSS 缩图或第 0 毫秒视频截帧 URL；返回 `thumbnail_url`、`thumbnail_expires_in`、`content_type: image/jpeg` |
 | `DELETE /v1/cloud-drive/videos/{id}` | 删除本人文件；失败返回 202 并重试 |
 
+### 创作中心会话附件
+
+`/v1/session-attachments` 复用上表的 Multipart 上传、分片签名、完成、
+`{id}/play-link` 与单件删除协议，要求相同账号 Bearer。上传初始化另带
+`owner_slot`、`owner_login_session_id`、`session_id`；数据库单独保存
+`session_attachments`，OSS 键固定在 `session-attachments/<账号>/`。个人云盘
+列表和配额不包含这些附件。会话空间默认每账号 10 GB，可用
+`MAICHAT_SESSION_ATTACHMENT_QUOTA_BYTES` 调整；单图片 20 MB，单视频、音频和
+普通文件 2 GB。除原云盘图片／视频格式外，还支持 GIF、MP3、M4A、AAC、WAV、
+FLAC、OGG；其他安全后缀文件以 `application/octet-stream` 保存。
+
+跨设备同步只传持久的 `attachment_id`，签名读取 URL 按需重新签发 60 秒；
+所属设备下载到自己的工作目录后由本机 Agent 处理。登录账号和会话归属均需
+核对，绝对本机路径与媒体字节不进入同步服务。删除会话后，所属设备调用
+`POST /v1/session-attachments/cleanup-room` 标记该房间的附件，后台按现有清理
+队列删除 OSS 对象。账号注销会清理两套空间，未核实附件对象消失前不能完成注销。
+
+上线顺序：先扩展云盘 RAM 策略到 `session-attachments/` 并为该前缀配置 8 天
+未完成 Multipart 自动中止，再部署素材签名服务、账号服务和 Session 同步服务；
+最后发布三端客户端。现有云盘 OSS 私有桶与模型直连路径保持原样。
+
 缩略图由 OSS 按需处理，处理参数纳入 V4 签名，不在账号服务保存或转发媒体字节。
 图片缩图源文件上限为 20 MB；视频截帧仅支持 H.264/H.265，其他编码应显示占位图。
 视频截帧按调用计费，客户端应只为可见文件请求并复用未到期链接。

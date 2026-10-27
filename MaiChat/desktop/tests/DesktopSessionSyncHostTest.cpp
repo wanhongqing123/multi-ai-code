@@ -2,6 +2,7 @@
 #include <QJsonArray>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -33,6 +34,7 @@ class DesktopSessionSyncHostTest : public QObject {
 
 private slots:
     void appliesRemotePromptToTheExistingLocalSession();
+    void resolvedSessionFileStaysInsideItsOwnerWorkspace();
     void omitsLocalMediaPathsFromRemoteHistory();
     void coordinatorRoutesPhoneCommandToTheExistingDesktopSession();
     void coordinatorPublishesLocalMessagesToSharedRoom();
@@ -40,6 +42,7 @@ private slots:
     void coordinatorDeletesRoomWhenLocalSessionIsRemoved();
     void coordinatorReadsRemoteHistoryWithVerifiedChunks();
     void remotePanelShowsHistoryAndRoutesTextToOwner();
+    void remotePanelRoutesAttachmentLinkToVerifiedDownload();
     void remotePanelDoesNotRepeatPendingHistory();
     void remotePanelReconcilesAfterReconnect();
     void remotePanelKeepsOwnPromptWhenRoomBroadcastsCanonicalMessage();
@@ -507,6 +510,53 @@ void DesktopSessionSyncHostTest::appliesRemotePromptToTheExistingLocalSession() 
     QCOMPARE(host.historyPage(QStringLiteral("ses_missing"), {}, 20).value(QStringLiteral("ok")).toBool(), false);
 }
 
+void DesktopSessionSyncHostTest::resolvedSessionFileStaysInsideItsOwnerWorkspace() {
+    QTemporaryDir workspace;
+    QTemporaryDir outside;
+    QVERIFY(workspace.isValid());
+    QVERIFY(outside.isValid());
+    AgentController controller(AgentController::ModelConfig{}, {});
+    const QString sessionId = controller.createSession(workspace.path());
+    QVERIFY(!sessionId.isEmpty());
+    DesktopSessionSyncHost host(controller);
+    const QString folder = QDir(workspace.path()).filePath(
+        QStringLiteral(".maichat/session-attachments"));
+    QVERIFY(QDir().mkpath(folder));
+    const QString path = QDir(folder).filePath(QStringLiteral("report.txt"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("session attachment"), qint64(18));
+    file.close();
+    const QJsonObject valid{{QStringLiteral("action"), QStringLiteral("prompt")},
+        {QStringLiteral("text"), QString()},
+        {QStringLiteral("resolved_attachments"), QJsonArray{QJsonObject{
+            {QStringLiteral("path"), path},
+            {QStringLiteral("kind"), QStringLiteral("file")}}}}};
+    const QJsonObject accepted = host.applyCommand(sessionId, valid);
+    QVERIFY2(accepted.value(QStringLiteral("ok")).toBool(),
+             qPrintable(accepted.value(QStringLiteral("error")).toString()));
+    const QJsonArray history = host.historyPage(sessionId, {}, 2)
+        .value(QStringLiteral("messages")).toArray();
+    QVERIFY(!history.isEmpty());
+    bool found = false;
+    for (const QJsonValue& value : history) {
+        for (const QJsonValue& part : value.toObject().value(QStringLiteral("parts")).toArray())
+            found |= part.toObject().value(QStringLiteral("text")).toString()
+                .contains(QStringLiteral(".maichat/session-attachments/report.txt"));
+    }
+    QVERIFY(found);
+    QFile foreign(QDir(outside.path()).filePath(QStringLiteral("private.txt")));
+    QVERIFY(foreign.open(QIODevice::WriteOnly));
+    foreign.write("private");
+    foreign.close();
+    QJsonObject invalid = valid;
+    invalid.insert(QStringLiteral("resolved_attachments"), QJsonArray{QJsonObject{
+        {QStringLiteral("path"), foreign.fileName()},
+        {QStringLiteral("kind"), QStringLiteral("file")}}});
+    QCOMPARE(host.applyCommand(sessionId, invalid).value(QStringLiteral("error")).toString(),
+             QStringLiteral("会话附件路径无效"));
+}
+
 void DesktopSessionSyncHostTest::omitsLocalMediaPathsFromRemoteHistory() {
     AgentController::ModelConfig model;
     AgentController controller(model, {});
@@ -820,7 +870,7 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     QCOMPARE(send->parentWidget(), composer);
     QVERIFY(!send->icon().isNull());
     auto* attachment = panel.findChild<QPushButton*>(QStringLiteral("remoteAgentAttachButton"));
-    QVERIFY(attachment && !attachment->isEnabled());
+    QVERIFY(attachment && attachment->isEnabled());
     QTest::mouseClick(send, Qt::LeftButton);
     QCOMPARE(sent.value(QStringLiteral("action")).toString(), QStringLiteral("prompt"));
     QCOMPARE(sent.value(QStringLiteral("text")).toString(), QStringLiteral("继续本机任务"));
@@ -883,6 +933,43 @@ void DesktopSessionSyncHostTest::remotePanelShowsHistoryAndRoutesTextToOwner() {
     QCOMPARE(composer->toPlainText(), QString());
     if (qEnvironmentVariableIsSet("MAICHAT_REMOTE_PANEL_SCREENSHOT"))
         QVERIFY(panel.grab().save(qEnvironmentVariable("MAICHAT_REMOTE_PANEL_SCREENSHOT")));
+}
+
+void DesktopSessionSyncHostTest::remotePanelRoutesAttachmentLinkToVerifiedDownload() {
+    RemoteAgentPanel panel;
+    const QString id = QStringLiteral("123e4567-e89b-42d3-a456-426614174000");
+    const QJsonObject remote{{QStringLiteral("id"), QStringLiteral("ses_remote")},
+                             {QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
+                             {QStringLiteral("login_session_id"), QStringLiteral("login_phone")},
+                             {QStringLiteral("online"), true}};
+    panel.setHistoryHandler([&](const QJsonObject&, const QString&, int,
+                                RemoteAgentPanel::Completion completion) {
+        panel.receivePayload(remote, QStringLiteral("history_page"),
+            {{QStringLiteral("ok"), true},
+             {QStringLiteral("messages"), QJsonArray{QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("msg_attached")},
+                 {QStringLiteral("role"), QStringLiteral("user")},
+                 {QStringLiteral("parts"), QJsonArray{QJsonObject{
+                     {QStringLiteral("kind"), QStringLiteral("file")},
+                     {QStringLiteral("attachment_id"), id},
+                     {QStringLiteral("name"), QStringLiteral("notes.pdf")}}}}}}}});
+        completion({});
+    });
+    QString requested;
+    panel.setDownloadHandler([&](const QJsonObject&, const QString& attachment,
+                                 RemoteAgentPanel::DownloadCompletion completion) {
+        requested = attachment;
+        completion({}, QStringLiteral("隔离测试无下载文件"));
+    });
+    panel.show();
+    panel.openSession(remote);
+    auto* view = panel.findChild<MarkdownView*>();
+    QVERIFY(view && view->contains(QStringLiteral("msg_attached")));
+    QVERIFY(QMetaObject::invokeMethod(view, "linkActivated", Qt::DirectConnection,
+                                      Q_ARG(QString, QStringLiteral("maichat-attachment:") + id)));
+    QCOMPARE(requested, id);
+    auto* status = panel.findChild<QLabel*>(QStringLiteral("remoteAgentStatus"));
+    QVERIFY(status && status->text().contains(QStringLiteral("隔离测试")));
 }
 
 void DesktopSessionSyncHostTest::remotePanelDoesNotRepeatPendingHistory() {

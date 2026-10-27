@@ -46,6 +46,19 @@ JPEG，视频取第 0 毫秒画面。媒体字节不经本进程。OSS 视频截
 不向 App 开放桶内列表。账号服务用它核对删除后的未完成分片；分页或 OSS
 核验失败时保留待清理记录，不能释放容量。
 
+创作中心会话附件使用同一个私有桶与上述签名接口，但对象键位于独立的
+`session-attachments/<账号>/YYYY-MM-DD/<UUID>.<后缀>`。原私人云盘只列出
+`cloud-drive/`。会话附件可签发图片、视频、音频及普通文件的私有读写 URL，
+普通文件固定为 `application/octet-stream`，不开放 OSS 公共读或列桶权限。
+上线前以 `scripts/upgrade-session-attachment-ram.py` 只读核对现有 RAM 策略；
+使用 `--apply` 才会新增默认策略版本，并且脚本只接受仓库记录的旧策略原文。
+随后为 `session-attachments/` 增加未完成 Multipart Upload 8 天自动终止规则，
+可用 `node scripts/upgrade-session-attachment-lifecycle.js
+--confirm-bucket=maichat-private-cloud-drive-gz-20261025-f346b709` 只读预检，
+在可信 ECS 管理员身份及临时管理员 OSS 凭据下增加 `--apply` 执行；脚本会
+保留既有规则并在规则发生变化时停止，执行后重新读取确认。
+再用隔离账号验证真实 OSS 的小文件上传、下载、删除与账号清理。
+
 云盘只读取 `MAICHAT_CLOUD_DRIVE_OSS_BUCKET`、`MAICHAT_CLOUD_DRIVE_OSS_REGION`、
 `MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_ID` 和
 `MAICHAT_CLOUD_DRIVE_OSS_ACCESS_KEY_SECRET`，不回退到素材桶或素材 RAM 凭据。

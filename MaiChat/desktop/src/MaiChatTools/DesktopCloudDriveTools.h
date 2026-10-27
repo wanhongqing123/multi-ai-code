@@ -6,6 +6,7 @@
 #include <QString>
 
 #include "auth/DesktopVideoCircleAccess.h"
+#include "agent/DesktopSessionAttachments.h"
 
 class MaiToolRegistry;
 class QObject;
@@ -17,4 +18,5 @@ struct MaiCloudVod;
 void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<DesktopVideoCircleAccess()> accessProvider,
                                     QObject* presenter,
                                     std::function<bool(const QString&, bool isImage,
-                                                       std::shared_ptr<MaiCloudVod>)> openMedia);
+                                                       std::shared_ptr<MaiCloudVod>)> openMedia,
+                                    std::function<DesktopSessionRoom(const QString&)> roomProvider = {});

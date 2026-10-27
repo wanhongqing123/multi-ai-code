@@ -217,6 +217,18 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "maichat_session_attachment_open":
+            let id = Self.string(arguments, key: "attachment_id")
+            let session = Self.string(arguments, key: "session_id")
+            guard !id.isEmpty, !session.isEmpty else {
+                return .failure(code: "invalid_input", message: "attachment_id and session_id are required")
+            }
+            do {
+                let file = try await AIAssistantModel.shared
+                    .openLocalSessionAttachmentForAgent(id: id, sessionID: session)
+                return Self.jsonSuccess(["path": file.relativePath,
+                                         "mime_type": file.mimeType])
+            } catch { return Self.cloudDriveFailure(error) }
         case "maichat_cloud_drive_list_media":
             do {
                 let cursor = Self.string(arguments, key: "before")

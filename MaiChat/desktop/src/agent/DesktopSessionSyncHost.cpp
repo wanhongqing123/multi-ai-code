@@ -169,8 +169,43 @@ QJsonObject DesktopSessionSyncHost::applyCommand(const QString& sessionId, const
         return failure(QStringLiteral("会话不存在"));
     if (action == QStringLiteral("prompt")) {
         const QString message = payload.value(QStringLiteral("text")).toString();
-        if (message.isEmpty() || message.toUtf8().size() > 16 * 1024) return failure(QStringLiteral("消息为空或过长"));
-        if (!controller_.sendPrompt(sessionId, message)) return failure(controller_.lastError());
+        const QJsonArray attachments = payload.value(QStringLiteral("resolved_attachments")).toArray();
+        if ((message.isEmpty() && attachments.isEmpty()) || message.toUtf8().size() > 16 * 1024 ||
+            attachments.size() > 10) return failure(QStringLiteral("消息为空或过长"));
+        QStringList images;
+        QStringList videos;
+        QStringList documents;
+        const QString root = QFileInfo(QString::fromUtf8(session.directory.c_str()))
+            .canonicalFilePath();
+        const QString attachmentRoot = QDir(root).filePath(
+            QStringLiteral(".maichat/session-attachments")) + QDir::separator();
+        for (const QJsonValue& value : attachments) {
+            const QJsonObject item = value.toObject();
+            const QString path = QFileInfo(item.value(QStringLiteral("path")).toString())
+                .canonicalFilePath();
+            if (root.isEmpty() || path.isEmpty() || !path.startsWith(attachmentRoot) ||
+                !QFileInfo(path).isFile())
+                return failure(QStringLiteral("会话附件路径无效"));
+            const QString kind = item.value(QStringLiteral("kind")).toString();
+            const QString mime = item.value(QStringLiteral("content_type")).toString();
+            if (kind == QStringLiteral("image") &&
+                (mime == QStringLiteral("image/jpeg") ||
+                 mime == QStringLiteral("image/png") ||
+                 mime == QStringLiteral("image/webp") ||
+                 mime == QStringLiteral("image/gif"))) images.append(path);
+            else if (kind == QStringLiteral("image"))
+                documents.append(QDir(root).relativeFilePath(path));
+            else if (kind == QStringLiteral("video")) videos.append(path);
+            else if (kind == QStringLiteral("audio") || kind == QStringLiteral("file"))
+                documents.append(QDir(root).relativeFilePath(path));
+            else return failure(QStringLiteral("会话附件类型无效"));
+        }
+        QString prompt = message;
+        if (!documents.isEmpty())
+            prompt += QStringLiteral("\n\n会话附件已保存到本机工作目录：\n- ") +
+                      documents.join(QStringLiteral("\n- "));
+        if (!controller_.sendPrompt(sessionId, prompt, images, videos, {}))
+            return failure(controller_.lastError());
         const QJsonArray recent = historyPage(sessionId, {}, 2).value(QStringLiteral("messages")).toArray();
         for (const QJsonValue& value : recent) {
             const QJsonObject candidate = value.toObject();

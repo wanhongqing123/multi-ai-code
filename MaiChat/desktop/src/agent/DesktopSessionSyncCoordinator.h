@@ -16,8 +16,11 @@
 #include <functional>
 #include <memory>
 
+#include "auth/DesktopVideoCircleAccess.h"
+
 class AgentController;
 class DesktopSessionSyncHost;
+struct DesktopSessionRoom;
 
 class DesktopSessionSyncCoordinator final : public QObject {
 public:
@@ -27,6 +30,7 @@ public:
     using CatalogHandler = std::function<void(const QJsonArray&)>;
     using DeviceHandler = std::function<void(const QJsonArray&)>;
     using PayloadHandler = std::function<void(const QJsonObject&, const QString&, const QJsonObject&)>;
+    using AttachmentAccessProvider = std::function<DesktopVideoCircleAccess()>;
 
     DesktopSessionSyncCoordinator(Requester requester, AgentProvider agent, QObject* parent = nullptr,
                                   QString deviceId = {}, QString deviceName = {});
@@ -41,12 +45,14 @@ public:
     void setCatalogHandler(CatalogHandler handler);
     void setDeviceHandler(DeviceHandler handler);
     void setPayloadHandler(PayloadHandler handler);
+    void setAttachmentAccessProvider(AttachmentAccessProvider provider);
     void requestRemoteHistory(const QJsonObject& session, const QString& before, int limit, Completion completion);
     void sendRemoteCommand(const QJsonObject& session, const QJsonObject& payload, Completion completion);
     void sendRemoteLifecycle(const QJsonObject& device, const QJsonObject& payload, Completion completion);
     void setDefaultWorkspaceDirectory(const QString& directory);
     QJsonArray remoteDevices() const { return remoteDevices_; }
     QJsonArray remoteSessions() const { return remoteSessions_; }
+    DesktopSessionRoom localRoom(const QString& sessionId) const;
 
 private:
     struct Outgoing {
@@ -76,6 +82,10 @@ private:
     DesktopSessionSyncHost* host();
     void publishPresence();
     void handleEnvelope(const QJsonObject& envelope);
+    void respondToCommand(const QJsonObject& envelope, QJsonObject result);
+    void startAttachmentCommand(const QJsonObject& envelope);
+    void publishAttachmentHistory(const QJsonObject& body, int attempts);
+    void finishDeletedRoom(const QString& sessionId);
     void acknowledge(int id);
     void handleRemoteChunk(const QJsonObject& envelope);
     QJsonObject matchingRemote(const QString& slot, const QString& login, const QString& session) const;
@@ -97,8 +107,10 @@ private:
     QTimer backfillTimer_;
     QString deviceId_;
     QString deviceName_;
+    QString localLoginSession_;
     QSet<QString> pendingSnapshotSessions_;
     QSet<QString> initiallyPublishedSessions_;
+    QSet<QString> pendingAttachmentCleanupRooms_;
     QQueue<QString> backfillSessions_;
     QHash<QString, QString> backfillBefore_;
     QHash<QString, QByteArray> publishedMessageDigests_;
@@ -113,6 +125,7 @@ private:
     CatalogHandler catalogHandler_;
     DeviceHandler deviceHandler_;
     PayloadHandler payloadHandler_;
+    AttachmentAccessProvider attachmentAccessProvider_;
     QQueue<Outgoing> outbound_;
     bool started_ = false;
     bool sending_ = false;

@@ -1,6 +1,7 @@
 // Private cloud-drive transport. The portable C++ core owns HTTP, multipart
 // upload, checkpoints and file download; this file supplies iOS account access.
 import Foundation
+import CryptoKit
 
 struct MaiCloudDriveVideo: Decodable, Identifiable, Sendable {
     let id: String
@@ -199,6 +200,78 @@ private let maiCloudDriveProgress: MaiCloudDriveProgress = { uploaded, total, co
 struct MaiCloudDriveClient: Sendable {
     static let shared = MaiCloudDriveClient()
 
+    struct SessionRoom: Sendable {
+        let ownerSlot: String
+        let ownerLoginSessionID: String
+        let sessionID: String
+
+        var key: String { "\(ownerSlot):\(sessionID)" }
+    }
+
+    private struct SessionAttachmentLink: Decodable {
+        let readUrl: String
+        let sizeBytes: UInt64
+        let contentType: String
+        let mediaType: String
+        let name: String
+        let roomKey: String
+    }
+
+    struct SessionAttachmentReceipt: Decodable, Sendable {
+        let attachmentId: String
+        let roomKey: String
+        let name: String
+        let sizeBytes: UInt64
+        let contentType: String
+        let mediaType: String
+    }
+
+    struct DownloadedSessionAttachment: Sendable {
+        let fileURL: URL
+        let name: String
+        let contentType: String
+        let mediaType: String
+    }
+
+    func uploadSessionAttachment(fileURL: URL, displayName: String,
+                                 room: SessionRoom)
+        async throws -> SessionAttachmentReceipt {
+        let name = displayName
+        var info = MaiCloudDriveMediaInfo()
+        guard name.withCString({ mai_session_attachment_media_info($0, &info) != 0 }),
+              let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, UInt64(size) <= info.max_size_bytes,
+              let cancel = MaiCloudDriveCancelToken() else {
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "会话附件格式或大小无效")
+        }
+        let key = SHA256.hash(data: Data((room.key + ":" + fileURL.path).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                 in: .userDomainMask)[0]
+            .appendingPathComponent("MaiSessionAttachmentUploads", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        let checkpoint = directory.appendingPathComponent(key + ".maicloud.json")
+        let task = MaiCloudDriveLocalTask(id: key, accountID: "", name: name,
+            contentType: String(cString: info.content_type_utf8),
+            sizeBytes: UInt64(size), sourceID: fileURL.path,
+            sourcePath: fileURL.path, bookmark: nil, ownsSource: false,
+            createdAt: Date())
+        let data = try await upload(source: task, checkpointURL: checkpoint,
+                                    cancel: cancel, room: room, progress: { _, _ in })
+        let receipt = try decode(SessionAttachmentReceipt.self, from: data)
+        guard receipt.roomKey == room.key,
+              receipt.name == name,
+              receipt.contentType == task.contentType,
+              receipt.mediaType == String(cString: info.media_type_utf8),
+              receipt.sizeBytes == task.sizeBytes else {
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "会话附件上传回执不匹配")
+        }
+        return receipt
+    }
+
     private static func contentInfo(_ contentType: String)
         -> (extensionName: String, isImage: Bool, maxBytes: UInt64)? {
         switch contentType {
@@ -300,6 +373,41 @@ struct MaiCloudDriveClient: Sendable {
         try decode(MaiCloudDrivePlayLink.self,
                    from: await request(action: MAI_CLOUD_DRIVE_PLAY_LINK,
                                        payload: ["video_id": videoID])).readUrl
+    }
+
+    func downloadSessionAttachment(id: String, room: SessionRoom)
+        async throws -> DownloadedSessionAttachment {
+        let link = try decode(SessionAttachmentLink.self,
+            from: await request(action: MAI_CLOUD_DRIVE_PLAY_LINK,
+                                payload: ["video_id": id], room: room))
+        var info = MaiCloudDriveMediaInfo()
+        guard link.roomKey == room.key,
+              link.sizeBytes > 0,
+              link.name.withCString({ mai_session_attachment_media_info($0, &info) != 0 }),
+              link.contentType == String(cString: info.content_type_utf8),
+              link.mediaType == String(cString: info.media_type_utf8),
+              link.sizeBytes <= info.max_size_bytes else {
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "会话附件归属或文件信息无效")
+        }
+        let url = try await download(signedURL: link.readUrl,
+                                  fileExtension: URL(fileURLWithPath: link.name).pathExtension,
+                                  maxBytes: link.sizeBytes,
+                                  folderName: "mai-session-attachments",
+                                  timeoutMilliseconds: 2 * 60 * 60 * 1000)
+        guard let actual = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              actual > 0, UInt64(actual) == link.sizeBytes else {
+            try? FileManager.default.removeItem(at: url)
+            throw MaiCloudDriveError(status: 0, httpStatus: 0,
+                                     detail: "会话附件下载长度不匹配")
+        }
+        return DownloadedSessionAttachment(fileURL: url, name: link.name,
+            contentType: link.contentType, mediaType: link.mediaType)
+    }
+
+    func cleanupSessionRoom(_ room: SessionRoom) async throws {
+        _ = try await request(action: MAI_SESSION_ATTACHMENT_CLEANUP_ROOM,
+                              payload: [:], room: room)
     }
 
     func openVod(videoID: String,
@@ -500,6 +608,7 @@ struct MaiCloudDriveClient: Sendable {
     func upload(source: MaiCloudDriveLocalTask,
                 checkpointURL: URL,
                 cancel: MaiCloudDriveCancelToken,
+                room: SessionRoom? = nil,
                 progress: @escaping @Sendable (UInt64, UInt64) -> Void) async throws -> Data {
         guard let access = try await MaiChatAuthClient.shared.cloudDriveAccessIfAvailable()
         else { throw MaiChatAuthError.sessionExpired }
@@ -513,6 +622,7 @@ struct MaiCloudDriveClient: Sendable {
                                                       access: access,
                                                       certificate: certificate,
                                                       cancel: cancel,
+                                                      room: room,
                                                       progress: progress)
                     continuation.resume(with: response)
                 }
@@ -525,6 +635,7 @@ struct MaiCloudDriveClient: Sendable {
                                       access: MaiChatCloudDriveAccess,
                                       certificate: (path: String, pem: Data?),
                                       cancel: MaiCloudDriveCancelToken,
+                                      room: SessionRoom?,
                                       progress: @escaping @Sendable (UInt64, UInt64) -> Void)
         -> Result<Data, Error> {
         let proxy = MaiChatAttachmentProxyContext()
@@ -560,7 +671,7 @@ struct MaiCloudDriveClient: Sendable {
                                     options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
                                     options.signed_upload_host_suffix_utf8 = host
                                     options.retain_completed_checkpoint = 1
-                                    let invoke = {
+                                    let invokeUpload = {
                                         if let opened {
                                             source.sourceID.withCString { stableID in
                                                 var sourceInfo = MaiCloudDriveSource()
@@ -587,6 +698,20 @@ struct MaiCloudDriveClient: Sendable {
                                             }
                                         }
                                     }
+                                    let invoke = {
+                                        if let room {
+                                            room.ownerSlot.withCString { slot in
+                                                room.ownerLoginSessionID.withCString { login in
+                                                    room.sessionID.withCString { session in
+                                                        options.owner_device_slot_utf8 = slot
+                                                        options.owner_login_session_id_utf8 = login
+                                                        options.session_id_utf8 = session
+                                                        invokeUpload()
+                                                    }
+                                                }
+                                            }
+                                        } else { invokeUpload() }
+                                    }
                                     if let pem = certificate.pem {
                                         pem.withUnsafeBytes { bytes in
                                             options.ca_pem = bytes.baseAddress?
@@ -612,7 +737,8 @@ struct MaiCloudDriveClient: Sendable {
     }
 
     private func request(action: MaiCloudDriveAction,
-                         payload: [String: String]) async throws -> Data {
+                         payload: [String: String],
+                         room: SessionRoom? = nil) async throws -> Data {
         guard let access = try await MaiChatAuthClient.shared.cloudDriveAccessIfAvailable()
         else { throw MaiChatAuthError.sessionExpired }
         let certificate = try Self.certificate()
@@ -627,7 +753,7 @@ struct MaiCloudDriveClient: Sendable {
                 DispatchQueue.global(qos: .utility).async {
                     continuation.resume(with: Self.performRequest(
                         action: action, payload: json, access: access,
-                        certificate: certificate, cancel: cancel))
+                        certificate: certificate, cancel: cancel, room: room))
                 }
             }
         } onCancel: { cancel.cancel() }
@@ -636,7 +762,8 @@ struct MaiCloudDriveClient: Sendable {
     private static func performRequest(action: MaiCloudDriveAction, payload: String,
                                        access: MaiChatCloudDriveAccess,
                                        certificate: (path: String, pem: Data?),
-                                       cancel: MaiCloudDriveCancelToken)
+                                       cancel: MaiCloudDriveCancelToken,
+                                       room: SessionRoom?)
         -> Result<Data, Error> {
         let proxy = MaiChatAttachmentProxyContext()
         let signedHost = access.authBaseURL.contains("localhost") ||
@@ -654,8 +781,22 @@ struct MaiCloudDriveClient: Sendable {
                             options.signed_upload_host_suffix_utf8 = host
                             options.proxy_resolver = maiChatAttachmentProxyResolver
                             options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
-                            let invoke = { mai_cloud_drive_request(
+                            let invokeRequest = { mai_cloud_drive_request(
                                 &options, action, json, cancel.pointer, &native) }
+                            let invoke = {
+                                if let room {
+                                    room.ownerSlot.withCString { slot in
+                                        room.ownerLoginSessionID.withCString { login in
+                                            room.sessionID.withCString { session in
+                                                options.owner_device_slot_utf8 = slot
+                                                options.owner_login_session_id_utf8 = login
+                                                options.session_id_utf8 = session
+                                                invokeRequest()
+                                            }
+                                        }
+                                    }
+                                } else { invokeRequest() }
+                            }
                             if let pem = certificate.pem {
                                 pem.withUnsafeBytes { bytes in
                                     options.ca_pem = bytes.baseAddress?

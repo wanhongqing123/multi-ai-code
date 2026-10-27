@@ -45,6 +45,7 @@ test('private cloud purge includes exact owner objects and incomplete multipart 
   const deleted = [];
   const aborted = [];
   const key = 'cloud-drive/test_account/2026-10-24/video.mov';
+  const attachmentKey = 'session-attachments/test_account/2026-10-24/file.pdf';
   const client = {
     async list(options) {
       assert.notEqual(options.prefix,'cloud-drive/test_account/');
@@ -55,11 +56,14 @@ test('private cloud purge includes exact owner objects and incomplete multipart 
   const cloudClient = {
     async list(options) {
       return { objects: options.prefix === 'cloud-drive/test_account/' ?
-        [{ name:key }] : [] };
+        [{ name:key }] : options.prefix === 'session-attachments/test_account/' ?
+        [{ name:attachmentKey }] : [] };
     },
     async listUploads(options) {
-      assert.equal(options.prefix,'cloud-drive/test_account/');
-      return { uploads:[{ name:key,uploadId:'upload_123' }],isTruncated:false };
+      assert.ok(['cloud-drive/test_account/',
+        'session-attachments/test_account/'].includes(options.prefix));
+      return { uploads:[{ name:options.prefix.startsWith('cloud-drive/') ?
+        key : attachmentKey,uploadId:'upload_123' }],isTruncated:false };
     },
     async deleteMulti(keys) { deleted.push(...keys); },
     async abortMultipartUpload(name,id) { aborted.push([name,id]); }
@@ -68,12 +72,15 @@ test('private cloud purge includes exact owner objects and incomplete multipart 
   assert.equal(defaultResult.object_counts['cloud-drive'],undefined);
   const preview = await purgeAccountAssets(client,'test_account',false,false,cloudClient);
   assert.equal(preview.object_counts['cloud-drive'],1);
+  assert.equal(preview.object_counts['session-attachments'],1);
   assert.equal(preview.multipart_upload_counts['cloud-drive'],1);
+  assert.equal(preview.multipart_upload_counts['session-attachments'],1);
   assert.deepEqual(aborted,[]);
   const executed = await purgeAccountAssets(client,'test_account',true,false,cloudClient);
   assert.equal(executed.object_counts['cloud-drive'],1);
-  assert.deepEqual(deleted,[key]);
-  assert.deepEqual(aborted,[[key,'upload_123']]);
+  assert.equal(executed.object_counts['session-attachments'],1);
+  assert.deepEqual(deleted,[key,attachmentKey]);
+  assert.deepEqual(aborted,[[key,'upload_123'],[attachmentKey,'upload_123']]);
   await assert.rejects(purgeAccountAssets(client,
     'test_account',false,false,{
     list:async () => ({ objects:[] }),

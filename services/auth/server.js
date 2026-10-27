@@ -185,11 +185,16 @@ function start(env = process.env) {
     throw new Error('Auth database or server signing secrets are missing');
   const db = openStore(env.MAICHAT_AUTH_DB_PATH);
   const sms = createAliyunSmsSender(env);
+  const cloudDriveOptions = cloudDriveFromEnv(env);
   const service = createAuthService({
     db, sms, secret: env.MAICHAT_AUTH_HMAC_KEY,
     imSecret: env.MAICHAT_IM_SECRET_KEY,
     videoCircle: videoCircleFromEnv(env),
-    cloudDrive: cloudDriveFromEnv(env),
+    cloudDrive: cloudDriveOptions,
+    sessionAttachments: cloudDriveOptions ? {
+      ...cloudDriveOptions,
+      quotaBytes:Number(env.MAICHAT_SESSION_ATTACHMENT_QUOTA_BYTES || 10_000_000_000)
+    } : null,
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
     issueAccountModelKeys: createAccountModelKeyIssuer(env),
@@ -226,7 +231,11 @@ function start(env = process.env) {
   const cloudSweep = async () => {
     if (cloudSweepRunning || !service.cleanupCloudDrive) return;
     cloudSweepRunning = true;
-    try { await service.cleanupCloudDrive(); }
+    try {
+      await service.cleanupCloudDrive();
+      if (service.cleanupSessionAttachments)
+        await service.cleanupSessionAttachments();
+    }
     catch { process.stderr.write('MaiChat cloud drive cleanup failed\n'); }
     finally { cloudSweepRunning = false; }
   };

@@ -16,5 +16,6 @@ using MaiCloudDriveToolHandler = std::function<MaiToolResult(const std::string& 
 // Registers the same Agent-facing contract on iOS, Android, and Desktop.
 // Upload, resume, abort, and delete require approval on every call. Pause
 // preserves confirmed parts and needs no approval. Registration performs no
-// network call.
+// network call. Session attachment open is read-only and binds the current
+// Agent Session ID before calling the platform's ordinary download core.
 void registerMaiCloudDriveTools(MaiToolRegistry& tools, MaiCloudDriveToolHandler handler);

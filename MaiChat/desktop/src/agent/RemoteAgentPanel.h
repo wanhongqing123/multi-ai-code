@@ -12,12 +12,15 @@ public:
     using Completion = std::function<void(const QString&)>;
     using CommandHandler = std::function<void(const QJsonObject&, const QJsonObject&, Completion)>;
     using HistoryHandler = std::function<void(const QJsonObject&, const QString&, int, Completion)>;
+    using DownloadCompletion = std::function<void(const QString&, const QString&)>;
+    using DownloadHandler = std::function<void(const QJsonObject&, const QString&, DownloadCompletion)>;
 
     explicit RemoteAgentPanel(QWidget* parent = nullptr);
     ~RemoteAgentPanel() override;
 
     void setCommandHandler(CommandHandler handler);
     void setHistoryHandler(HistoryHandler handler);
+    void setDownloadHandler(DownloadHandler handler);
     void openSession(const QJsonObject& remote);
     void updateSession(const QJsonObject& remote);
     void receivePayload(const QJsonObject& remote, const QString& kind, const QJsonObject& payload);

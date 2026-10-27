@@ -17,6 +17,7 @@ typedef enum MaiCloudDriveAction {
     MAI_CLOUD_DRIVE_DELETE_VIDEO = 3,
     MAI_CLOUD_DRIVE_ABORT_UPLOAD = 4,
     MAI_CLOUD_DRIVE_THUMBNAIL_LINK = 5,
+    MAI_SESSION_ATTACHMENT_CLEANUP_ROOM = 6,
     // The account API retains its /videos transport path and video_id field.
     // These names also cover images without changing existing callers.
     MAI_CLOUD_DRIVE_LIST_MEDIA = MAI_CLOUD_DRIVE_LIST_VIDEOS,
@@ -36,6 +37,10 @@ typedef struct MaiCloudDriveMediaInfo {
 // This common mapping avoids separate format tables in the platform hosts.
 int mai_cloud_drive_media_info(const char* display_name_utf8,
                                MaiCloudDriveMediaInfo* output);
+// Session attachments use the same multipart core but a separate API, quota
+// and OSS object prefix. Files with a safe extension use octet-stream.
+int mai_session_attachment_media_info(const char* display_name_utf8,
+                                      MaiCloudDriveMediaInfo* output);
 
 typedef enum MaiCloudDriveStatus {
     MAI_CLOUD_DRIVE_OK = 0,
@@ -75,6 +80,11 @@ typedef struct MaiCloudDriveOptions {
     // iOS-owned staged media needs a durable completion receipt before its
     // source is removed. Zero preserves the normal delete-on-success behavior.
     int retain_completed_checkpoint;
+    // Set all three for the independent Session attachment space. Null values
+    // keep existing private cloud-drive behavior.
+    const char* owner_device_slot_utf8;
+    const char* owner_login_session_id_utf8;
+    const char* session_id_utf8;
 } MaiCloudDriveOptions;
 
 typedef struct MaiCloudDriveResult {

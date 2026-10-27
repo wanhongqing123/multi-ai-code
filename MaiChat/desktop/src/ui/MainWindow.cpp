@@ -158,6 +158,7 @@
 #include "agent/AgentController.h"
 #include "agent/AgentSessionList.h"
 #include "agent/DesktopSessionSyncCoordinator.h"
+#include "agent/DesktopSessionAttachments.h"
 #include "agent/RemoteAgentPanel.h"
 #include "agent/ReplySuggestionController.h"
 
@@ -4521,6 +4522,10 @@ void MainWindow::setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordi
       accountRoot.isEmpty() ? QString() :
           QDir(accountRoot).filePath(QStringLiteral("Workspace")));
   QPointer<MainWindow> guard(this);
+  sessionSync_->setAttachmentAccessProvider([guard] {
+    return guard && guard->videoCircleAccessProvider_ ?
+        guard->videoCircleAccessProvider_() : DesktopVideoCircleAccess{};
+  });
   sessionSync_->setCatalogHandler([guard](const QJsonArray& sessions) {
     if (!guard) return;
     guard->remoteAgentSessions_ = sessions;
@@ -4565,11 +4570,74 @@ void MainWindow::wireRemoteAgentPanel() {
   });
   agentRemotePanel_->setCommandHandler([this, panel](const QJsonObject& session, const QJsonObject& payload,
                                                       RemoteAgentPanel::Completion completion) {
-    sessionSync_->sendRemoteCommand(session, payload,
-                                    [panel, completion = std::move(completion)](const QJsonObject&,
-                                                                                 const QString& error) {
-      if (panel) completion(error);
+    QJsonObject wire = payload;
+    const QJsonArray localFiles = wire.take(QStringLiteral("local_files")).toArray();
+    if (localFiles.isEmpty()) {
+      sessionSync_->sendRemoteCommand(session, wire,
+                                      [panel, completion = std::move(completion)](const QJsonObject&,
+                                                                                   const QString& error) {
+        if (panel) completion(error);
+      });
+      return;
+    }
+    const DesktopVideoCircleAccess access = videoCircleAccessProvider_ ?
+        videoCircleAccessProvider_() : DesktopVideoCircleAccess{};
+    const DesktopSessionRoom room{session.value(QStringLiteral("device_slot")).toString(),
+        session.value(QStringLiteral("login_session_id")).toString(),
+        session.value(QStringLiteral("id")).toString()};
+    auto* watcher = new QFutureWatcher<QPair<QJsonObject, QString>>(this);
+    QPointer<DesktopSessionSyncCoordinator> sync(sessionSync_);
+    connect(watcher, &QFutureWatcher<QPair<QJsonObject, QString>>::finished, this,
+            [this, panel, sync, watcher, session, access, completion = std::move(completion)]() mutable {
+      const auto response = watcher->result();
+      watcher->deleteLater();
+      if (!panel) return;
+      if (!response.second.isEmpty() || !sync || !videoCircleAccessProvider_ ||
+          videoCircleAccessProvider_().accountId != access.accountId) {
+        completion(response.second.isEmpty() ? QStringLiteral("账号已切换") : response.second);
+        return;
+      }
+      sync->sendRemoteCommand(session, response.first,
+                              [panel, completion = std::move(completion)](const QJsonObject&,
+                                                                           const QString& error) {
+        if (panel) completion(error);
+      });
     });
+    watcher->setFuture(QtConcurrent::run([access, room, localFiles, wire]() mutable {
+      QJsonArray references;
+      for (const QJsonValue& value : localFiles) {
+        const auto uploaded = DesktopSessionAttachments::upload(access, room, value.toString());
+        if (!uploaded.ok()) return QPair<QJsonObject, QString>{QJsonObject{}, uploaded.error};
+        references.append(QJsonObject{{QStringLiteral("attachment_id"),
+            uploaded.metadata.value(QStringLiteral("attachment_id"))}});
+      }
+      wire.insert(QStringLiteral("attachments"), references);
+      return QPair<QJsonObject, QString>{wire, {}};
+    }));
+  });
+  agentRemotePanel_->setDownloadHandler([this, panel](const QJsonObject& session,
+      const QString& id, RemoteAgentPanel::DownloadCompletion completion) {
+    const DesktopVideoCircleAccess access = videoCircleAccessProvider_ ?
+        videoCircleAccessProvider_() : DesktopVideoCircleAccess{};
+    const DesktopSessionRoom room{session.value(QStringLiteral("device_slot")).toString(),
+        session.value(QStringLiteral("login_session_id")).toString(),
+        session.value(QStringLiteral("id")).toString()};
+    auto* watcher = new QFutureWatcher<DesktopSessionAttachmentResult>(this);
+    connect(watcher, &QFutureWatcher<DesktopSessionAttachmentResult>::finished, this,
+            [this, panel, watcher, access, completion = std::move(completion)] {
+      const auto result = watcher->result();
+      watcher->deleteLater();
+      if (!panel) return;
+      if (!videoCircleAccessProvider_ ||
+          videoCircleAccessProvider_().accountId != access.accountId) {
+        completion({}, QStringLiteral("账号已切换"));
+        return;
+      }
+      completion(result.path, result.error);
+    });
+    watcher->setFuture(QtConcurrent::run([access, room, id] {
+      return DesktopSessionAttachments::download(access, room, id);
+    }));
   });
 }
 
@@ -4669,6 +4737,10 @@ void MainWindow::rebuildAgentPage() {
               if (!cloudPresenter->openDockedVideo(path, {}, 0,
                                                     std::move(cloudSource))) return false;
               return true;
+            },
+            [cloudPresenter](const QString& session) {
+              return cloudPresenter && cloudPresenter->sessionSync_ ?
+                  cloudPresenter->sessionSync_->localRoom(session) : DesktopSessionRoom{};
             });
         registerDesktopRemoteSessionTools(
             registry, this, [this] { return sessionSync_; });

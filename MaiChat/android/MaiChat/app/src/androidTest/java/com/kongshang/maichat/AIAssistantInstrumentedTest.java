@@ -38,6 +38,41 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class AIAssistantInstrumentedTest {
+    @Test public void remoteSessionAttachmentOffersARealDownloadAction() throws Exception {
+        assertEquals("audio/mp4",MaiSessionAttachments.mediaInfo("voice.m4a").contentType);
+        assertEquals("application/octet-stream",
+            MaiSessionAttachments.mediaInfo("report.pdf").contentType);
+        assertNull(MaiSessionAttachments.mediaInfo("CON.pdf"));
+        Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent launch = new Intent(app,AIAssistantTestActivity.class)
+            .putExtra("model_url","http://127.0.0.1:18190");
+        try (ActivityScenario<AIAssistantTestActivity> scenario = ActivityScenario.launch(launch)) {
+            await(scenario,panel -> panel.controller.state.ready);
+            scenario.onActivity(activity -> {
+                try {
+                    JSONObject remote = new JSONObject().put("id","session_fixture")
+                        .put("device_slot","mac").put("login_session_id","login_fixture")
+                        .put("online",true);
+                    JSONObject part = new JSONObject().put("id","part_fixture")
+                        .put("kind","image").put("name","photo.jpg")
+                        .put("attachment_id","123e4567-e89b-42d3-a456-426614174000");
+                    JSONObject message = new JSONObject().put("id","msg_fixture")
+                        .put("role","user").put("parts",new org.json.JSONArray().put(part));
+                    JSONObject data = new JSONObject().put("ok",true)
+                        .put("messages",new org.json.JSONArray().put(message));
+                    AIAssistantController.State state = new AIAssistantController.State(
+                        data,remote,"session_fixture","","glm-5.3-flash","","",
+                        "","",0,false,true);
+                    activity.panel.onState(state);
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+            await(scenario,panel -> findDescription(panel,
+                "下载图片 · photo.jpg") != null);
+            scenario.onActivity(activity -> assertTrue(findDescription(activity.panel,
+                "展开更多功能").isEnabled()));
+        }
+    }
+
     @Test
     public void localMusicPlayerPlaysSelectedWavAndStops() throws Exception {
         Context app = InstrumentationRegistry.getInstrumentation().getTargetContext();

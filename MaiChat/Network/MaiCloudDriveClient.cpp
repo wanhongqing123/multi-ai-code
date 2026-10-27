@@ -74,6 +74,7 @@ struct Checkpoint {
     std::string name;
     std::string contentType;
     std::string sourceId;
+    std::string roomKey;
     uint64_t size = 0;
     uint64_t partSize = 0;
     uint32_t partsTotal = 0;
@@ -130,8 +131,9 @@ bool uintField(const json& value, const char* name, uint64_t min, uint64_t max,
     return true;
 }
 
-bool mediaInfo(const std::string& name, MaiCloudDriveMediaInfo* output) {
-    if (!output || name.size() < 5 || name.size() > 240 || !printable(name) ||
+bool mediaInfo(const std::string& name, MaiCloudDriveMediaInfo* output,
+               bool session = false) {
+    if (!output || name.size() < 3 || name.size() > 240 || !printable(name) ||
         name.front() == ' ' || name.back() == ' ' ||
         name.find('/') != std::string::npos ||
         name.find('\\') != std::string::npos) return false;
@@ -139,6 +141,15 @@ bool mediaInfo(const std::string& name, MaiCloudDriveMediaInfo* output) {
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
         return char(std::tolower(c));
     });
+    if (session) {
+        if (name.find_first_of("<>:\"|?*") != std::string::npos ||
+            name.back() == '.') return false;
+        const std::string stem = lower.substr(0, lower.find('.'));
+        if (stem == "con" || stem == "prn" || stem == "aux" || stem == "nul" ||
+            (stem.size() == 4 && (stem.rfind("com", 0) == 0 ||
+                                  stem.rfind("lpt", 0) == 0) &&
+             stem.back() >= '1' && stem.back() <= '9')) return false;
+    }
     struct Format {
         const char* extension;
         const char* contentType;
@@ -162,12 +173,34 @@ bool mediaInfo(const std::string& name, MaiCloudDriveMediaInfo* output) {
             return true;
         }
     }
+    if (session) {
+        static constexpr Format extras[] = {
+            {".gif", "image/gif", "image", kMaxImageBytes},
+            {".mp3", "audio/mpeg", "audio", kMaxVideoBytes},
+            {".m4a", "audio/mp4", "audio", kMaxVideoBytes},
+            {".aac", "audio/aac", "audio", kMaxVideoBytes},
+            {".wav", "audio/wav", "audio", kMaxVideoBytes},
+            {".flac", "audio/flac", "audio", kMaxVideoBytes},
+            {".ogg", "audio/ogg", "audio", kMaxVideoBytes},
+        };
+        for (const Format& format : extras) {
+            const size_t length = std::strlen(format.extension);
+            if (lower.size() > length &&
+                lower.compare(lower.size() - length, length, format.extension) == 0) {
+                *output = {format.contentType, format.mediaType, format.maxBytes};
+                return true;
+            }
+        }
+        const size_t dot = lower.rfind('.');
+        if (dot != std::string::npos && dot > 0 &&
+            lower.size() - dot - 1 <= 12 &&
+            std::all_of(lower.begin() + dot + 1, lower.end(),
+                        [](unsigned char c) { return std::isalnum(c); })) {
+            *output = {"application/octet-stream", "file", kMaxVideoBytes};
+            return true;
+        }
+    }
     return false;
-}
-
-bool validName(const std::string& name, const std::string& contentType) {
-    MaiCloudDriveMediaInfo info{};
-    return mediaInfo(name, &info) && contentType == info.content_type_utf8;
 }
 
 bool validResponseMediaType(const json& response, const std::string& contentType) {
@@ -175,7 +208,9 @@ bool validResponseMediaType(const json& response, const std::string& contentType
     if (field == response.end()) return true; // Existing deployed video API.
     if (!field->is_string()) return false;
     const std::string actual = field->get<std::string>();
-    return actual == (contentType.rfind("image/", 0) == 0 ? "image" : "video");
+    return actual == (contentType.rfind("image/", 0) == 0 ? "image" :
+        contentType.rfind("audio/", 0) == 0 ? "audio" :
+        contentType.rfind("video/", 0) == 0 ? "video" : "file");
 }
 
 bool validHttpsUrl(const std::string& raw, bool queryRequired,
@@ -232,7 +267,43 @@ bool validBase(const char* raw, std::string* output) {
     return true;
 }
 
+bool validRoomID(const char* value) {
+    if (!value) return false;
+    const size_t length = std::strlen(value);
+    return length > 0 && length <= 128 &&
+        std::all_of(value, value + length, [](unsigned char c) {
+            return std::isalnum(c) || c == '_' || c == '-';
+        });
+}
+
+bool sessionMode(const MaiCloudDriveOptions* options) {
+    return options->session_id_utf8 != nullptr;
+}
+
+std::string apiRoot(const MaiCloudDriveOptions* options) {
+    return sessionMode(options) ? "/v1/session-attachments" :
+        "/v1/cloud-drive/videos";
+}
+
+std::string roomKey(const MaiCloudDriveOptions* options) {
+    if (!sessionMode(options)) return {};
+    return std::string(options->owner_device_slot_utf8) + ":" +
+        options->session_id_utf8;
+}
+
 bool validOptions(const MaiCloudDriveOptions* options, bool accountRequired) {
+    if (!options) return false;
+    const bool hasRoom = options->owner_device_slot_utf8 ||
+        options->owner_login_session_id_utf8 || options->session_id_utf8;
+    if (hasRoom) {
+        if (!options->owner_device_slot_utf8 ||
+            !options->owner_login_session_id_utf8 ||
+            !validRoomID(options->owner_login_session_id_utf8) ||
+            !validRoomID(options->session_id_utf8)) return false;
+        const std::string slot(options->owner_device_slot_utf8);
+        if (slot != "ios_phone" && slot != "android_phone" &&
+            slot != "tablet" && slot != "mac" && slot != "windows") return false;
+    }
     return options && (!accountRequired || validToken(options->account_token_utf8)) &&
         !(options->ca_pem_length > 0 && !options->ca_pem) &&
         !(options->ca_pem_length > 0 && options->ca_path_utf8 &&
@@ -385,7 +456,7 @@ bool writeCheckpoint(const char* path, const Checkpoint& value) {
     const json body{{"version", 1}, {"video_id", value.videoId},
         {"upload_id", value.uploadId}, {"file_sha256", value.fingerprint},
         {"file_size", value.size}, {"source_id", value.sourceId},
-        {"name", value.name},
+        {"name", value.name}, {"room_key", value.roomKey},
         {"content_type", value.contentType}, {"part_size", value.partSize},
         {"parts_total", value.partsTotal}, {"completed", value.completed}};
     const std::string serialized = body.dump();
@@ -440,12 +511,17 @@ bool readCheckpoint(const char* path, Checkpoint* output, bool* exists) {
         !stringField(parsed, "source_id", &output->sourceId) ||
         output->sourceId.empty() || output->sourceId.size() > 4096 ||
         !stringField(parsed, "content_type", &output->contentType) ||
-        !validName(output->name, output->contentType) ||
         !uintField(parsed, "file_size", 1, kMaxVideoBytes, &output->size) ||
         !uintField(parsed, "part_size", kPartBytes, kPartBytes, &output->partSize) ||
         !uintField(parsed, "parts_total", 1, 10000, &partTotal)) return false;
+    const auto room = parsed.find("room_key");
+    if (room != parsed.end() &&
+        (!room->is_string() || room->get<std::string>().size() > 400)) return false;
+    output->roomKey = room == parsed.end() ? "" : room->get<std::string>();
     MaiCloudDriveMediaInfo info{};
-    if (!mediaInfo(output->name, &info) || output->size > info.max_size_bytes)
+    if (!mediaInfo(output->name, &info, !output->roomKey.empty()) ||
+        output->contentType != info.content_type_utf8 ||
+        output->size > info.max_size_bytes)
         return false;
     output->partsTotal = uint32_t(partTotal);
     const auto completed = parsed.find("completed");
@@ -880,7 +956,7 @@ void uploadPart(const MaiCloudDriveOptions* options, const std::string& base,
         result->status = MAI_CLOUD_DRIVE_FILE_ERROR;
         return;
     }
-    const std::string route = "/v1/cloud-drive/videos/uploads/" +
+    const std::string route = apiRoot(options) + "/uploads/" +
         checkpoint.videoId + "/parts/" + std::to_string(number) + "/sign";
     MonotonicProgress monotonic{progress, progressContext, confirmedBytes};
     for (unsigned attempt = 0; attempt < 3; ++attempt) {
@@ -930,20 +1006,32 @@ void createSession(const MaiCloudDriveOptions* options, const std::string& base,
                    const MaiCloudDriveCancel* cancel, Checkpoint* checkpoint,
                    MaiCloudDriveResult* result) {
     MaiCloudDriveResult initial{};
-    requestInternal(options, base, "/v1/cloud-drive/videos/uploads", "POST",
-        json{{"name", name}, {"size_bytes", bytes},
-             {"content_type", contentType}}, cancel, &initial);
+    json request{{"name", name}, {"size_bytes", bytes},
+                 {"content_type", contentType}};
+    if (sessionMode(options)) {
+        request["owner_slot"] = options->owner_device_slot_utf8;
+        request["owner_login_session_id"] = options->owner_login_session_id_utf8;
+        request["session_id"] = options->session_id_utf8;
+    }
+    requestInternal(options, base, apiRoot(options) + "/uploads", "POST",
+        request, cancel, &initial);
     if (initial.status != MAI_CLOUD_DRIVE_OK) {
         moveResult(result, &initial);
         return;
     }
-    if (!parseInitial(parseResponse(initial), bytes, name, contentType,
-                      fingerprint, checkpoint)) {
+    const json response = parseResponse(initial);
+    std::string returnedRoom;
+    if (!parseInitial(response, bytes, name, contentType,
+                      fingerprint, checkpoint) ||
+        (sessionMode(options) &&
+         (!stringField(response, "room_key", &returnedRoom) ||
+          returnedRoom != roomKey(options)))) {
         result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
         mai_cloud_drive_result_free(&initial);
         return;
     }
     checkpoint->sourceId = sourceId;
+    checkpoint->roomKey = roomKey(options);
     mai_cloud_drive_result_free(&initial);
     if (writeCheckpoint(checkpointPath, *checkpoint)) {
         result->status = MAI_CLOUD_DRIVE_OK;
@@ -953,7 +1041,7 @@ void createSession(const MaiCloudDriveOptions* options, const std::string& base,
     // reservation; expiry cleanup remains a fallback if this request fails.
     MaiCloudDriveResult aborted{};
     requestInternal(options, base,
-        "/v1/cloud-drive/videos/uploads/" + checkpoint->videoId,
+        apiRoot(options) + "/uploads/" + checkpoint->videoId,
         "DELETE", json::object(), cancel, &aborted);
     mai_cloud_drive_result_free(&aborted);
     result->status = MAI_CLOUD_DRIVE_FILE_ERROR;
@@ -965,7 +1053,7 @@ bool listParts(const MaiCloudDriveOptions* options, const std::string& base,
                MaiCloudDriveResult* result) {
     MaiCloudDriveResult listed{};
     requestInternal(options, base,
-        "/v1/cloud-drive/videos/uploads/" + checkpoint.videoId + "/parts",
+        apiRoot(options) + "/uploads/" + checkpoint.videoId + "/parts",
         "GET", json::object(), cancel, &listed);
     if (listed.status != MAI_CLOUD_DRIVE_OK) {
         moveResult(result, &listed);
@@ -985,7 +1073,7 @@ bool completeUpload(const MaiCloudDriveOptions* options, const std::string& base
                     const MaiCloudDriveCancel* cancel, MaiCloudDriveResult* result) {
     MaiCloudDriveResult completed{};
     requestInternal(options, base,
-        "/v1/cloud-drive/videos/uploads/" + checkpoint.videoId + "/complete",
+        apiRoot(options) + "/uploads/" + checkpoint.videoId + "/complete",
         "POST", json::object(), cancel, &completed, 200'000);
     if (completed.status != MAI_CLOUD_DRIVE_OK) {
         moveResult(result, &completed);
@@ -1014,6 +1102,12 @@ extern "C" int mai_cloud_drive_media_info(const char* displayName,
     if (!displayName || !output || std::strlen(displayName) > 240) return 0;
     *output = {};
     return mediaInfo(displayName, output) ? 1 : 0;
+}
+
+extern "C" int mai_session_attachment_media_info(const char* displayName,
+                                                    MaiCloudDriveMediaInfo* output) {
+    if (!displayName) return 0;
+    return mediaInfo(displayName, output, true) ? 1 : 0;
 }
 
 extern "C" MaiCloudDriveCancel* mai_cloud_drive_cancel_create(void) {
@@ -1048,10 +1142,17 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
     if (payload.size() > kMaxRequestBytes) return;
     const json input = json::parse(payload, nullptr, false);
     if (!input.is_object()) return;
-    const std::string root = "/v1/cloud-drive/videos";
+    const std::string root = apiRoot(options);
     std::string route;
     const char* method = "GET";
-    if (action == MAI_CLOUD_DRIVE_LIST_VIDEOS) {
+    json request = json::object();
+    if (action == MAI_SESSION_ATTACHMENT_CLEANUP_ROOM && sessionMode(options)) {
+        route = root + "/cleanup-room";
+        method = "POST";
+        request = {{"owner_slot", options->owner_device_slot_utf8},
+                   {"owner_login_session_id", options->owner_login_session_id_utf8},
+                   {"session_id", options->session_id_utf8}};
+    } else if (action == MAI_CLOUD_DRIVE_LIST_VIDEOS) {
         route = root;
         if (input.contains("before")) {
             std::string cursor;
@@ -1076,7 +1177,7 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
             method = "DELETE";
         } else return;
     }
-    requestInternal(options, base, route, method, json::object(), cancel, result);
+    requestInternal(options, base, route, method, request, cancel, result);
     if (result->status != MAI_CLOUD_DRIVE_OK) return;
     const json response = parseResponse(*result);
     std::string field;
@@ -1101,6 +1202,9 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
             (thumbnail && (!stringField(response, "content_type", &field) ||
                            field != "image/jpeg")))
             result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+    } else if (action == MAI_SESSION_ATTACHMENT_CLEANUP_ROOM) {
+        if (!stringField(response, "room_key", &field) ||
+            field != roomKey(options)) result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
     } else if (!stringField(response, "video_id", &field) ||
                !validUuid(field)) {
         result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
@@ -1128,7 +1232,8 @@ extern "C" void mai_cloud_drive_upload_resumable_source(
     const std::string name(displayName);
     const std::string contentType(contentTypeRaw);
     MaiCloudDriveMediaInfo info{};
-    if (!mediaInfo(name, &info) || contentType != info.content_type_utf8) return;
+    if (!mediaInfo(name, &info, sessionMode(options)) ||
+        contentType != info.content_type_utf8) return;
     std::string base;
     if (!validBase(options->auth_base_url_utf8, &base)) return;
     const uint64_t bytes = source->size_bytes;
@@ -1145,7 +1250,8 @@ extern "C" void mai_cloud_drive_upload_resumable_source(
     if (exists && (checkpoint.size != bytes ||
                    checkpoint.fingerprint != fingerprint ||
                    checkpoint.name != name ||
-                   checkpoint.contentType != contentType)) {
+                   checkpoint.contentType != contentType ||
+                   checkpoint.roomKey != roomKey(options))) {
         result->status = MAI_CLOUD_DRIVE_CHECKPOINT_MISMATCH;
         return;
     }
@@ -1240,7 +1346,7 @@ extern "C" void mai_cloud_drive_upload_resumable(
     if (!filePath || !*filePath || std::strlen(filePath) > 4096) return;
     MaiCloudDriveMediaInfo info{};
     if (!displayName || !contentType ||
-        !mai_cloud_drive_media_info(displayName, &info) ||
+        !mediaInfo(displayName, &info, options && sessionMode(options)) ||
         std::strcmp(contentType, info.content_type_utf8) != 0) return;
     try {
         if (!std::filesystem::u8path(filePath).is_absolute()) return;
@@ -1455,8 +1561,12 @@ extern "C" void mai_cloud_drive_abort_resumable(
         result->status = MAI_CLOUD_DRIVE_FILE_ERROR;
         return;
     }
+    if (checkpoint.roomKey != roomKey(options)) {
+        result->status = MAI_CLOUD_DRIVE_CHECKPOINT_MISMATCH;
+        return;
+    }
     requestInternal(options, base,
-        "/v1/cloud-drive/videos/uploads/" + checkpoint.videoId,
+        apiRoot(options) + "/uploads/" + checkpoint.videoId,
         "DELETE", json::object(), cancel, result);
     if (result->status != MAI_CLOUD_DRIVE_OK) return;
     const json response = parseResponse(*result);

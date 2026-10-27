@@ -291,6 +291,33 @@ function openStore(filename) {
       ON cloud_drive_videos(owner_user_id,status,created_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS cloud_drive_videos_cleanup
       ON cloud_drive_videos(cleanup_pending,cleanup_after);
+    CREATE TABLE IF NOT EXISTS session_attachments (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL REFERENCES users(id),
+      room_key TEXT NOT NULL,
+      name TEXT NOT NULL,
+      object_key TEXT NOT NULL UNIQUE,
+      upload_id TEXT,
+      size_bytes INTEGER NOT NULL,
+      content_type TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('uploading','completing','ready','deleted')),
+      created_at INTEGER NOT NULL,
+      upload_expires_at INTEGER NOT NULL,
+      ready_at INTEGER,
+      deleted_at INTEGER,
+      cleanup_pending INTEGER NOT NULL DEFAULT 0,
+      cleanup_after INTEGER,
+      cleanup_hold_until INTEGER,
+      cleanup_revision INTEGER NOT NULL DEFAULT 0,
+      last_part_signed_at INTEGER,
+      completion_started_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS session_attachments_owner
+      ON session_attachments(owner_user_id,status,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS session_attachments_room
+      ON session_attachments(owner_user_id,room_key,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS session_attachments_cleanup
+      ON session_attachments(cleanup_pending,cleanup_after);
   `);
   const cloudColumns = new Set(db.pragma('table_info(cloud_drive_videos)')
     .map(column => column.name));

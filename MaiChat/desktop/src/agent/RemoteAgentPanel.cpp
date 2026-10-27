@@ -1,7 +1,13 @@
 // 文件作用：呈现远端 Session 的可见记录；输入和权限决定都发往所属设备。
 #include "agent/RemoteAgentPanel.h"
 
+#include "MaiCloudDriveClient.h"
+
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QJsonArray>
@@ -14,9 +20,12 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSet>
+#include <QStringList>
 #include <QTimer>
 #include <QUuid>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "markdown/MarkdownView.h"
@@ -29,6 +38,14 @@ QString sessionKey(const QJsonObject& value) {
     return value.value(QStringLiteral("device_slot")).toString() + QLatin1Char(':') +
            value.value(QStringLiteral("login_session_id")).toString() + QLatin1Char(':') +
            value.value(QStringLiteral("id")).toString();
+}
+
+QString attachmentSummary(const QStringList& paths) {
+    QStringList names;
+    for (const QString& path : paths.mid(0, 3)) names.append(QFileInfo(path).fileName());
+    return QStringLiteral("待发送 %1 项：%2%3").arg(paths.size()).arg(
+        names.join(QStringLiteral("、")),
+        paths.size() > 3 ? QStringLiteral(" 等") : QString());
 }
 
 QString messageText(const QJsonObject& message) {
@@ -44,6 +61,18 @@ QString messageText(const QJsonObject& message) {
             ++toolCount;
             lastTool = part.value(QStringLiteral("tool")).toString();
             lastState = part.value(QStringLiteral("state")).toString();
+        } else if (!part.value(QStringLiteral("attachment_id")).toString().isEmpty()) {
+            const QString id = part.value(QStringLiteral("attachment_id")).toString();
+            QString name = part.value(QStringLiteral("name")).toString(
+                QStringLiteral("附件"));
+            name.replace(QLatin1Char('['), QLatin1Char(' '));
+            name.replace(QLatin1Char(']'), QLatin1Char(' '));
+            name.replace(QLatin1Char('\n'), QLatin1Char(' '));
+            text.append(QStringLiteral("[下载%1 · %2](maichat-attachment:%3)")
+                .arg(kind == QStringLiteral("image") ? QStringLiteral("图片") :
+                     kind == QStringLiteral("video") ? QStringLiteral("视频") :
+                     kind == QStringLiteral("audio") ? QStringLiteral("音频") :
+                     QStringLiteral("文件"), name, id));
         } else if (kind == QStringLiteral("image") || kind == QStringLiteral("video")) {
             text.append(kind == QStringLiteral("image")
                             ? QStringLiteral("[图片在所属设备，暂不可跨设备预览]")
@@ -101,6 +130,8 @@ struct RemoteAgentPanel::Runtime {
     RemotePromptEdit* editor = nullptr;
     QPushButton* send = nullptr;
     QPushButton* older = nullptr;
+    QLabel* attachmentsLabel = nullptr;
+    QPushButton* clearAttachments = nullptr;
     QWidget* requests = nullptr;
     QVBoxLayout* requestsLayout = nullptr;
     QTimer historyTimeout;
@@ -110,8 +141,11 @@ struct RemoteAgentPanel::Runtime {
     QSet<QString> optimisticMessages;
     QString pendingOptimisticId;
     QHash<QString, QString> drafts;
+    QHash<QString, QStringList> attachmentDrafts;
+    QStringList attachments;
     QString oldest;
     QString pendingDraft;
+    QStringList pendingAttachmentPaths;
     bool pendingCommand = false;
     bool lastCommandRejected = false;
     bool historyInFlight = false;
@@ -122,6 +156,7 @@ struct RemoteAgentPanel::Runtime {
     QString pendingAction;
     CommandHandler command;
     HistoryHandler history;
+    DownloadHandler download;
 };
 
 RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(std::make_unique<Runtime>()) {
@@ -196,15 +231,55 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     runtime_->editor->submit = [this] { sendOrStop(); };
     auto* attachment = new QPushButton(QStringLiteral("+"), runtime_->editor);
     attachment->setObjectName(QStringLiteral("remoteAgentAttachButton"));
-    attachment->setAccessibleName(QStringLiteral("跨设备暂不支持附件"));
+    attachment->setAccessibleName(QStringLiteral("添加会话附件"));
     attachment->setToolTip(attachment->accessibleName());
     attachment->setFixedSize(UiZoom::s(36), UiZoom::s(36));
     attachment->setStyleSheet(QStringLiteral(
         "QPushButton{border:0;border-radius:18px;background:#f1f5f9;"
-        "color:#94a3b8;font-size:24px;}"));
-    attachment->setEnabled(false);
+        "color:#0b67b7;font-size:24px;}"));
+    connect(attachment, &QPushButton::clicked, this, [this] {
+        const QStringList picked = QFileDialog::getOpenFileNames(this,
+            QStringLiteral("选择会话附件"), QDir::homePath());
+        for (const QString& path : picked) {
+            const QFileInfo file(path);
+            const QByteArray name = file.fileName().toUtf8();
+            MaiCloudDriveMediaInfo media{};
+            if (!file.isFile() || !mai_session_attachment_media_info(name.constData(), &media) ||
+                file.size() < 1 || quint64(file.size()) > media.max_size_bytes) {
+                showStatus(QStringLiteral("附件格式或大小无效：%1").arg(file.fileName()), true);
+                continue;
+            }
+            if (runtime_->attachments.size() >= 10) {
+                showStatus(QStringLiteral("每条消息最多添加 10 项附件"), true);
+                break;
+            }
+            if (!runtime_->attachments.contains(file.absoluteFilePath()))
+                runtime_->attachments.append(file.absoluteFilePath());
+        }
+        runtime_->attachmentsLabel->setText(attachmentSummary(runtime_->attachments));
+        runtime_->attachmentsLabel->setToolTip(runtime_->attachments.join(QLatin1Char('\n')));
+        runtime_->attachmentsLabel->setVisible(!runtime_->attachments.isEmpty());
+        runtime_->clearAttachments->setVisible(!runtime_->attachments.isEmpty());
+        updateControls();
+    });
     runtime_->editor->setLeadingAction(attachment);
     composerLayout->addWidget(runtime_->editor, 1);
+    auto* attachmentsRow = new QWidget(composer);
+    auto* attachmentsLayout = new QHBoxLayout(attachmentsRow);
+    attachmentsLayout->setContentsMargins(0, 0, 0, 0);
+    runtime_->attachmentsLabel = new QLabel(attachmentsRow);
+    runtime_->attachmentsLabel->hide();
+    attachmentsLayout->addWidget(runtime_->attachmentsLabel, 1);
+    runtime_->clearAttachments = new QPushButton(QStringLiteral("清除附件"), attachmentsRow);
+    runtime_->clearAttachments->hide();
+    attachmentsLayout->addWidget(runtime_->clearAttachments);
+    connect(runtime_->clearAttachments, &QPushButton::clicked, this, [this] {
+        runtime_->attachments.clear();
+        runtime_->attachmentsLabel->hide();
+        runtime_->clearAttachments->hide();
+        updateControls();
+    });
+    composerLayout->addWidget(attachmentsRow);
     runtime_->send = new QPushButton(runtime_->editor);
     runtime_->send->setObjectName(QStringLiteral("remoteAgentSendButton"));
     runtime_->send->setCursor(Qt::PointingHandCursor);
@@ -216,6 +291,25 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
     connect(runtime_->editor, &QTextEdit::textChanged, this, [this] { updateControls(); });
     connect(runtime_->older, &QPushButton::clicked, this, [this] {
         if (!runtime_->oldest.isEmpty()) requestHistory(runtime_->oldest, 20);
+    });
+    connect(runtime_->view, &MarkdownView::linkActivated, this, [this](const QString& href) {
+        const QString prefix = QStringLiteral("maichat-attachment:");
+        if (!href.startsWith(prefix) || !runtime_->download) return;
+        const QString id = href.mid(prefix.size());
+        static const QRegularExpression valid(
+            QStringLiteral("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"));
+        if (!valid.match(id).hasMatch()) return;
+        const QJsonObject session = runtime_->session;
+        showStatus(QStringLiteral("正在下载会话附件…"));
+        QPointer<RemoteAgentPanel> guard(this);
+        runtime_->download(session, id, [guard, session](const QString& path,
+                                                          const QString& error) {
+            if (!guard || sessionKey(session) != sessionKey(guard->runtime_->session)) return;
+            if (!error.isEmpty()) { guard->showStatus(error, true); return; }
+            if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+                guard->showStatus(QStringLiteral("已下载到 %1，无法自动打开").arg(path));
+            else guard->showStatus({});
+        });
     });
     runtime_->historyTimeout.setSingleShot(true);
     runtime_->historyTimeout.setInterval(30'000);
@@ -241,6 +335,13 @@ RemoteAgentPanel::RemoteAgentPanel(QWidget* parent) : QWidget(parent), runtime_(
         if (runtime_->editor->toPlainText().isEmpty() && !runtime_->pendingDraft.isEmpty())
             runtime_->editor->setPlainText(runtime_->pendingDraft);
         runtime_->pendingDraft.clear();
+        if (!runtime_->pendingAttachmentPaths.isEmpty()) {
+            runtime_->attachments = runtime_->pendingAttachmentPaths;
+            runtime_->attachmentsLabel->setText(attachmentSummary(runtime_->attachments));
+            runtime_->attachmentsLabel->setVisible(true);
+            runtime_->clearAttachments->setVisible(true);
+        }
+        runtime_->pendingAttachmentPaths.clear();
         showStatus(QStringLiteral("是否执行成功尚未确定，请先查看所属设备的会话记录，不要直接重复发送"), true);
         updateControls();
     });
@@ -251,6 +352,7 @@ RemoteAgentPanel::~RemoteAgentPanel() = default;
 
 void RemoteAgentPanel::setCommandHandler(CommandHandler handler) { runtime_->command = std::move(handler); }
 void RemoteAgentPanel::setHistoryHandler(HistoryHandler handler) { runtime_->history = std::move(handler); }
+void RemoteAgentPanel::setDownloadHandler(DownloadHandler handler) { runtime_->download = std::move(handler); }
 
 QJsonObject RemoteAgentPanel::session() const { return runtime_->session; }
 
@@ -261,8 +363,18 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
         ++runtime_->historyGeneration;
         runtime_->historyInFlight = false;
         runtime_->historyTimeout.stop();
-        if (!previous.isEmpty()) runtime_->drafts.insert(previous, runtime_->editor->toPlainText());
+        if (!previous.isEmpty()) {
+            runtime_->drafts.insert(previous, runtime_->editor->toPlainText());
+            runtime_->attachmentDrafts.insert(previous,
+                runtime_->attachments.isEmpty() && !runtime_->pendingAttachmentPaths.isEmpty()
+                    ? runtime_->pendingAttachmentPaths : runtime_->attachments);
+        }
         runtime_->editor->setPlainText(runtime_->drafts.value(next));
+        runtime_->attachments = runtime_->attachmentDrafts.value(next);
+        runtime_->attachmentsLabel->setText(attachmentSummary(runtime_->attachments));
+        runtime_->attachmentsLabel->setToolTip(runtime_->attachments.join(QLatin1Char('\n')));
+        runtime_->attachmentsLabel->setVisible(!runtime_->attachments.isEmpty());
+        runtime_->clearAttachments->setVisible(!runtime_->attachments.isEmpty());
         runtime_->messages.clear();
         runtime_->rendered.clear();
         runtime_->optimisticMessages.clear();
@@ -274,6 +386,7 @@ void RemoteAgentPanel::openSession(const QJsonObject& remote) {
         runtime_->pendingCommand = false;
         runtime_->lastCommandRejected = false;
         runtime_->pendingDraft.clear();
+        runtime_->pendingAttachmentPaths.clear();
         runtime_->awaitingResponse = false;
         runtime_->observedBusy = false;
         runtime_->pendingAction.clear();
@@ -339,16 +452,21 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
     if (!runtime_->command || runtime_->pendingCommand) return;
     const QJsonObject current = runtime_->session;
     runtime_->pendingCommand = true;
+    runtime_->commandTimeout.setInterval(
+        action.value(QStringLiteral("local_files")).toArray().isEmpty() ?
+            30'000 : 2 * 60 * 60 * 1000);
     runtime_->lastCommandRejected = false;
     runtime_->pendingAction = action.value(QStringLiteral("action")).toString();
     runtime_->commandSentAt = QDateTime::currentMSecsSinceEpoch();
     if (runtime_->pendingAction != QStringLiteral("prompt")) runtime_->awaitingResponse = false;
     runtime_->pendingDraft = clearDraft ? runtime_->editor->toPlainText() : QString();
+    runtime_->pendingAttachmentPaths = clearDraft ? runtime_->attachments : QStringList();
     QString optimisticId;
     if (clearDraft && runtime_->pendingAction == QStringLiteral("prompt")) {
         optimisticId = QStringLiteral("msg_z_pending_%1").arg(
             QUuid::createUuid().toString(QUuid::WithoutBraces));
-        const QString text = action.value(QStringLiteral("text")).toString();
+        QString text = action.value(QStringLiteral("text")).toString();
+        if (text.isEmpty()) text = QStringLiteral("已发送%1个附件").arg(runtime_->attachments.size());
         runtime_->optimisticMessages.insert(optimisticId);
         runtime_->pendingOptimisticId = optimisticId;
         runtime_->messages.insert(optimisticId,
@@ -366,6 +484,7 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
         if (sessionKey(current) != sessionKey(runtime_->session)) return;
         if (!error.isEmpty()) {
             runtime_->pendingCommand = false;
+            runtime_->pendingAttachmentPaths.clear();
             removeOptimisticMessage(optimisticId);
             if (clearDraft && runtime_->editor->toPlainText().isEmpty())
                 runtime_->editor->setPlainText(runtime_->pendingDraft);
@@ -379,7 +498,12 @@ void RemoteAgentPanel::sendAction(const QJsonObject& action, bool clearDraft) {
             return;
         }
         if (!runtime_->pendingCommand) return;
-        if (clearDraft && !runtime_->lastCommandRejected) runtime_->editor->clear();
+        if (clearDraft && !runtime_->lastCommandRejected) {
+            runtime_->editor->clear();
+            runtime_->attachments.clear();
+            runtime_->attachmentsLabel->hide();
+            runtime_->clearAttachments->hide();
+        }
         showStatus(QStringLiteral("已送达所属设备，等待确认执行"));
         runtime_->commandTimeout.start();
     });
@@ -399,8 +523,12 @@ void RemoteAgentPanel::sendOrStop() {
         return;
     }
     const QString text = runtime_->editor->toPlainText().trimmed();
-    if (text.isEmpty() || text.toUtf8().size() > 16 * 1024) return;
-    sendAction({{QStringLiteral("action"), QStringLiteral("prompt")}, {QStringLiteral("text"), text}}, true);
+    if ((text.isEmpty() && runtime_->attachments.isEmpty()) || text.toUtf8().size() > 16 * 1024) return;
+    QJsonArray localFiles;
+    for (const QString& path : runtime_->attachments) localFiles.append(path);
+    sendAction({{QStringLiteral("action"), QStringLiteral("prompt")},
+                {QStringLiteral("text"), text},
+                {QStringLiteral("local_files"), localFiles}}, true);
 }
 
 void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& kind, const QJsonObject& payload) {
@@ -417,6 +545,12 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
         runtime_->pendingAction.clear();
         if (runtime_->lastCommandRejected) {
             removeOptimisticMessage(runtime_->pendingOptimisticId);
+            if (!runtime_->pendingAttachmentPaths.isEmpty()) {
+                runtime_->attachments = runtime_->pendingAttachmentPaths;
+                runtime_->attachmentsLabel->setText(attachmentSummary(runtime_->attachments));
+                runtime_->attachmentsLabel->setVisible(true);
+                runtime_->clearAttachments->setVisible(true);
+            }
         } else if (runtime_->optimisticMessages.contains(runtime_->pendingOptimisticId)) {
             const QString canonicalId = result.value(QStringLiteral("user_message_id")).toString();
             if (!canonicalId.isEmpty()) {
@@ -437,6 +571,7 @@ void RemoteAgentPanel::receivePayload(const QJsonObject& remote, const QString& 
             !runtime_->pendingDraft.isEmpty())
             runtime_->editor->setPlainText(runtime_->pendingDraft);
         runtime_->pendingDraft.clear();
+        runtime_->pendingAttachmentPaths.clear();
         showStatus(runtime_->lastCommandRejected ?
                        result.value(QStringLiteral("error")).toString() : QString(),
                    runtime_->lastCommandRejected);
@@ -616,7 +751,8 @@ void RemoteAgentPanel::updateControls() {
                               "QPushButton#remoteAgentSendButton:hover{background:#095a9f;}"
                               "QPushButton#remoteAgentSendButton:disabled{background:#b8d3e8;}")));
     runtime_->send->setEnabled(online && !runtime_->pendingCommand &&
-                               (busy || !runtime_->editor->toPlainText().trimmed().isEmpty()));
+                               (busy || !runtime_->editor->toPlainText().trimmed().isEmpty() ||
+                                !runtime_->attachments.isEmpty()));
 }
 
 void RemoteAgentPanel::showStatus(const QString& message, bool failure) {

@@ -185,6 +185,19 @@ int main(int argc, char** argv) {
     for (const char* invalid : {".png", "../a.png", "dir/a.jpg", "a.gif", " a.png"})
         require(mai_cloud_drive_media_info(invalid, &media) == 0,
                 "shared image classifier accepted an invalid name");
+    for (const auto& fixture : {
+             std::pair<const char*, const char*>{"voice.m4a", "audio/mp4"},
+             {"sample.gif", "image/gif"},
+             {"report.pdf", "application/octet-stream"}}) {
+        require(mai_session_attachment_media_info(fixture.first, &media) == 1 &&
+                std::strcmp(media.content_type_utf8, fixture.second) == 0,
+                "Session attachment classifier returned wrong MIME");
+    }
+    require(mai_session_attachment_media_info("../report.pdf", &media) == 0 &&
+            mai_session_attachment_media_info("CON.pdf", &media) == 0 &&
+            mai_session_attachment_media_info("bad?.jpg", &media) == 0 &&
+            mai_cloud_drive_media_info("report.pdf", &media) == 0,
+            "Session files leaked into personal cloud drive formats");
     const std::string endpoint = argv[1];
     const std::string ca = readFile(argv[2]);
     const std::string unrelatedCa = readFile(argv[3]);
@@ -459,6 +472,35 @@ int main(int argc, char** argv) {
     require(imageResult.status == MAI_CLOUD_DRIVE_FILE_ERROR &&
             !exists(imageCheckpoint), "oversized image reached the upload service");
     mai_cloud_drive_result_free(&imageResult);
+
+    const std::string documentPath = std::string(argv[4]) + "/notes.pdf";
+    const std::string documentCheckpoint = std::string(argv[4]) +
+        "/notes.maicloud.json";
+    {
+        std::ofstream document(documentPath, std::ios::binary);
+        document << "Session attachment transport fixture";
+    }
+    MaiCloudDriveOptions session = author;
+    session.owner_device_slot_utf8 = "mac";
+    session.owner_login_session_id_utf8 = "login_a";
+    session.session_id_utf8 = "session_a";
+    MaiCloudDriveResult documentResult{};
+    mai_cloud_drive_upload_resumable(&session, documentPath.c_str(),
+        documentCheckpoint.c_str(), "notes.pdf", "application/octet-stream",
+        nullptr, nullptr, nullptr, &documentResult);
+    const Call uploadedDocument = take(&documentResult);
+    require(uploadedDocument.status == MAI_CLOUD_DRIVE_OK &&
+            uploadedDocument.body.find("\"room_key\":\"mac:session_a\"") !=
+                std::string::npos && !exists(documentCheckpoint),
+            "Session file did not upload through its separate route");
+    const Call documentLink = request(session, MAI_CLOUD_DRIVE_PLAY_LINK,
+                                      target.c_str());
+    require(documentLink.status == MAI_CLOUD_DRIVE_OK &&
+            documentLink.body.find("mac:session_a") != std::string::npos,
+            "Session file could not refresh its signed read link");
+    require(request(session, MAI_SESSION_ATTACHMENT_CLEANUP_ROOM).status ==
+            MAI_CLOUD_DRIVE_OK,
+            "Session room cleanup did not reach the separate API");
 
     std::cout << "cloud drive local TLS media upload/cancel/resume/privacy passed\n";
     return 0;

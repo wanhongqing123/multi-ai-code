@@ -24,10 +24,12 @@ function validUploadID(value) {
   return typeof value === 'string' && /^[A-Za-z0-9_+\/=-]{1,512}$/.test(value);
 }
 
-function mediaType(name) {
+function mediaType(name, mode = 'drive') {
   if (typeof name !== 'string' || name !== name.trim() ||
       Buffer.byteLength(name,'utf8') > 240 || [...name].length < 1 ||
       /[\u0000-\u001f\u007f-\u009f\u2028\u2029/\\]/u.test(name)) return null;
+  if (mode === 'session' && (/[<>:"|?*]/u.test(name) || /[. ]$/u.test(name) ||
+      /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name))) return null;
   if (/\.mp4$/i.test(name)) return { contentType:'video/mp4', extension:'.mp4',kind:'video' };
   if (/\.mov$/i.test(name)) return { contentType:'video/quicktime', extension:'.mov',kind:'video' };
   if (/\.jpe?g$/i.test(name))
@@ -35,6 +37,19 @@ function mediaType(name) {
   if (/\.png$/i.test(name)) return { contentType:'image/png',extension:'.png',kind:'image' };
   if (/\.webp$/i.test(name)) return { contentType:'image/webp',extension:'.webp',kind:'image' };
   if (/\.heic$/i.test(name)) return { contentType:'image/heic',extension:'.heic',kind:'image' };
+  if (mode === 'session') {
+    if (/\.gif$/i.test(name))
+      return { contentType:'image/gif',extension:'.gif',kind:'image' };
+    const audio = { mp3:'audio/mpeg', m4a:'audio/mp4', aac:'audio/aac',
+      wav:'audio/wav', flac:'audio/flac', ogg:'audio/ogg' };
+    const suffix = name.match(/\.([a-zA-Z0-9]{1,12})$/);
+    if (suffix) {
+      const extension = '.' + suffix[1].toLowerCase();
+      return { contentType:audio[suffix[1].toLowerCase()] ||
+        'application/octet-stream',extension,
+        kind:audio[suffix[1].toLowerCase()] ? 'audio' : 'file' };
+    }
+  }
   return null;
 }
 
@@ -64,13 +79,31 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
   signThumbnail, deleteObject,
   newID = randomUUID, maxVideoBytes = DEFAULT_VIDEO_BYTES,
   maxImageBytes = DEFAULT_IMAGE_BYTES,
-  quotaBytes = DEFAULT_QUOTA_BYTES, allowedAccountIds = null }) {
+  quotaBytes = DEFAULT_QUOTA_BYTES, allowedAccountIds = null,
+  mode = 'drive' }) {
   if (!db || !Number.isSafeInteger(maxVideoBytes) || maxVideoBytes < PART_BYTES ||
       !Number.isSafeInteger(maxImageBytes) || maxImageBytes < 1 ||
       maxImageBytes > DEFAULT_IMAGE_BYTES ||
       !Number.isSafeInteger(quotaBytes) || quotaBytes < maxVideoBytes ||
-      (allowedAccountIds !== null && !(allowedAccountIds instanceof Set)))
+      (allowedAccountIds !== null && !(allowedAccountIds instanceof Set)) ||
+      !['drive','session'].includes(mode))
     throw new Error('Invalid cloud drive configuration');
+
+  const table = mode === 'session' ? 'session_attachments' : 'cloud_drive_videos';
+  const root = mode === 'session' ? '/v1/session-attachments' :
+    '/v1/cloud-drive/videos';
+  // The table name comes only from the two constants above, never from a request.
+  const prepare = sql => db.prepare(sql.replaceAll('cloud_drive_videos',table));
+  const roomKey = body => {
+    const slot = body?.owner_slot;
+    const login = body?.owner_login_session_id;
+    const session = body?.session_id;
+    if (!['ios_phone','android_phone','tablet','mac','windows'].includes(slot) ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(login || '') ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(session || '')) return null;
+    // Session history survives a new login on the same owner slot.
+    return `${slot}:${session}`;
+  };
 
   const storageReady = (...callbacks) => callbacks.every(callback =>
     typeof callback === 'function');
@@ -78,11 +111,11 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
   const partsTotal = row => Math.ceil(row.size_bytes/PART_BYTES);
   const partBytes = (row,partNumber) => Math.min(PART_BYTES,
     row.size_bytes-(partNumber-1)*PART_BYTES);
-  const own = (id,userId) => db.prepare(`SELECT * FROM cloud_drive_videos
+  const own = (id,userId) => prepare(`SELECT * FROM cloud_drive_videos
     WHERE id=? AND owner_user_id=?`).get(id,userId);
 
   function quota(owner) {
-    const usage = db.prepare(`SELECT
+    const usage = prepare(`SELECT
       COALESCE(SUM(CASE WHEN status='ready' THEN size_bytes ELSE 0 END),0) AS used_bytes,
       COALESCE(SUM(CASE WHEN status IN ('uploading','completing') OR cleanup_pending=1
         THEN size_bytes ELSE 0 END),0) AS reserved_bytes
@@ -93,13 +126,16 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
   function publicReady(row) {
     return { video_id:row.id,status:'ready',name:row.name,
       size_bytes:row.size_bytes,content_type:row.content_type,
-      media_type:row.content_type.startsWith('image/') ? 'image' : 'video',
+      media_type:row.content_type.startsWith('image/') ? 'image' :
+        row.content_type.startsWith('audio/') ? 'audio' :
+        row.content_type.startsWith('video/') ? 'video' : 'file',
+      ...(mode === 'session' ? { attachment_id:row.id,room_key:row.room_key } : {}),
       created_at:row.created_at };
   }
 
   async function settleDeletedCompletion(row,principal) {
     const timestamp = now();
-    const changed = db.prepare(`UPDATE cloud_drive_videos SET cleanup_pending=1,
+    const changed = prepare(`UPDATE cloud_drive_videos SET cleanup_pending=1,
       cleanup_after=?,cleanup_hold_until=MAX(COALESCE(cleanup_hold_until,0),?),
       cleanup_revision=cleanup_revision+1
       WHERE id=? AND owner_user_id=? AND status='deleted'`)
@@ -120,8 +156,11 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
   }
 
   async function begin(body,principal) {
-    const media = mediaType(body.name);
+    const media = mediaType(body.name,mode);
     const bytes = body.size_bytes;
+    const binding = mode === 'session' ? roomKey(body) : null;
+    if (mode === 'session' && !binding)
+      return result(400,{ error:'Invalid Session binding' });
     if (!media || body.content_type !== media.contentType ||
         !Number.isSafeInteger(bytes) || bytes < 1 ||
         bytes > (media.kind === 'image' ? maxImageBytes : maxVideoBytes))
@@ -131,26 +170,27 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     const id = newID();
     if (!validID(id)) throw new Error('Invalid cloud video ID');
     const created = now();
-    const key = `cloud-drive/${principal.account_id}/` +
+    const key = `${mode === 'session' ? 'session-attachments' : 'cloud-drive'}/${principal.account_id}/` +
       `${new Date(created).toISOString().slice(0,10)}/${id}${media.extension}`;
     const expires = created+UPLOAD_TTL_MS;
     const reservation = db.transaction(() => {
-      if (!db.prepare('SELECT 1 FROM users WHERE id=? AND disabled_at IS NULL')
+      if (!prepare('SELECT 1 FROM users WHERE id=? AND disabled_at IS NULL')
         .get(principal.user_id))
         return result(401,{ error:'Account is no longer active' });
       const available = quota(principal.user_id);
       if (available.used_bytes+available.reserved_bytes+bytes > quotaBytes)
         return result(413,{ error:'Cloud drive quota exceeded',quota:available });
-      const pending = db.prepare(`SELECT COUNT(*) AS count FROM cloud_drive_videos
+      const pending = prepare(`SELECT COUNT(*) AS count FROM cloud_drive_videos
         WHERE owner_user_id=? AND status IN ('uploading','completing')`)
         .get(principal.user_id).count;
       if (pending >= 10)
         return result(429,{ error:'Too many unfinished uploads' });
-      db.prepare(`INSERT INTO cloud_drive_videos
+      prepare(`INSERT INTO cloud_drive_videos
         (id,owner_user_id,name,object_key,size_bytes,content_type,status,
-        created_at,upload_expires_at)
-        VALUES(?,?,?,?,?,?,'uploading',?,?)`)
-        .run(id,principal.user_id,body.name,key,bytes,media.contentType,created,expires);
+        created_at,upload_expires_at${mode === 'session' ? ',room_key' : ''})
+        VALUES(?,?,?,?,?,?,'uploading',?,?${mode === 'session' ? ',?' : ''})`)
+        .run(id,principal.user_id,body.name,key,bytes,media.contentType,created,
+          expires,...(mode === 'session' ? [binding] : []));
       return null;
     })();
     if (reservation) return reservation;
@@ -160,7 +200,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     if (!validUploadID(uploadId)) {
       // The OSS init request may have succeeded even if its response was lost.
       // Keep the exact key until ListMultipartUploads can prove it is empty.
-      db.prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
+      prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
         cleanup_pending=1,cleanup_after=?,cleanup_hold_until=?,
         cleanup_revision=cleanup_revision+1
         WHERE id=? AND owner_user_id=? AND status='uploading'
@@ -169,13 +209,13 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       await sweep();
       return result(502,{ error:'Could not begin the video upload' });
     }
-    const saved = db.prepare(`UPDATE cloud_drive_videos SET upload_id=?
+    const saved = prepare(`UPDATE cloud_drive_videos SET upload_id=?
       WHERE id=? AND owner_user_id=? AND status='uploading' AND upload_id IS NULL`)
       .run(uploadId,id,principal.user_id).changes;
     if (!saved) {
       // Deletion may have happened while OSS was creating the multipart task.
       // Keep its returned upload ID in the tombstone so abort can be retried.
-      const retained = db.prepare(`UPDATE cloud_drive_videos SET upload_id=?,
+      const retained = prepare(`UPDATE cloud_drive_videos SET upload_id=?,
         cleanup_pending=1,cleanup_after=?,
         cleanup_hold_until=MAX(COALESCE(cleanup_hold_until,0),?),
         cleanup_revision=cleanup_revision+1
@@ -189,6 +229,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       return result(409,{ error:'Upload was canceled' });
     }
     return result(201,{ video_id:id,upload_id:uploadId,media_type:media.kind,
+      ...(mode === 'session' ? { attachment_id:id,room_key:binding } : {}),
       part_size:PART_BYTES,
       parts_total:Math.ceil(bytes/PART_BYTES),upload_expires_at:expiresISO(expires),
       quota:quota(principal.user_id) });
@@ -232,7 +273,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     const current = own(id,principal.user_id);
     if (current?.status !== 'uploading' || current.upload_id !== row.upload_id)
       return result(409,{ error:'Upload changed while signing' });
-    db.prepare('UPDATE cloud_drive_videos SET last_part_signed_at=? WHERE id=?')
+    prepare('UPDATE cloud_drive_videos SET last_part_signed_at=? WHERE id=?')
       .run(now(),id);
     return result(200,{ part_number:partNumber,part_size_bytes:expected,
       upload_url:signed.upload_url,upload_headers:signed.upload_headers,expires_in:300 });
@@ -275,7 +316,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       return result(410,{ error:'Upload expired' });
     if (!row.upload_id || !storageReady(listParts,completeUpload,verifyObject))
       return result(503,{ error:'Video completion is unavailable' });
-    const claimed = db.prepare(`UPDATE cloud_drive_videos SET status='completing',
+    const claimed = prepare(`UPDATE cloud_drive_videos SET status='completing',
       completion_started_at=?
       WHERE id=? AND owner_user_id=? AND status='uploading'`)
       .run(now(),id,principal.user_id).changes;
@@ -292,7 +333,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         row.size_bytes,row.content_type); } catch { /* retry later */ }
       if (head?.exists === true && head.size_bytes === row.size_bytes &&
           head.content_type === row.content_type) {
-        const changed = db.prepare(`UPDATE cloud_drive_videos SET status='ready',ready_at=?
+        const changed = prepare(`UPDATE cloud_drive_videos SET status='ready',ready_at=?
           WHERE id=? AND owner_user_id=? AND status='completing'`)
           .run(now(),id,principal.user_id).changes;
         return changed ? result(200,publicReady(row)) :
@@ -301,7 +342,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       if (now()-(currentRow.completion_started_at || 0) > 150_000) {
         try {
           await listParts(principal.account_id,row.object_key,row.upload_id);
-          db.prepare(`UPDATE cloud_drive_videos SET status='uploading',
+          prepare(`UPDATE cloud_drive_videos SET status='uploading',
             completion_started_at=NULL WHERE id=? AND owner_user_id=?
             AND status='completing' AND completion_started_at=?`)
             .run(id,principal.user_id,currentRow.completion_started_at);
@@ -314,7 +355,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     let parts;
     try { parts = await listParts(principal.account_id,row.object_key,row.upload_id); }
     catch {
-      db.prepare(`UPDATE cloud_drive_videos SET status='uploading'
+      prepare(`UPDATE cloud_drive_videos SET status='uploading'
         ,completion_started_at=NULL WHERE id=? AND status='completing'`).run(id);
       if (own(id,principal.user_id)?.status === 'deleted')
         return settleDeletedCompletion(row,principal);
@@ -325,7 +366,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         parts.some((part,index) => part.part_number !== index+1 ||
           part.size_bytes !== partBytes(row,index+1) ||
           typeof part.etag !== 'string' || !part.etag)) {
-      db.prepare(`UPDATE cloud_drive_videos SET status='uploading'
+      prepare(`UPDATE cloud_drive_videos SET status='uploading'
         ,completion_started_at=NULL WHERE id=? AND status='completing'`).run(id);
       if (own(id,principal.user_id)?.status === 'deleted')
         return settleDeletedCompletion(row,principal);
@@ -351,14 +392,14 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         head.content_type !== row.content_type) {
       if (own(id,principal.user_id)?.status === 'deleted')
         return settleDeletedCompletion(row,principal);
-      db.prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
+      prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
         cleanup_pending=1,cleanup_after=?,cleanup_hold_until=?,
         cleanup_revision=cleanup_revision+1 WHERE id=? AND status='completing'`)
         .run(now(),now(),now()+COMPLETION_HOLD_MS,id);
       await sweep();
       return result(502,{ error:'Completed video size or type mismatch' });
     }
-    const changed = db.prepare(`UPDATE cloud_drive_videos SET status='ready',ready_at=?
+    const changed = prepare(`UPDATE cloud_drive_videos SET status='ready',ready_at=?
       WHERE id=? AND owner_user_id=? AND status='completing'`)
       .run(now(),id,principal.user_id).changes;
     if (!changed) {
@@ -370,14 +411,16 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
   function list(principal,before) {
     const cursor = decodeCursor(before);
     if (cursor === false) return result(400,{ error:'Invalid video cursor' });
-    const rows = db.prepare(`SELECT id,name,size_bytes,content_type,created_at
+    const rows = prepare(`SELECT id,name,size_bytes,content_type,created_at${mode === 'session' ? ',room_key' : ''}
       FROM cloud_drive_videos WHERE owner_user_id=? AND status='ready'
       AND (? IS NULL OR created_at<? OR (created_at=? AND id<?))
       ORDER BY created_at DESC,id DESC LIMIT ?`)
       .all(principal.user_id,cursor?.[0] ?? null,cursor?.[0] ?? null,
         cursor?.[0] ?? null,cursor?.[1] ?? null,PAGE_SIZE+1);
     const page = rows.slice(0,PAGE_SIZE).map(row => ({ ...row,
-      media_type:row.content_type.startsWith('image/') ? 'image' : 'video' }));
+      media_type:row.content_type.startsWith('image/') ? 'image' :
+        row.content_type.startsWith('audio/') ? 'audio' :
+        row.content_type.startsWith('video/') ? 'video' : 'file' }));
     return result(200,{ videos:page,
       next_cursor:rows.length > PAGE_SIZE ? encodeCursor(page.at(-1)) : null,
       quota:quota(principal.user_id) });
@@ -399,7 +442,11 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       return result(404,{ error:'Video not found' });
     return result(200,{ read_url:url,read_expires_in:60,
       size_bytes:row.size_bytes,content_type:row.content_type,
-      media_type:row.content_type.startsWith('image/') ? 'image' : 'video' });
+      media_type:row.content_type.startsWith('image/') ? 'image' :
+        row.content_type.startsWith('audio/') ? 'audio' :
+        row.content_type.startsWith('video/') ? 'video' : 'file',
+      ...(mode === 'session' ? { attachment_id:row.id,name:row.name,
+        room_key:row.room_key } : {}) });
   }
 
   async function thumbnail(id,principal) {
@@ -425,7 +472,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     const row = own(id,principal.user_id);
     if (!row) return result(404,{ error:'Video not found' });
     if (row.status !== 'deleted')
-      db.prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
+      prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
         cleanup_pending=1,cleanup_after=?,
         cleanup_hold_until=CASE WHEN status='completing' OR
           (status='uploading' AND upload_id IS NULL) THEN ? ELSE NULL END,
@@ -441,7 +488,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
 
   async function sweep() {
     const current = now();
-    db.prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
+    prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
       cleanup_pending=1,cleanup_after=?,
       cleanup_hold_until=CASE WHEN status='completing' OR
         (status='uploading' AND upload_id IS NULL) THEN ? ELSE NULL END,
@@ -450,7 +497,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       .run(current,current,current+COMPLETION_HOLD_MS,current);
     // Old tombstones can predate the initialization-race hold. Do not discard
     // one while an OSS init response may still be returning an upload ID.
-    db.prepare(`UPDATE cloud_drive_videos SET cleanup_hold_until=?,
+    prepare(`UPDATE cloud_drive_videos SET cleanup_hold_until=?,
       cleanup_revision=cleanup_revision+1
       WHERE status='deleted' AND cleanup_pending=1 AND upload_id IS NULL
       AND cleanup_hold_until IS NULL`)
@@ -461,11 +508,11 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     // Reserve work for both queues so repeatedly failing pending rows cannot
     // starve pre-upgrade cleanup-complete tombstones forever.
     const rows = [
-      ...db.prepare(`SELECT ${fields} FROM cloud_drive_videos
+      ...prepare(`SELECT ${fields} FROM cloud_drive_videos
         WHERE status='deleted' AND cleanup_pending=1
         AND COALESCE(cleanup_after,0)<=?
         ORDER BY COALESCE(cleanup_after,0),id LIMIT 50`).all(current),
-      ...db.prepare(`SELECT ${fields} FROM cloud_drive_videos
+      ...prepare(`SELECT ${fields} FROM cloud_drive_videos
         WHERE status='deleted' AND cleanup_pending=0
         ORDER BY COALESCE(deleted_at,0),id LIMIT 50`).all()
     ];
@@ -474,13 +521,13 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       const legacy = row.cleanup_pending === 0;
       const holdUntil = Math.max(row.cleanup_hold_until || 0,
         legacy ? (row.deleted_at || current)+COMPLETION_HOLD_MS : 0);
-      const requeueLegacy = nextAt => db.prepare(`UPDATE cloud_drive_videos
+      const requeueLegacy = nextAt => prepare(`UPDATE cloud_drive_videos
         SET cleanup_pending=1,cleanup_after=?,cleanup_hold_until=?,
         cleanup_revision=cleanup_revision+1 WHERE id=? AND status='deleted'
         AND cleanup_pending=0 AND cleanup_revision=?`)
         .run(nextAt,holdUntil,row.id,row.cleanup_revision).changes;
       try {
-        const owner = db.prepare('SELECT account_id FROM users WHERE id=?')
+        const owner = prepare('SELECT account_id FROM users WHERE id=?')
           .get(row.owner_user_id)?.account_id;
         if (!owner || !storageReady(listUploads,abortUpload,deleteObject,
             verifyObject)) throw new Error('Cloud cleanup is unavailable');
@@ -501,7 +548,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         if (holdUntil && current < holdUntil) {
           const nextAt = Math.min(current+CLEANUP_RETRY_MS,holdUntil);
           if (legacy) requeueLegacy(nextAt);
-          else db.prepare(`UPDATE cloud_drive_videos SET cleanup_after=?
+          else prepare(`UPDATE cloud_drive_videos SET cleanup_after=?
             WHERE id=? AND status='deleted' AND cleanup_pending=1
             AND cleanup_revision=?`)
             .run(nextAt,row.id,row.cleanup_revision);
@@ -511,7 +558,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         // none. DELETE succeeded and HEAD confirmed the object is absent.
         // The revision guard protects a tombstone refreshed by a late init or
         // Complete while these network requests were in flight.
-        const done = db.prepare(`DELETE FROM cloud_drive_videos
+        const done = prepare(`DELETE FROM cloud_drive_videos
           WHERE id=? AND status='deleted' AND cleanup_pending=?
           AND cleanup_revision=? AND
           (cleanup_hold_until IS NULL OR cleanup_hold_until<=?)`)
@@ -528,7 +575,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
   }
 
   async function cleanupAccount(userId) {
-    db.prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
+    prepare(`UPDATE cloud_drive_videos SET status='deleted',deleted_at=?,
       cleanup_pending=1,cleanup_after=?,
       cleanup_hold_until=CASE WHEN status='completing' OR
         (status='uploading' AND upload_id IS NULL) THEN ? ELSE NULL END,
@@ -536,28 +583,46 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       WHERE owner_user_id=? AND status<>'deleted'`)
       .run(now(),now(),now()+COMPLETION_HOLD_MS,userId);
     await sweep();
-    return { pending:db.prepare(`SELECT COUNT(*) AS count FROM cloud_drive_videos
+    return { pending:prepare(`SELECT COUNT(*) AS count FROM cloud_drive_videos
       WHERE owner_user_id=?`).get(userId).count };
+  }
+
+  function cleanupRoom(body,principal) {
+    if (mode !== 'session') return result(404,{ error:'Not found' });
+    const binding = roomKey(body);
+    if (!binding) return result(400,{ error:'Invalid Session binding' });
+    const current = now();
+    const changed = prepare(`UPDATE cloud_drive_videos SET status='deleted',
+      deleted_at=?,cleanup_pending=1,cleanup_after=?,
+      cleanup_hold_until=CASE WHEN status='completing' OR
+        (status='uploading' AND upload_id IS NULL) THEN ? ELSE NULL END,
+      cleanup_revision=cleanup_revision+1
+      WHERE owner_user_id=? AND room_key=? AND status<>'deleted'`)
+      .run(current,current,current+COMPLETION_HOLD_MS,
+        principal.user_id,binding).changes;
+    return result(202,{ room_key:binding,deleted:changed });
   }
 
   async function handle(method,path,body,principal,query) {
     if (!principal) return result(401,{ error:'Authentication required' });
     if (allowedAccountIds && !allowedAccountIds.has(principal.account_id))
       return result(404,{ error:'Not found' });
-    if (method === 'POST' && path === '/v1/cloud-drive/videos/uploads')
+    if (method === 'POST' && path === `${root}/uploads`)
       return begin(body,principal);
-    if (method === 'GET' && path === '/v1/cloud-drive/videos')
+    if (method === 'POST' && path === `${root}/cleanup-room`)
+      return cleanupRoom(body,principal);
+    if (method === 'GET' && path === root)
       return list(principal,query?.get('before'));
-    const part = path.match(/^\/v1\/cloud-drive\/videos\/uploads\/([^/]+)\/parts\/([^/]+)\/sign$/);
+    const part = path.match(new RegExp(`^${root}/uploads/([^/]+)/parts/([^/]+)/sign$`));
     if (part && method === 'POST') return signOne(part[1],part[2],body,principal);
-    const upload = path.match(/^\/v1\/cloud-drive\/videos\/uploads\/([^/]+)(\/parts|\/complete)?$/);
+    const upload = path.match(new RegExp(`^${root}/uploads/([^/]+)(/parts|/complete)?$`));
     if (upload && upload[2] === '/parts' && method === 'GET')
       return uploadedParts(upload[1],principal);
     if (upload && upload[2] === '/complete' && method === 'POST')
       return complete(upload[1],principal);
     if (upload && !upload[2] && method === 'DELETE')
       return remove(upload[1],principal);
-    const item = path.match(/^\/v1\/cloud-drive\/videos\/([^/]+)(\/play-link|\/thumbnail-link)?$/);
+    const item = path.match(new RegExp(`^${root}/([^/]+)(/play-link|/thumbnail-link)?$`));
     if (item && item[2] === '/play-link' && method === 'GET')
       return play(item[1],principal);
     if (item && item[2] === '/thumbnail-link' && method === 'GET')

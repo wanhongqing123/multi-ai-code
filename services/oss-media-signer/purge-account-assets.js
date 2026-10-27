@@ -12,7 +12,8 @@ async function purgeAccountAssets(client, accountId, execute = false,
   const result = {};
   const roots = [...PREFIXES.map(root => ({ root, storage:client })),
     ...(includeVideoCircle ? [{ root:'video-circle',storage:client }] : []),
-    ...(cloudClient ? [{ root:'cloud-drive',storage:cloudClient }] : [])];
+    ...(cloudClient ? [{ root:'cloud-drive',storage:cloudClient },
+      { root:'session-attachments',storage:cloudClient }] : [])];
   for (const { root,storage } of roots) {
     const prefix = `${root}/${accountId}/`;
     let marker;
@@ -33,9 +34,11 @@ async function purgeAccountAssets(client, accountId, execute = false,
     }
     result[root] = count;
   }
-  let multipartCount = 0;
+  const multipartCounts = {};
   if (cloudClient) {
-    const prefix = `cloud-drive/${accountId}/`;
+    for (const root of ['cloud-drive','session-attachments']) {
+    const prefix = `${root}/${accountId}/`;
+    let multipartCount = 0;
     let keyMarker;
     let uploadIdMarker;
     while (true) {
@@ -59,9 +62,11 @@ async function purgeAccountAssets(client, accountId, execute = false,
       keyMarker = page.nextKeyMarker;
       uploadIdMarker = page.nextUploadIdMarker;
     }
+    multipartCounts[root] = multipartCount;
+    }
   }
   return { account_id: accountId, execute, object_counts: result,
-    ...(cloudClient ? { multipart_upload_counts:{ 'cloud-drive':multipartCount } } : {}) };
+    ...(cloudClient ? { multipart_upload_counts:multipartCounts } : {}) };
 }
 
 async function main(args = process.argv.slice(2), env = process.env) {

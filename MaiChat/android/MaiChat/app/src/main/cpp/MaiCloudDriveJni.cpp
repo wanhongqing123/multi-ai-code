@@ -117,10 +117,22 @@ bool configureProxy(JNIEnv* env, ProxyContext* context) {
 
 struct Call {
     std::string base, token, payload, suffix, path, checkpoint, name, type, stableId;
+    std::string ownerSlot, ownerLogin, sessionId;
     std::vector<char> pem;
     ProxyContext proxy;
     MaiCloudDriveOptions options{};
 };
+
+bool readSessionRoom(JNIEnv* env, jstring slot, jstring login, jstring session,
+                     Call* call) {
+    if (!readString(env, slot, &call->ownerSlot) ||
+        !readString(env, login, &call->ownerLogin) ||
+        !readString(env, session, &call->sessionId)) return false;
+    call->options.owner_device_slot_utf8 = call->ownerSlot.c_str();
+    call->options.owner_login_session_id_utf8 = call->ownerLogin.c_str();
+    call->options.session_id_utf8 = call->sessionId.c_str();
+    return true;
+}
 
 bool readCall(JNIEnv* env, jstring base, jstring token, jbyteArray pem,
               jstring suffix, Call* call) {
@@ -242,6 +254,93 @@ Java_com_kongshang_maichat_MaiCloudDrive_nativeMediaInfo(JNIEnv* env, jclass,
     if (mediaType) env->DeleteLocalRef(mediaType);
     env->DeleteLocalRef(type);
     return value;
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_kongshang_maichat_MaiSessionAttachments_nativeMediaInfo(
+    JNIEnv* env, jclass, jstring displayName) {
+    std::string name;
+    MaiCloudDriveMediaInfo info{};
+    if (!readString(env, displayName, &name) ||
+        !mai_session_attachment_media_info(name.c_str(), &info)) return nullptr;
+    jclass type = env->FindClass("com/kongshang/maichat/MaiCloudDrive$MediaInfo");
+    if (!type) return nullptr;
+    jmethodID constructor = env->GetMethodID(type, "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;J)V");
+    if (!constructor) { env->DeleteLocalRef(type); return nullptr; }
+    jstring contentType = env->NewStringUTF(info.content_type_utf8);
+    jstring mediaType = env->NewStringUTF(info.media_type_utf8);
+    jobject value = contentType && mediaType ? env->NewObject(type, constructor,
+        contentType, mediaType, jlong(info.max_size_bytes)) : nullptr;
+    if (contentType) env->DeleteLocalRef(contentType);
+    if (mediaType) env->DeleteLocalRef(mediaType);
+    env->DeleteLocalRef(type);
+    return value;
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_kongshang_maichat_MaiSessionAttachments_nativeUploadFile(
+    JNIEnv* env, jclass, jstring base, jstring token, jbyteArray pem,
+    jstring source, jstring checkpoint, jstring name, jstring type,
+    jstring slot, jstring login, jstring session) {
+    MaiCloudDriveResult result{};
+    result.status = MAI_CLOUD_DRIVE_INVALID_ARGUMENT;
+    Call call;
+    if (!readCall(env, base, token, pem, nullptr, &call) ||
+        !readSessionRoom(env, slot, login, session, &call) ||
+        !readString(env, source, &call.path) ||
+        !readString(env, checkpoint, &call.checkpoint) ||
+        !readString(env, name, &call.name) ||
+        !readString(env, type, &call.type)) return complete(env, &call, &result);
+    MaiCloudDriveCancel* cancel = mai_cloud_drive_cancel_create();
+    if (cancel) {
+        mai_cloud_drive_upload_resumable(&call.options, call.path.c_str(),
+            call.checkpoint.c_str(), call.name.c_str(), call.type.c_str(),
+            cancel, nullptr, nullptr, &result);
+        mai_cloud_drive_cancel_destroy(cancel);
+    }
+    return complete(env, &call, &result);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_kongshang_maichat_MaiSessionAttachments_nativeReadLink(
+    JNIEnv* env, jclass, jstring base, jstring token, jbyteArray pem,
+    jstring attachmentId, jstring slot, jstring login, jstring session) {
+    MaiCloudDriveResult result{};
+    result.status = MAI_CLOUD_DRIVE_INVALID_ARGUMENT;
+    Call call;
+    if (!readCall(env, base, token, pem, nullptr, &call) ||
+        !readSessionRoom(env, slot, login, session, &call) ||
+        !readString(env, attachmentId, &call.payload) ||
+        call.payload.find_first_not_of("0123456789abcdef-") != std::string::npos)
+        return complete(env, &call, &result);
+    call.payload = "{\"video_id\":\"" + call.payload + "\"}";
+    MaiCloudDriveCancel* cancel = mai_cloud_drive_cancel_create();
+    if (cancel) {
+        mai_cloud_drive_request(&call.options, MAI_CLOUD_DRIVE_PLAY_LINK,
+            call.payload.c_str(), cancel, &result);
+        mai_cloud_drive_cancel_destroy(cancel);
+    }
+    return complete(env, &call, &result);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_kongshang_maichat_MaiSessionAttachments_nativeCleanupRoom(
+    JNIEnv* env, jclass, jstring base, jstring token, jbyteArray pem,
+    jstring slot, jstring login, jstring session) {
+    MaiCloudDriveResult result{};
+    result.status = MAI_CLOUD_DRIVE_INVALID_ARGUMENT;
+    Call call;
+    if (!readCall(env, base, token, pem, nullptr, &call) ||
+        !readSessionRoom(env, slot, login, session, &call))
+        return complete(env, &call, &result);
+    MaiCloudDriveCancel* cancel = mai_cloud_drive_cancel_create();
+    if (cancel) {
+        mai_cloud_drive_request(&call.options, MAI_SESSION_ATTACHMENT_CLEANUP_ROOM,
+            "{}", cancel, &result);
+        mai_cloud_drive_cancel_destroy(cancel);
+    }
+    return complete(env, &call, &result);
 }
 
 extern "C" JNIEXPORT void JNICALL

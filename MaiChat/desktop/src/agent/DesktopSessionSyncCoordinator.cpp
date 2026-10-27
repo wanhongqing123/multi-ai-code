@@ -3,15 +3,21 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSysInfo>
 #include <QUuid>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include "agent/AgentController.h"
 #include "agent/DesktopSessionSyncHost.h"
+#include "agent/DesktopSessionAttachments.h"
 
 namespace {
 
@@ -63,6 +69,8 @@ void DesktopSessionSyncCoordinator::connectionReady() {
 }
 
 void DesktopSessionSyncCoordinator::connectionLost() {
+    localLoginSession_.clear();
+    pendingAttachmentCleanupRooms_.clear();
     initiallyPublishedSessions_.clear();
     publishedMessageDigests_.clear();
     publishedStateDigests_.clear();
@@ -112,6 +120,20 @@ void DesktopSessionSyncCoordinator::setDefaultWorkspaceDirectory(const QString& 
 
 void DesktopSessionSyncCoordinator::setPayloadHandler(PayloadHandler handler) {
     payloadHandler_ = std::move(handler);
+}
+
+void DesktopSessionSyncCoordinator::setAttachmentAccessProvider(
+    AttachmentAccessProvider provider) {
+    attachmentAccessProvider_ = std::move(provider);
+}
+
+DesktopSessionRoom DesktopSessionSyncCoordinator::localRoom(
+    const QString& sessionId) const {
+#if defined(Q_OS_MAC)
+    return {QStringLiteral("mac"), localLoginSession_, sessionId};
+#else
+    return {QStringLiteral("windows"), localLoginSession_, sessionId};
+#endif
 }
 
 void DesktopSessionSyncCoordinator::acceptCatalog(const QJsonArray& sessions) {
@@ -326,8 +348,9 @@ void DesktopSessionSyncCoordinator::publishPresence() {
                {{QStringLiteral("device_id"), deviceId_},
                 {QStringLiteral("name"), deviceName_},
                 {QStringLiteral("sessions"), sessions}},
-               [this, sessions](const QJsonObject&, const QString& error) {
+               [this, sessions](const QJsonObject& response, const QString& error) {
                    if (!error.isEmpty()) return;
+                   localLoginSession_ = response.value(QStringLiteral("login_session_id")).toString();
                    QSet<QString> currentIds;
                    for (const QJsonValue& value : sessions) {
                        const QString id = value.toObject().value(QStringLiteral("id")).toString();
@@ -338,26 +361,65 @@ void DesktopSessionSyncCoordinator::publishPresence() {
                        backfillSessions_.enqueue(id);
                    }
                    for (const QString& oldId : initiallyPublishedSessions_ - currentIds) {
+                       if (pendingAttachmentCleanupRooms_.contains(oldId)) continue;
+                       pendingAttachmentCleanupRooms_.insert(oldId);
                        QPointer<DesktopSessionSyncCoordinator> guard(this);
                        requester_(QStringLiteral("session-sync/room-delete"), "POST",
                                   {{QStringLiteral("session_id"), oldId}},
                                   [guard, oldId](const QJsonObject&, const QString& error) {
-                                      if (!guard || !error.isEmpty()) return;
-                                      guard->initiallyPublishedSessions_.remove(oldId);
-                                      guard->backfillSessions_.removeAll(oldId);
-                                      guard->backfillBefore_.remove(oldId);
-                                      guard->publishedStateDigests_.remove(oldId);
-                                      for (auto it = guard->publishedMessageDigests_.begin();
-                                           it != guard->publishedMessageDigests_.end();) {
-                                          if (it.key().startsWith(oldId + QLatin1Char(':')))
-                                              it = guard->publishedMessageDigests_.erase(it);
-                                          else ++it;
+                                      if (!guard) return;
+                                      if (!error.isEmpty()) {
+                                          guard->pendingAttachmentCleanupRooms_.remove(oldId);
+                                          return;
                                       }
+                                      if (!guard->attachmentAccessProvider_ ||
+                                          guard->localLoginSession_.isEmpty()) {
+                                          guard->pendingAttachmentCleanupRooms_.remove(oldId);
+                                          guard->finishDeletedRoom(oldId);
+                                          return;
+                                      }
+                                      const DesktopVideoCircleAccess access =
+                                          guard->attachmentAccessProvider_();
+#if defined(Q_OS_MAC)
+                                      const QString slot = QStringLiteral("mac");
+#else
+                                      const QString slot = QStringLiteral("windows");
+#endif
+                                      const DesktopSessionRoom room{slot,
+                                          guard->localLoginSession_, oldId};
+                                      auto* watcher = new QFutureWatcher<DesktopSessionAttachmentResult>(guard);
+                                      connect(watcher,
+                                          &QFutureWatcher<DesktopSessionAttachmentResult>::finished,
+                                          guard, [guard, watcher, oldId, access] {
+                                              const auto result = watcher->result();
+                                              watcher->deleteLater();
+                                              if (!guard) return;
+                                              guard->pendingAttachmentCleanupRooms_.remove(oldId);
+                                              if (result.ok() && guard->attachmentAccessProvider_ &&
+                                                  guard->attachmentAccessProvider_().accountId ==
+                                                      access.accountId)
+                                                  guard->finishDeletedRoom(oldId);
+                                          });
+                                      watcher->setFuture(QtConcurrent::run([access, room] {
+                                          return DesktopSessionAttachments::cleanupRoom(access, room);
+                                      }));
                                   });
                    }
                    if (!backfillTimer_.isActive() && !backfillSessions_.isEmpty())
                        backfillTimer_.start(2000);
                });
+}
+
+void DesktopSessionSyncCoordinator::finishDeletedRoom(const QString& oldId) {
+    initiallyPublishedSessions_.remove(oldId);
+    backfillSessions_.removeAll(oldId);
+    backfillBefore_.remove(oldId);
+    publishedStateDigests_.remove(oldId);
+    for (auto it = publishedMessageDigests_.begin(); it != publishedMessageDigests_.end();) {
+        if (it.key().startsWith(oldId + QLatin1Char(':')))
+            it = publishedMessageDigests_.erase(it);
+        else ++it;
+    }
 }
 
 void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) {
@@ -370,32 +432,14 @@ void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) 
     DesktopSessionSyncHost* current = host();
     if (!current && kind == QStringLiteral("command")) return;
     if (kind == QStringLiteral("command")) {
-        QJsonObject result = current->applyCommand(session, envelope.value(QStringLiteral("payload")).toObject());
-        if (!result.value(QStringLiteral("ok")).toBool()) {
-            QString error = result.value(QStringLiteral("error")).toString().left(120);
-            error.replace(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f-\\x9f]")),
-                          QStringLiteral(" "));
-            result.insert(QStringLiteral("error"),
-                          error.trimmed().isEmpty() ? QStringLiteral("会话操作失败") : error);
+        const QJsonObject payload = envelope.value(QStringLiteral("payload")).toObject();
+        if (payload.value(QStringLiteral("action")).toString() == QStringLiteral("prompt") &&
+            !payload.value(QStringLiteral("attachments")).toArray().isEmpty()) {
+            startAttachmentCommand(envelope);
+            return;
         }
-        const QJsonObject response{{QStringLiteral("type"), QStringLiteral("command_result")},
-                                   {QStringLiteral("command_id"),
-                                    envelope.value(QStringLiteral("client_message_id"))},
-                                   {QStringLiteral("result"), result}};
-        if (session == QStringLiteral("session_lifecycle")) {
-            requester_(QStringLiteral("session-sync/send"), "POST",
-                       {{QStringLiteral("to_slot"), fromSlot},
-                        {QStringLiteral("to_login_session_id"), fromLogin},
-                        {QStringLiteral("client_message_id"), newId()},
-                        {QStringLiteral("session_id"), session},
-                        {QStringLiteral("kind"), QStringLiteral("event")},
-                        {QStringLiteral("payload"), response}},
-                       [](const QJsonObject&, const QString&) {});
-            publishPresence();
-        } else {
-            queuePayload(fromSlot, fromLogin, session, QStringLiteral("event"), response);
-            scheduleSnapshot(session);
-        }
+        respondToCommand(envelope, current->applyCommand(session, payload));
+        return;
     } else if (kind == QStringLiteral("event")) {
         if (session == QStringLiteral("session_lifecycle")) {
             const QJsonObject payload = envelope.value(QStringLiteral("payload")).toObject();
@@ -417,6 +461,164 @@ void DesktopSessionSyncCoordinator::handleEnvelope(const QJsonObject& envelope) 
         }
     }
     acknowledge(id);
+}
+
+void DesktopSessionSyncCoordinator::respondToCommand(const QJsonObject& envelope,
+                                                       QJsonObject result) {
+    const QString session = envelope.value(QStringLiteral("session_id")).toString();
+    if (!result.value(QStringLiteral("ok")).toBool()) {
+        QString error = result.value(QStringLiteral("error")).toString().left(120);
+        error.replace(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f-\\x9f]")),
+                      QStringLiteral(" "));
+        result.insert(QStringLiteral("error"),
+                      error.trimmed().isEmpty() ? QStringLiteral("会话操作失败") : error);
+    }
+    const QJsonObject response{{QStringLiteral("type"), QStringLiteral("command_result")},
+                               {QStringLiteral("command_id"),
+                                envelope.value(QStringLiteral("client_message_id"))},
+                               {QStringLiteral("result"), result}};
+    if (session == QStringLiteral("session_lifecycle")) {
+        requester_(QStringLiteral("session-sync/send"), "POST",
+                   {{QStringLiteral("to_slot"), envelope.value(QStringLiteral("from_slot"))},
+                    {QStringLiteral("to_login_session_id"),
+                     envelope.value(QStringLiteral("from_login_session_id"))},
+                    {QStringLiteral("client_message_id"), newId()},
+                    {QStringLiteral("session_id"), session},
+                    {QStringLiteral("kind"), QStringLiteral("event")},
+                    {QStringLiteral("payload"), response}},
+                   [](const QJsonObject&, const QString&) {});
+        publishPresence();
+    } else {
+        queuePayload(envelope.value(QStringLiteral("from_slot")).toString(),
+                     envelope.value(QStringLiteral("from_login_session_id")).toString(),
+                     session, QStringLiteral("event"), response);
+        scheduleSnapshot(session);
+    }
+    acknowledge(envelope.value(QStringLiteral("id")).toInt());
+}
+
+void DesktopSessionSyncCoordinator::startAttachmentCommand(const QJsonObject& envelope) {
+    const QString sessionId = envelope.value(QStringLiteral("session_id")).toString();
+    const QJsonArray references = envelope.value(QStringLiteral("payload")).toObject()
+        .value(QStringLiteral("attachments")).toArray();
+    AgentController* controller = agentProvider_ ? agentProvider_() : nullptr;
+    MaiSession session;
+    if (!controller || !controller->agent().getSession(sessionId.toStdString(), session) ||
+        !session.isRoot() || !attachmentAccessProvider_ || localLoginSession_.isEmpty()) {
+        respondToCommand(envelope, {{QStringLiteral("ok"), false},
+            {QStringLiteral("error"), QStringLiteral("所属设备或会话附件空间不可用")}});
+        return;
+    }
+    const DesktopVideoCircleAccess access = attachmentAccessProvider_();
+#if defined(Q_OS_MAC)
+    const QString slot = QStringLiteral("mac");
+#else
+    const QString slot = QStringLiteral("windows");
+#endif
+    const DesktopSessionRoom room{slot, localLoginSession_, sessionId};
+    const QString workspace = QString::fromUtf8(session.directory.c_str());
+    auto* watcher = new QFutureWatcher<QPair<QJsonArray, QString>>(this);
+    QPointer<DesktopSessionSyncCoordinator> guard(this);
+    connect(watcher, &QFutureWatcher<QPair<QJsonArray, QString>>::finished, this,
+            [guard, watcher, envelope, access, sessionId] {
+        const auto resolved = watcher->result();
+        watcher->deleteLater();
+        if (!guard) return;
+        if (!resolved.second.isEmpty() || !guard->attachmentAccessProvider_ ||
+            guard->attachmentAccessProvider_().accountId != access.accountId) {
+            guard->respondToCommand(envelope, {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), resolved.second.isEmpty() ?
+                    QStringLiteral("账号已切换") : resolved.second}});
+            return;
+        }
+        DesktopSessionSyncHost* current = guard->host();
+        if (!current) return;
+        QJsonObject payload = envelope.value(QStringLiteral("payload")).toObject();
+        payload.insert(QStringLiteral("resolved_attachments"), resolved.first);
+        const QJsonObject result = current->applyCommand(sessionId, payload);
+        if (result.value(QStringLiteral("ok")).toBool()) {
+            const QString userId = result.value(QStringLiteral("user_message_id")).toString();
+            const QJsonObject page = current->historyPage(sessionId, {}, 2);
+            for (const QJsonValue& value : page.value(QStringLiteral("messages")).toArray()) {
+                QJsonObject message = value.toObject();
+                if (message.value(QStringLiteral("id")).toString() != userId) continue;
+                QJsonArray parts = message.value(QStringLiteral("parts")).toArray();
+                for (const QJsonValue& item : resolved.first) {
+                    const QJsonObject attachment = item.toObject();
+                    const QString name = QFileInfo(
+                        attachment.value(QStringLiteral("path")).toString()).fileName();
+                    bool matched = false;
+                    for (int index = 0; index < parts.size(); ++index) {
+                        QJsonObject part = parts.at(index).toObject();
+                        if (part.value(QStringLiteral("kind")) !=
+                                attachment.value(QStringLiteral("kind")) ||
+                            part.value(QStringLiteral("filename")).toString() != name) continue;
+                        part.insert(QStringLiteral("attachment_id"),
+                                    attachment.value(QStringLiteral("attachment_id")));
+                        part.insert(QStringLiteral("name"),
+                                    attachment.value(QStringLiteral("name")));
+                        parts.replace(index, part);
+                        matched = true;
+                        break;
+                    }
+                    if (!matched) parts.append(QJsonObject{
+                        {QStringLiteral("id"), QStringLiteral("session_attachment_") +
+                            attachment.value(QStringLiteral("attachment_id")).toString()},
+                        {QStringLiteral("kind"), attachment.value(QStringLiteral("kind"))},
+                        {QStringLiteral("mimeType"), attachment.value(QStringLiteral("content_type"))},
+                        {QStringLiteral("attachment_id"), attachment.value(QStringLiteral("attachment_id"))},
+                        {QStringLiteral("name"), attachment.value(QStringLiteral("name"))}});
+                }
+                message.insert(QStringLiteral("parts"), parts);
+                guard->publishAttachmentHistory({
+                    {QStringLiteral("session_id"), sessionId},
+                    {QStringLiteral("messages"), QJsonArray{message}},
+                    {QStringLiteral("permissions"), page.value(QStringLiteral("permissions"))},
+                    {QStringLiteral("questions"), page.value(QStringLiteral("questions"))}}, 5);
+                break;
+            }
+        }
+        guard->respondToCommand(envelope, result);
+    });
+    watcher->setFuture(QtConcurrent::run([access, room, workspace, references] {
+        QJsonArray resolved;
+        const QString directory = QDir(workspace).filePath(
+            QStringLiteral(".maichat/session-attachments"));
+        if (!QDir().mkpath(directory))
+            return QPair<QJsonArray, QString>{{}, QStringLiteral("工作目录无法保存会话附件")};
+        for (const QJsonValue& value : references) {
+            const QString id = value.toObject().value(QStringLiteral("attachment_id")).toString();
+            const auto downloaded = DesktopSessionAttachments::download(access, room, id);
+            if (!downloaded.ok()) return QPair<QJsonArray, QString>{{}, downloaded.error};
+            const QString name = downloaded.metadata.value(QStringLiteral("name")).toString();
+            const QString target = QDir(directory).filePath(
+                QUuid::createUuid().toString(QUuid::WithoutBraces).left(8) +
+                QLatin1Char('-') + name);
+            const bool copied = QFile::copy(downloaded.path, target);
+            QFile::remove(downloaded.path);
+            if (!copied) return QPair<QJsonArray, QString>{{},
+                QStringLiteral("无法将会话附件保存到工作目录")};
+            resolved.append(QJsonObject{
+                {QStringLiteral("attachment_id"), id},
+                {QStringLiteral("name"), name},
+                {QStringLiteral("path"), target},
+                {QStringLiteral("kind"), downloaded.metadata.value(QStringLiteral("media_type"))},
+                {QStringLiteral("content_type"), downloaded.metadata.value(QStringLiteral("content_type"))}});
+        }
+        return QPair<QJsonArray, QString>{resolved, {}};
+    }));
+}
+
+void DesktopSessionSyncCoordinator::publishAttachmentHistory(
+    const QJsonObject& body, int attempts) {
+    QPointer<DesktopSessionSyncCoordinator> guard(this);
+    requester_(QStringLiteral("session-sync/publish"), "POST", body,
+        [guard, body, attempts](const QJsonObject&, const QString& error) {
+            if (!guard || error.isEmpty() || attempts <= 1) return;
+            QTimer::singleShot(2000, guard, [guard, body, attempts] {
+                if (guard) guard->publishAttachmentHistory(body, attempts - 1);
+            });
+        });
 }
 
 void DesktopSessionSyncCoordinator::handleRemoteChunk(const QJsonObject& envelope) {

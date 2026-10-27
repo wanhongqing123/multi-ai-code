@@ -8,6 +8,7 @@ import MaiChatCore
 import MediaPlayer
 import Photos
 import PhotosUI
+import QuickLook
 import StoreKit
 import SwiftUI
 import UIKit
@@ -54,6 +55,7 @@ struct AIAssistantView: View {
         #if targetEnvironment(simulator)
         let arguments = ProcessInfo.processInfo.arguments
         return arguments.contains("--ai-history-ui-test") ||
+            arguments.contains("--ai-welcome-ui-test") ||
             arguments.contains("--ai-session-switch-ui-test") ||
             arguments.contains("--ai-media-draft-ui-test") ||
             arguments.contains("--ai-stream-typing-ui-test") ||
@@ -146,6 +148,7 @@ struct AIAssistantView: View {
                             ready: model.ready,
                             busy: model.busy,
                             isSubmitting: model.isSubmitting,
+                            uploadStatus: model.remoteUploadStatus,
                             isCreatingConversation: model.isCreatingConversation,
                             selected: model.selected,
                             quotedMessage: model.quotedMessage,
@@ -981,9 +984,11 @@ private struct AIAssistantMessageList: View {
                 welcomeFeature("拍照", icon: "camera")
                 welcomeFeature("音乐播放", icon: "music.note")
                 welcomeFeature("相册管理", icon: "photo.on.rectangle")
+                welcomeFeature("我的云盘", icon: "icloud")
                 welcomeFeature("MaiChat 消息", icon: "bubble.left.and.bubble.right")
                 welcomeFeature("联系人", icon: "person.2")
                 welcomeFeature("电话与短信", icon: "phone.arrow.up.right")
+                welcomeFeature("跨设备会话", icon: "iphone.and.arrow.forward")
             }
             .padding(.top, 28)
             if !model.configured {
@@ -1227,6 +1232,9 @@ private struct AIMessageRow: View, Equatable {
     @State private var videoPreview: AIVideoPreviewItem?
     @State private var mediaSaveError: String?
     @State private var cloudUploadNotice: String?
+    @State private var remoteDownloaded: [String: URL] = [:]
+    @State private var remoteDownloading: Set<String> = []
+    @State private var remoteDownloadError: String?
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.message == rhs.message && lhs.workspacePath == rhs.workspacePath &&
             lhs.canPublishVideo == rhs.canPublishVideo
@@ -1266,6 +1274,12 @@ private struct AIMessageRow: View, Equatable {
                         }
                         ForEach(inlineMedia) { mention in
                             fileMentionCard(mention)
+                        }
+                        ForEach(message.parts.filter { $0.attachmentID != nil }) { part in
+                            remoteAttachmentCard(part)
+                        }
+                        if let remoteDownloadError {
+                            Text(remoteDownloadError).font(.footnote).foregroundStyle(.red)
                         }
                         Button(action: quote) {
                             Label("引用", systemImage: "arrowshape.turn.up.left")
@@ -1485,6 +1499,49 @@ private struct AIMessageRow: View, Equatable {
             } message: {
                 Text(mediaSaveError ?? "请检查相册权限与媒体文件。")
             }
+    }
+
+    @ViewBuilder private func remoteAttachmentCard(_ part: AIPart) -> some View {
+        let title = part.name ?? part.text ?? "附件"
+        let kindLabel = part.kind == "image" ? "图片" :
+            part.kind == "video" ? "视频" :
+            part.kind == "audio" ? "音频" : "文件"
+        if let file = remoteDownloaded[part.id] {
+            if part.kind == "image" {
+                AIWorkspaceImage(filePath: file.path) { size, frame in
+                    openImage(file.path, imageSize: size, sourceFrame: frame)
+                }
+            } else if part.kind == "video" {
+                AIWorkspaceVideoCard(filePath: file.path) { openVideo(file.path) }
+            } else if part.kind == "audio" {
+                AIWorkspaceAudioCard(filePath: file.path)
+            } else {
+                ShareLink(item: file) {
+                    Label("打开或保存 · \(title)", systemImage: "doc")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        } else {
+            Button {
+                guard !remoteDownloading.contains(part.id) else { return }
+                remoteDownloading.insert(part.id)
+                remoteDownloadError = nil
+                Task {
+                    do {
+                        let result = try await AIAssistantModel.shared
+                            .downloadRemoteAttachment(part)
+                        remoteDownloaded[part.id] = result.fileURL
+                    } catch { remoteDownloadError = error.localizedDescription }
+                    remoteDownloading.remove(part.id)
+                }
+            } label: {
+                Label(remoteDownloading.contains(part.id)
+                      ? "正在下载 · \(title)" : "下载\(kindLabel) · \(title)",
+                      systemImage: "arrow.down.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .disabled(remoteDownloading.contains(part.id))
+        }
     }
     private func specialistFailureText(_ text: String) -> String? {
         if text.hasPrefix("Video task failed. ") {
@@ -2371,6 +2428,13 @@ struct AIHistoryUITestRoot: View {
     }
 }
 
+struct AIWelcomeUITestRoot: View {
+    var body: some View {
+        AIAssistantView()
+            .onAppear { AIAssistantModel.shared.installWelcomeUITestFixture() }
+    }
+}
+
 struct AISessionSwitchUITestRoot: View {
     var body: some View {
         AIAssistantView()
@@ -2619,7 +2683,17 @@ private struct AIDraftAttachmentTile: View {
     }
 
     private var fileName: String {
-        URL(fileURLWithPath: file.relativePath).lastPathComponent
+        let stored = URL(fileURLWithPath: file.relativePath).lastPathComponent
+        if stored.count > 9,
+           stored[stored.index(stored.startIndex, offsetBy: 8)] == "-" {
+            return String(stored.dropFirst(9))
+        }
+        return stored
+    }
+
+    private var typeName: String {
+        file.isImage ? "图片" : file.mimeType.hasPrefix("video/") ? "视频" :
+            file.mimeType.hasPrefix("audio/") ? "音频" : "文件"
     }
 
     // 以缩略图或视频首帧识别待发媒体，移除按钮覆盖在卡片角落但保留独立命中区域。
@@ -2638,8 +2712,15 @@ private struct AIDraftAttachmentTile: View {
                                 Image(systemName: failed ? "photo.badge.exclamationmark" : "photo")
                                     .foregroundStyle(RemoteIMStyle.textSecondary)
                             }
-                        } else if let videoCover {
+                        } else if file.mimeType.hasPrefix("video/"), let videoCover {
                             Image(uiImage: videoCover).resizable().scaledToFill()
+                        } else if !file.mimeType.hasPrefix("video/") {
+                            Image(systemName: file.mimeType.hasPrefix("audio/")
+                                  ? "waveform" : "doc")
+                                .font(.system(size: 27))
+                                .foregroundStyle(RemoteIMStyle.blue)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(RemoteIMStyle.blueSoft)
                         } else {
                             LinearGradient(
                                 colors: [Color(red: 0.10, green: 0.17, blue: 0.27),
@@ -2647,7 +2728,7 @@ private struct AIDraftAttachmentTile: View {
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         }
-                        if !file.isImage {
+                        if file.mimeType.hasPrefix("video/") {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(.white)
@@ -2660,7 +2741,7 @@ private struct AIDraftAttachmentTile: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("预览\(file.isImage ? "图片" : "视频") \(fileName)")
+                .accessibilityLabel("预览\(typeName) \(fileName)")
                 Button(action: remove) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20, weight: .semibold))
@@ -2674,7 +2755,7 @@ private struct AIDraftAttachmentTile: View {
                 .accessibilityLabel("移除附件 \(fileName)")
                 .accessibilityIdentifier("ai-remove-attachment-\(file.relativePath)")
             }
-            Text("\(file.isImage ? "图片" : "视频") \(position)")
+            Text("\(typeName) \(position)")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(RemoteIMStyle.textSecondary)
                 .lineLimit(1)
@@ -2703,6 +2784,7 @@ private struct AIComposerSnapshot: Equatable {
     let ready: Bool
     let busy: Bool
     let isSubmitting: Bool
+    let uploadStatus: String
     let isCreatingConversation: Bool
     let selected: String
     let quotedMessage: AIMessage?
@@ -2746,6 +2828,7 @@ private struct AIComposer: View, Equatable {
     @State private var fileTarget: AIAttachmentImportTarget?
     @State private var importingTargets: [AIAttachmentImportTarget: Int] = [:]
     @State private var draftVideoPreview: AIVideoPreviewItem?
+    @State private var draftFilePreview: URL?
     @State private var draftSession = ""
     @State private var draftImportTarget: AIAttachmentImportTarget?
     @State private var isVoiceMode = false
@@ -2763,6 +2846,15 @@ private struct AIComposer: View, Equatable {
     // 输入栏上方只显示当前会话的待发媒体；横向托盘不挤压消息区和键盘上方输入区域。
     var body: some View {
         VStack(spacing: 0) {
+            if !snapshot.uploadStatus.isEmpty {
+                Label(snapshot.uploadStatus, systemImage: "icloud.and.arrow.up")
+                    .font(.footnote)
+                    .foregroundStyle(RemoteIMStyle.blue)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 7)
+                    .background(RemoteIMStyle.blueSoft)
+            }
             if let quoted = snapshot.quotedMessage {
                 HStack(spacing: 10) {
                     Image(systemName: "arrowshape.turn.up.left")
@@ -2964,8 +3056,6 @@ private struct AIComposer: View, Equatable {
                     composerEditMenuState = nil
                     if snapshot.busy {
                         Task { await model.action("stop") }
-                    } else if model.selectedRemote != nil {
-                        model.showTransientError("跨设备会话暂只支持文字消息")
                     } else if isAttachmentPanelPresented {
                         isAttachmentPanelPresented = false
                     } else {
@@ -3069,9 +3159,12 @@ private struct AIComposer: View, Equatable {
             .fullScreenCover(item: $draftVideoPreview) { item in
                 MaiFfplayVideoScreen(path: item.path) { draftVideoPreview = nil }
             }
+            .quickLookPreview($draftFilePreview)
             .fileImporter(
                 isPresented: $importing,
-                allowedContentTypes: [.plainText, .sourceCode, .json, .image, .movie]
+                allowedContentTypes: model.selectedRemote == nil
+                    ? [.plainText, .sourceCode, .json, .image, .movie]
+                    : [.item]
             ) { result in
                 if case let .success(url) = result {
                     guard let target = fileTarget else { return }
@@ -3403,7 +3496,9 @@ private struct AIComposer: View, Equatable {
                     else { failedCount += 1; continue }
                     let temporaryURL = picked.fileURL
                     defer { Task { await Self.removeTemporaryFile(temporaryURL) } }
-                    guard let file = await model.importVideoFile(temporaryURL) else {
+                    guard let file = model.selectedRemote == nil
+                        ? await model.importVideoFile(temporaryURL)
+                        : await model.importSessionFile(temporaryURL) else {
                         failedCount += 1
                         continue
                     }
@@ -3492,6 +3587,12 @@ private struct AIComposer: View, Equatable {
     private func importSelectedFile(_ url: URL, to target: AIAttachmentImportTarget) async {
         beginImport(to: target)
         defer { finishImport(to: target) }
+        if target.remoteRoomKey != nil {
+            if let file = await model.importSessionFile(url) {
+                model.addAttachments([file], to: target)
+            }
+            return
+        }
         let type = UTType(filenameExtension: url.pathExtension)
         if type?.conforms(to: .movie) == true {
             if let file = await model.importVideoFile(url) {
@@ -3514,8 +3615,12 @@ private struct AIComposer: View, Equatable {
     }
 
     private var isImportingCurrentSession: Bool {
-        importingTargets.contains { target, count in
-            count > 0 && model.attachmentSession(for: target) == snapshot.selected
+        let remoteKey = model.selectedRemote.map {
+            "remote:\($0.deviceSlot):\($0.loginSessionID):\($0.sessionID)"
+        }
+        return importingTargets.contains { target, count in
+            count > 0 && target.remoteRoomKey == remoteKey &&
+                model.attachmentSession(for: target) == snapshot.selected
         }
     }
 
@@ -3529,7 +3634,7 @@ private struct AIComposer: View, Equatable {
         if file.isImage { model.previewImage = AIImagePreview(filePath: url.path) }
         else if file.mimeType.hasPrefix("video/") {
             draftVideoPreview = AIVideoPreviewItem(path: url.path)
-        }
+        } else { draftFilePreview = url }
     }
 
     private func appendImportedDocument(_ file: AIImportedFile,

@@ -139,12 +139,13 @@ test('authenticated two-account private media upload uses OSS multipart control'
   });
   const mediaServer = createMediaServer(mediaHandler);
   await new Promise(resolve => mediaServer.listen(0,'127.0.0.1',resolve));
+  const cloudOptions = cloudDriveFromEnv({ MAICHAT_CLOUD_DRIVE_ENABLED:'1',
+    MAICHAT_CLOUD_DRIVE_INTERNAL_KEY:secret,
+    MAICHAT_MEDIA_PORT:String(mediaServer.address().port) });
   authService = createAuthService({ db,sms:{ async send() {} },
     secret:'local-auth-hmac-key-at-least-32-characters',
     imSecret:'local-im-secret-key-at-least-32-characters',sdkAppId:123456789,
-    cloudDrive:cloudDriveFromEnv({ MAICHAT_CLOUD_DRIVE_ENABLED:'1',
-      MAICHAT_CLOUD_DRIVE_INTERNAL_KEY:secret,
-      MAICHAT_MEDIA_PORT:String(mediaServer.address().port) }) });
+    cloudDrive:cloudOptions,sessionAttachments:cloudOptions });
   const authServer = createAuthServer(authService);
   await new Promise(resolve => authServer.listen(0,'127.0.0.1',resolve));
   const base = `http://127.0.0.1:${authServer.address().port}`;
@@ -233,6 +234,37 @@ test('authenticated two-account private media upload uses OSS multipart control'
     assert.equal((await fetch(`${base}/v1/cloud-drive/videos/${imageBody.video_id}`,{
       method:'DELETE',headers:{ Authorization:`Bearer ${owner}` } })).status,200);
     assert.equal(objects.has(imageKey),false);
+    const room = { owner_slot:'mac',owner_login_session_id:'login_a',
+      session_id:'session_a' };
+    const attached = await post('/v1/session-attachments/uploads',owner,
+      { ...room,name:'notes.pdf',size_bytes:1300,
+        content_type:'application/octet-stream' });
+    assert.equal(attached.status,201);
+    const attachment = await attached.json();
+    assert.equal(attachment.room_key,'mac:session_a');
+    const attachmentKey = [...objects.keys()][0];
+    assert.match(attachmentKey,/^session-attachments\/cloud_owner\//);
+    objects.get(attachmentKey).parts.push({ part_number:1,size_bytes:1300,
+      etag:'"cccccccccccccccccccccccccccccccc"' });
+    assert.equal((await post(`/v1/session-attachments/uploads/${attachment.attachment_id}/complete`,
+      owner)).status,200);
+    const link = await fetch(
+      `${base}/v1/session-attachments/${attachment.attachment_id}/play-link`,{
+        headers:{ Authorization:`Bearer ${owner}` } });
+    assert.equal(link.status,200);
+    assert.equal((await link.json()).room_key,'mac:session_a');
+    assert.equal((await fetch(
+      `${base}/v1/session-attachments/${attachment.attachment_id}/play-link`,{
+        headers:{ Authorization:`Bearer ${viewer}` } })).status,404);
+    const separate = await fetch(`${base}/v1/cloud-drive/videos`,{
+      headers:{ Authorization:`Bearer ${owner}` } });
+    assert.equal((await separate.json()).videos.length,0);
+    assert.equal((await post('/v1/session-attachments/cleanup-room',owner,room)).status,202);
+    assert.equal((await fetch(
+      `${base}/v1/session-attachments/${attachment.attachment_id}/play-link`,{
+        headers:{ Authorization:`Bearer ${owner}` } })).status,404);
+    await authService.cleanupSessionAttachments();
+    assert.equal(objects.has(attachmentKey),false);
   } finally {
     await new Promise(resolve => authServer.close(resolve));
     await new Promise(resolve => mediaServer.close(resolve));

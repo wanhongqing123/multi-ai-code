@@ -147,8 +147,10 @@ function createHandler(options = {}) {
 
   function validCloudKey(key, accountId = '') {
     return typeof key === 'string' &&
-      /^cloud-drive\/[a-z][a-z0-9_-]{2,31}\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.(mp4|mov|jpg|jpeg|png|webp|heic)$/.test(key) &&
-      (!accountId || key.startsWith(`cloud-drive/${accountId}/`));
+      (/^cloud-drive\/[a-z][a-z0-9_-]{2,31}\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.(mp4|mov|jpg|jpeg|png|webp|heic)$/.test(key) ||
+       /^session-attachments\/[a-z][a-z0-9_-]{2,31}\/\d{4}-\d{2}-\d{2}\/[a-f0-9-]{36}\.[a-z0-9]{1,12}$/.test(key)) &&
+      (!accountId || key.startsWith(`cloud-drive/${accountId}/`) ||
+        key.startsWith(`session-attachments/${accountId}/`));
   }
 
   function cloudContentType(key) {
@@ -159,6 +161,16 @@ function createHandler(options = {}) {
     if (key.endsWith('.png')) return 'image/png';
     if (key.endsWith('.webp')) return 'image/webp';
     if (key.endsWith('.heic')) return 'image/heic';
+    if (key.startsWith('session-attachments/')) {
+      if (key.endsWith('.gif')) return 'image/gif';
+      if (key.endsWith('.mp3')) return 'audio/mpeg';
+      if (key.endsWith('.m4a')) return 'audio/mp4';
+      if (key.endsWith('.aac')) return 'audio/aac';
+      if (key.endsWith('.wav')) return 'audio/wav';
+      if (key.endsWith('.flac')) return 'audio/flac';
+      if (key.endsWith('.ogg')) return 'audio/ogg';
+      return 'application/octet-stream';
+    }
     return null;
   }
 
@@ -251,6 +263,8 @@ function createHandler(options = {}) {
           (cloudAction === '/cloud-drive/verify' &&
             (!Number.isSafeInteger(body.expected_bytes) || body.expected_bytes < 1 ||
               body.expected_bytes > (type?.startsWith('image/') ? 20_000_000 : 2_000_000_000))) ||
+          (cloudAction === '/cloud-drive/thumbnail' &&
+            !type?.startsWith('image/') && !type?.startsWith('video/')) ||
           (['/cloud-drive/sign-part','/cloud-drive/list-parts',
             '/cloud-drive/complete','/cloud-drive/abort'].includes(cloudAction) &&
             !validCloudUploadId(body.upload_id)))

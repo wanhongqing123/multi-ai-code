@@ -6,6 +6,7 @@ const nodePath = require('node:path');
 const DEVICE_SLOTS = new Set(['ios_phone', 'android_phone', 'tablet', 'mac', 'windows']);
 const ONLINE_TIMEOUT_MS = 45_000;
 const ENVELOPE_LIFETIME_MS = 10 * 60_000;
+const ATTACHMENT_COMMAND_LIFETIME_MS = 2 * 60 * 60_000;
 const EVENT_RETRY_MS = 30_000;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_SESSIONS = 200;
@@ -109,7 +110,10 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
       kind,payload,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
       principal.accountId, body.to_slot, body.to_login_session_id, principal.slot,
       principal.loginSessionId, body.client_message_id, body.session_id, body.kind,
-      payload, now(), now() + ENVELOPE_LIFETIME_MS);
+      payload, now(), now() +
+        (body.kind === 'command' && body.payload?.action === 'prompt' &&
+         body.payload.attachments?.length ? ATTACHMENT_COMMAND_LIFETIME_MS :
+         ENVELOPE_LIFETIME_MS));
     const id = Number(inserted.lastInsertRowid);
     db.prepare(`INSERT INTO sync_message_receipts(account_id,from_slot,
       from_login_session_id,client_message_id,to_slot,to_login_session_id,
@@ -146,7 +150,7 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
       message_id,payload,payload_hash,updated_at) VALUES(?,?,?,?,?,?,?)
       ON CONFLICT(account_id,owner_slot,session_id,message_id) DO UPDATE SET
       payload=excluded.payload,payload_hash=excluded.payload_hash,updated_at=excluded.updated_at`);
-    const existing = db.prepare(`SELECT payload_hash FROM sync_room_messages WHERE account_id=?
+    const existing = db.prepare(`SELECT payload,payload_hash FROM sync_room_messages WHERE account_id=?
       AND owner_slot=? AND session_id=? AND message_id=?`);
     const members = db.prepare(`SELECT slot,login_session_id FROM sync_devices WHERE account_id=?
       AND last_seen>?`).all(principal.accountId, now() - ONLINE_TIMEOUT_MS)
@@ -171,13 +175,34 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
       sessionId, encodedPermissions, encodedQuestions, now());
     const changed = [];
     for (const message of messages) {
-      const serialized = JSON.stringify(message);
+      const previous = existing.get(principal.accountId, principal.slot,
+        sessionId, message.id);
+      let merged = message;
+      if (previous && message.role === 'user') {
+        const retained = JSON.parse(previous.payload).parts.filter(part =>
+          typeof part?.attachment_id === 'string');
+        if (retained.length) {
+          const byId = new Map(retained.map(part => [part.id,part]));
+          const parts = message.parts.map(part => byId.has(part.id)
+            ? { ...part,attachment_id:byId.get(part.id).attachment_id,
+              name:byId.get(part.id).name || part.name }
+            : part);
+          const ids = new Set(parts.map(part => part.id));
+          parts.push(...retained.filter(part => !ids.has(part.id)));
+          merged = { ...message,parts };
+        }
+      }
+      const serialized = JSON.stringify(merged);
+      if (Buffer.byteLength(serialized) > MAX_ROOM_MESSAGE_BYTES) {
+        const error = new Error('Room message is too large');
+        error.code = 'ROOM_MESSAGE_TOO_LARGE';
+        throw error;
+      }
       const hash = createHash('sha256').update(serialized).digest('hex');
-      if (existing.get(principal.accountId, principal.slot, sessionId,
-        message.id)?.payload_hash === hash) continue;
+      if (previous?.payload_hash === hash) continue;
       upsert.run(principal.accountId, principal.slot, sessionId, message.id,
         serialized, hash, now());
-      changed.push(message);
+      changed.push(merged);
     }
     const updates = changed.map(message => [message]);
     if (!updates.length && stateChanged) updates.push([]);
@@ -306,8 +331,15 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
       if (!currentSession.get(principal.accountId, principal.slot,
         principal.loginSessionId, body.session_id))
         return reply(404, { error: 'Session is unavailable' });
-      const { changed, members, stateChanged } = publishMessages(principal,
-        body.session_id, body.messages, body.permissions || [], body.questions || []);
+      let changed, members, stateChanged;
+      try {
+        ({ changed, members, stateChanged } = publishMessages(principal,
+          body.session_id, body.messages, body.permissions || [], body.questions || []));
+      } catch (error) {
+        if (error.code === 'ROOM_MESSAGE_TOO_LARGE')
+          return reply(413, { error:'Room message is too large' });
+        throw error;
+      }
       for (const member of members)
         if (changed.length || stateChanged)
           wake(principal.accountId, member.slot, member.login_session_id);
@@ -407,6 +439,15 @@ function createSessionSyncService({ db, authorize, now = Date.now }) {
           ? body.to_login_session_id : principal.loginSessionId;
         if (!currentSession.get(principal.accountId, ownerSlot, ownerLogin, body.session_id))
           return reply(404, { error: 'Session is unavailable' });
+        if (body.kind === 'command' && body.payload.action === 'prompt' &&
+            body.payload.attachments !== undefined) {
+          const attachments = body.payload.attachments;
+          if (!Array.isArray(attachments) || attachments.length > 10 ||
+              attachments.some(item => !item || typeof item !== 'object' ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                  item.attachment_id || '')))
+            return reply(400, { error:'Invalid Session attachments' });
+        }
       }
       const count = db.prepare(`SELECT COUNT(*) AS count FROM sync_envelopes
         WHERE account_id=? AND to_slot=? AND to_login_session_id=? AND acked_at IS NULL`)

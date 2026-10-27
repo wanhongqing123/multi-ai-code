@@ -72,6 +72,7 @@ final class AndroidSessionSyncCoordinator {
     private volatile long socketHandle;
     private Thread listener;
     private volatile long lastPresence;
+    private volatile String localLoginSessionId = "";
     private long lastBackfill;
 
     private native long nativeCreate();
@@ -275,9 +276,10 @@ final class AndroidSessionSyncCoordinator {
                         if (socketHandle != 0)
                             nativeUpdateBearer(socketHandle, refreshed);
                     }
-                    request("presence", new JSONObject().put("device_id", deviceId)
+                    JSONObject presence = request("presence", new JSONObject().put("device_id", deviceId)
                         .put("name", deviceName.isEmpty() ? "Android" : deviceName)
                         .put("sessions", entries), 15000);
+                    localLoginSessionId = presence.optString("login_session_id");
                     Set<String> currentIds = new java.util.HashSet<>();
                     for (int i = 0; i < entries.length(); i++) {
                         String id = entries.getJSONObject(i).optString("id");
@@ -290,6 +292,13 @@ final class AndroidSessionSyncCoordinator {
                     for (String removed : new java.util.HashSet<>(initiallyPublishedSessions)) {
                         if (currentIds.contains(removed)) continue;
                         request("room-delete", new JSONObject().put("session_id", removed), 15000);
+                        try {
+                            new MaiSessionAttachments(context).cleanupRoom(
+                                new MaiSessionAttachments.Room(slot,localLoginSessionId,removed));
+                        } catch (Exception failure) {
+                            Log.w(TAG,"Session attachment cleanup will retry");
+                            continue;
+                        }
                         initiallyPublishedSessions.remove(removed);
                         dirtySessions.remove(removed);
                         backfillSessions.remove(removed);
@@ -480,6 +489,29 @@ final class AndroidSessionSyncCoordinator {
         return messages.length() == 20 && oldest != null ? oldest.optString("id") : null;
     }
 
+    String localSlot() { return slot; }
+    String localLoginSessionId() { return localLoginSessionId; }
+
+    void publishAttachedMessage(String sessionId, JSONObject message,
+                                JSONArray permissions, JSONArray questions) {
+        if (closed) return;
+        outbound.execute(() -> {
+            for (int attempt = 0; attempt < 5 && !closed; attempt++) {
+                try {
+                    request("publish",new JSONObject().put("session_id",sessionId)
+                        .put("messages",new JSONArray().put(message))
+                        .put("permissions",permissions == null ? new JSONArray() : permissions)
+                        .put("questions",questions == null ? new JSONArray() : questions),15000);
+                    return;
+                } catch (Exception failure) {
+                    if (attempt == 4) Log.w(TAG,"Session attachment history sync failed");
+                    else try { Thread.sleep(2000); }
+                    catch (InterruptedException stopped) { Thread.currentThread().interrupt(); return; }
+                }
+            }
+        });
+    }
+
     void readRemoteHistory(JSONObject remote, String before, int limit,
                            BiConsumer<JSONObject, String> completion) {
         try {
@@ -517,7 +549,9 @@ final class AndroidSessionSyncCoordinator {
         for (String value : new String[] {remote.optString("device_slot"),
             remote.optString("login_session_id"), remote.optString("id"),
             action.optString("action"), action.optString("text"),
-            action.optString("id"), action.optString("decision"), action.optString("title")})
+            action.optString("id"), action.optString("decision"), action.optString("title"),
+            action.optJSONArray("attachments") == null ? "" :
+                action.optJSONArray("attachments").toString()})
             canonical.append(value.length()).append(':').append(value);
         return hex(MessageDigest.getInstance("SHA-256").digest(
             canonical.toString().getBytes(StandardCharsets.UTF_8)));

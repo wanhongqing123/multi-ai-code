@@ -108,6 +108,52 @@ test('only the same account can list and address its active device sessions', as
   } finally { setup.db.close(); }
 });
 
+test('later owner snapshots retain durable Session attachment references', async () => {
+  const setup = fixture();
+  try {
+    await setup.macPresence();
+    await setup.phonePresence();
+    const base = { id:'msg_attached',role:'user',created:1,completed:1,active:false,
+      parts:[{ id:'image_part',kind:'image',mimeType:'image/jpeg' }] };
+    const first = { ...base,parts:[
+      { ...base.parts[0],attachment_id:'123e4567-e89b-42d3-a456-426614174000',
+        name:'photo.jpg' },
+      { id:'session_attachment_file',kind:'file',name:'notes.pdf',
+        attachment_id:'123e4567-e89b-42d3-a456-426614174001' }
+    ] };
+    assert.equal((await setup.call('mac-token','POST','/v1/session-sync/publish',
+      { session_id:'ses_mac_1',messages:[first] })).statusCode,200);
+    assert.equal((await setup.call('mac-token','POST','/v1/session-sync/publish',
+      { session_id:'ses_mac_1',messages:[base] })).statusCode,200);
+    const history = await setup.call('phone-token','GET',
+      '/v1/session-sync/history?owner_slot=mac&session_id=ses_mac_1');
+    assert.equal(history.statusCode,200);
+    assert.deepEqual(history.body.messages[0].parts.map(part => part.attachment_id),
+      ['123e4567-e89b-42d3-a456-426614174000',
+       '123e4567-e89b-42d3-a456-426614174001']);
+  } finally { setup.db.close(); }
+});
+
+test('retaining an attachment never silently drops an oversized owner snapshot', async () => {
+  const setup = fixture();
+  try {
+    await setup.macPresence();
+    const attachment = { id:'session_attachment_file',kind:'file',name:'notes.pdf',
+      attachment_id:'123e4567-e89b-42d3-a456-426614174001' };
+    const original = { id:'msg_attached',role:'user',created:1,
+      parts:[attachment] };
+    assert.equal((await setup.call('mac-token','POST','/v1/session-sync/publish',
+      { session_id:'ses_mac_1',messages:[original] })).statusCode,200);
+    const oversizedAfterMerge = { ...original,parts:[
+      { id:'text_part',kind:'text',text:'x'.repeat(48 * 1024 - 200) }] };
+    assert.equal((await setup.call('mac-token','POST','/v1/session-sync/publish',
+      { session_id:'ses_mac_1',messages:[oversizedAfterMerge] })).statusCode,413);
+    const history = await setup.call('mac-token','GET',
+      '/v1/session-sync/history?owner_slot=mac&session_id=ses_mac_1');
+    assert.deepEqual(history.body.messages[0].parts,[attachment]);
+  } finally { setup.db.close(); }
+});
+
 test('one account routes a Session reply independently to phone and Windows members', async () => {
   const setup = fixture();
   try {

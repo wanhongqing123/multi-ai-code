@@ -32,10 +32,12 @@ function completeAccountDeletion(db, requestId, evidence, secret, completedAt = 
     const cloudPending = db.prepare(`SELECT COUNT(*) AS count FROM cloud_drive_videos
       WHERE owner_user_id=?`)
       .get(userId).count;
+    const attachmentPending = db.prepare(`SELECT COUNT(*) AS count FROM session_attachments
+      WHERE owner_user_id=?`).get(userId).count;
     const circlePending = db.prepare(`SELECT COUNT(*) AS count FROM video_circle_posts
       WHERE author_user_id=? AND (status<>'withdrawn' OR cleanup_pending<>0)`)
       .get(userId).count;
-    if (cloudPending || circlePending)
+    if (cloudPending || attachmentPending || circlePending)
       throw new Error('Account media cleanup is not complete');
     const identities = db.prepare('SELECT subject_hash FROM social_identities WHERE user_id=?')
       .all(userId);
@@ -77,6 +79,7 @@ function completeAccountDeletion(db, requestId, evidence, secret, completedAt = 
       .run(userId, userId);
     db.prepare('DELETE FROM video_circle_posts WHERE author_user_id=?').run(userId);
     db.prepare('DELETE FROM cloud_drive_videos WHERE owner_user_id=?').run(userId);
+    db.prepare('DELETE FROM session_attachments WHERE owner_user_id=?').run(userId);
     db.prepare('DELETE FROM profile_im_sync WHERE user_id=?').run(userId);
     db.prepare('DELETE FROM social_identities WHERE user_id=?').run(userId);
     db.prepare('DELETE FROM sessions WHERE user_id=?').run(userId);

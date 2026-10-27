@@ -1,9 +1,10 @@
 #include "MaiSessionSchedule.h"
 
 #include <cstdlib>
-#include <future>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <thread>
 
 #include <json.hpp>
 
@@ -64,12 +65,18 @@ int main() {
             "task ran before its due time");
     const auto second = MaiSessionScheduleStore::open(path);
     require(second.isOk(), "cannot open concurrent schedule store");
-    auto firstClaim = std::async(std::launch::async,
-        [&] { return store->claimDue(now + 60'000); });
-    auto secondClaim = std::async(std::launch::async,
-        [&] { return second.value()->claimDue(now + 60'000); });
-    const auto first = firstClaim.get();
-    const auto competing = secondClaim.get();
+    std::optional<MaiResult<std::vector<MaiScheduledAgentTask>>> firstResult;
+    std::optional<MaiResult<std::vector<MaiScheduledAgentTask>>> secondResult;
+    std::thread firstClaim([&] { firstResult.emplace(store->claimDue(now + 60'000)); });
+    std::thread secondClaim([&] {
+        secondResult.emplace(second.value()->claimDue(now + 60'000));
+    });
+    firstClaim.join();
+    secondClaim.join();
+    require(firstResult.has_value() && secondResult.has_value(),
+            "concurrent claims did not finish");
+    const auto& first = firstResult.value();
+    const auto& competing = secondResult.value();
     require(first.isOk() && competing.isOk() &&
             first.value().size() + competing.value().size() == 1,
             "two owner runners claimed the same task");

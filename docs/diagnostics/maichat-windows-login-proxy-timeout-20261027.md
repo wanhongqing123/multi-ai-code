@@ -27,6 +27,10 @@
   HTTP 401，测试通过。
 - 独立 OpenSSL curl 保留环境代理时 5 秒超时；`--noproxy '*'` 直连时
   TLS 握手和证书校验成功，约 0.19 秒收到预期 HTTP 401。
+- 使用同一个 `127.0.0.1:10808` 代理对照，`www.baidu.com` 可返回
+  HTTP 200，而 `ichat.life` 约 7 秒后超时；后者直连约 0.12 秒返回
+  预期 HTTP 401。这证明代理不是对所有国内域名都失效，不能由其他网站
+  能打开推断 MaiChat 登录域名的代理链路正常。
 - 仅在测试进程中移除代理变量后，正式
   `LoginDialogTest::liveProductionQrCreationAndCancellation` 通过，
   二维码请求创建、PNG 验证与取消合计 432 毫秒。未扫码、未登录账号。

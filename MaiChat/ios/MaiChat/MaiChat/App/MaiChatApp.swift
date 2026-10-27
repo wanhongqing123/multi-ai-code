@@ -293,6 +293,12 @@ struct MaiChatApp: App {
                         AIWelcomeUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-session-switch-ui-test") {
                         AISessionSwitchUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-browser-ui-test") {
+                        #if DEBUG
+                        AIBrowserUITestRoot()
+                        #else
+                        AIAssistantView()
+                        #endif
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-media-draft-ui-test") {
                         AIMediaDraftUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--ai-local-music-ui-test") {

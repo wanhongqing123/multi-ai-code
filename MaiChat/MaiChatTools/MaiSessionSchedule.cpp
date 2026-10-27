@@ -16,7 +16,7 @@ constexpr std::int64_t kCatchUpWindowMs = 24LL * 60 * 60 * 1000;
 constexpr std::int64_t kMaxAheadMs = 366LL * 24 * 60 * 60 * 1000;
 constexpr const char* kColumns =
     "id,session_id,title,instruction,status,message_id,error,due_at_ms,"
-    "created_at_ms,started_at_ms";
+    "created_at_ms,started_at_ms,revision";
 
 using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
 
@@ -57,6 +57,7 @@ MaiScheduledAgentTask readTask(sqlite3_stmt* statement) {
     task.dueAtMs = sqlite3_column_int64(statement, 7);
     task.createdAtMs = sqlite3_column_int64(statement, 8);
     task.startedAtMs = sqlite3_column_int64(statement, 9);
+    task.revision = sqlite3_column_int64(statement, 10);
     return task;
 }
 
@@ -102,20 +103,25 @@ MaiSessionScheduleStore::open(const std::string& databasePath) {
             "status TEXT NOT NULL CHECK(status IN ('scheduled','started','completed',"
             "'failed','uncertain','missed','canceled')),"
             "message_id TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',"
-            "origin_key TEXT)") ||
+            "origin_key TEXT,revision INTEGER NOT NULL DEFAULT 1)") ||
         !execute(database, "CREATE INDEX IF NOT EXISTS maichat_scheduled_due "
             "ON maichat_scheduled_tasks(status,due_at_ms)"))
         return sqlError(database);
     auto columns = prepare(database, "PRAGMA table_info(maichat_scheduled_tasks)");
     if (!columns) return sqlError(database);
     bool hasOriginKey = false;
+    bool hasRevision = false;
     int code;
-    while ((code = sqlite3_step(columns.get())) == SQLITE_ROW)
+    while ((code = sqlite3_step(columns.get())) == SQLITE_ROW) {
         hasOriginKey |= text(columns.get(), 1) == "origin_key";
+        hasRevision |= text(columns.get(), 1) == "revision";
+    }
     if (code != SQLITE_DONE) return sqlError(database);
     columns.reset();
     if ((!hasOriginKey && !execute(database,
             "ALTER TABLE maichat_scheduled_tasks ADD COLUMN origin_key TEXT")) ||
+        (!hasRevision && !execute(database,
+            "ALTER TABLE maichat_scheduled_tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")) ||
         !execute(database, "CREATE UNIQUE INDEX IF NOT EXISTS maichat_scheduled_origin "
             "ON maichat_scheduled_tasks(origin_key) WHERE origin_key IS NOT NULL"))
         return sqlError(database);
@@ -200,6 +206,75 @@ MaiSessionScheduleStore::list(const std::string& sessionId) {
         tasks.push_back(readTask(statement.get()));
     if (code != SQLITE_DONE) return sqlError(database_);
     return tasks;
+}
+
+MaiResult<MaiScheduledAgentTask> MaiSessionScheduleStore::update(
+    const std::string& sessionId, const std::string& taskId,
+    const MaiScheduledAgentTaskUpdate& changes, std::int64_t nowMs,
+    std::int64_t expectedRevision) {
+    if (!validSessionId(sessionId) || !validSessionId(taskId) || nowMs <= 0 ||
+        expectedRevision <= 0 ||
+        (!changes.title && !changes.instruction && !changes.dueAtMs) ||
+        (changes.title && (changes.title->empty() || changes.title->size() > 240 ||
+                           changes.title->find('\0') != std::string::npos)) ||
+        (changes.instruction && (changes.instruction->empty() ||
+                                 changes.instruction->size() > 16 * 1024 ||
+                                 changes.instruction->find('\0') != std::string::npos)))
+        return {MaiErrorCode::InvalidInput, "invalid scheduled task update"};
+
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (!execute(database_, "BEGIN IMMEDIATE")) return sqlError(database_);
+    const auto rollback = [this](MaiError error) -> MaiResult<MaiScheduledAgentTask> {
+        execute(database_, "ROLLBACK");
+        return error;
+    };
+    const std::string query = std::string("SELECT ") + kColumns +
+        " FROM maichat_scheduled_tasks WHERE id=? AND session_id=?";
+    auto select = prepare(database_, query.c_str());
+    if (!select) return rollback(sqlError(database_));
+    bindText(select.get(), 1, taskId);
+    bindText(select.get(), 2, sessionId);
+    const int found = sqlite3_step(select.get());
+    if (found == SQLITE_DONE)
+        return rollback({MaiErrorCode::NotFound, "scheduled task was not found in this Session"});
+    if (found != SQLITE_ROW) return rollback(sqlError(database_));
+    MaiScheduledAgentTask task = readTask(select.get());
+    select.reset();
+    if (task.status != "scheduled")
+        return rollback({MaiErrorCode::NotFound, "scheduled task has already started or ended"});
+    if (task.revision != expectedRevision)
+        return rollback({MaiErrorCode::Busy, "scheduled task changed; list it again before editing"});
+
+    const std::string title = changes.title.value_or(task.title);
+    const std::string instruction = changes.instruction.value_or(task.instruction);
+    const std::int64_t dueAtMs = changes.dueAtMs.value_or(task.dueAtMs);
+    if (dueAtMs <= nowMs + 1000 || dueAtMs - nowMs > kMaxAheadMs)
+        return rollback({MaiErrorCode::InvalidInput, "updated task must be in the future"});
+    if (title == task.title && instruction == task.instruction && dueAtMs == task.dueAtMs) {
+        if (!execute(database_, "COMMIT")) return rollback(sqlError(database_));
+        return task;
+    }
+
+    auto statement = prepare(database_, "UPDATE maichat_scheduled_tasks "
+        "SET title=?,instruction=?,due_at_ms=?,revision=revision+1 "
+        "WHERE id=? AND session_id=? AND status='scheduled' AND revision=?");
+    if (!statement) return rollback(sqlError(database_));
+    bindText(statement.get(), 1, title);
+    bindText(statement.get(), 2, instruction);
+    sqlite3_bind_int64(statement.get(), 3, dueAtMs);
+    bindText(statement.get(), 4, taskId);
+    bindText(statement.get(), 5, sessionId);
+    sqlite3_bind_int64(statement.get(), 6, expectedRevision);
+    if (sqlite3_step(statement.get()) != SQLITE_DONE) return rollback(sqlError(database_));
+    if (sqlite3_changes(database_) != 1)
+        return rollback({MaiErrorCode::Busy, "scheduled task changed; list it again before editing"});
+    statement.reset();
+    if (!execute(database_, "COMMIT")) return rollback(sqlError(database_));
+    task.title = title;
+    task.instruction = instruction;
+    task.dueAtMs = dueAtMs;
+    ++task.revision;
+    return task;
 }
 
 MaiError MaiSessionScheduleStore::cancel(const std::string& sessionId,

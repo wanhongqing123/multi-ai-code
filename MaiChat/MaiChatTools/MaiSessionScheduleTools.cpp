@@ -16,6 +16,7 @@ using Json = nlohmann::json;
 Json serialize(const MaiScheduledAgentTask& task, bool includeInstruction) {
     Json value{{"task_id", task.id}, {"session_id", task.sessionId},
                {"title", task.title}, {"status", task.status},
+               {"revision", task.revision},
                {"execute_at_utc", MaiTime::formatIso8601Utc(task.dueAtMs)},
                {"execute_at_utc_ms", task.dueAtMs}};
     if (includeInstruction) value["instruction"] = task.instruction;
@@ -30,7 +31,7 @@ MaiToolResult invalid(const char* reason) {
 
 class ScheduleTool final : public MaiTool {
 public:
-    enum class Action { Create, List, Cancel };
+    enum class Action { Create, List, Update, Cancel };
 
     ScheduleTool(Action action, std::shared_ptr<MaiSessionScheduleStore> store,
                  std::string deviceName)
@@ -40,6 +41,7 @@ public:
         switch (action_) {
             case Action::Create: return "maichat_session_task_create";
             case Action::List: return "maichat_session_task_list";
+            case Action::Update: return "maichat_session_task_update";
             case Action::Cancel: return "maichat_session_task_cancel";
         }
         return {};
@@ -60,6 +62,13 @@ public:
             case Action::List:
                 return "List scheduled and recent completed Agent tasks in this MaiChat Session, "
                        "including execution device and status.";
+            case Action::Update:
+                return "Change the title, instruction or execution time of one not-yet-started "
+                       "Agent task in this Session. Call maichat_session_task_list first and "
+                       "use its task_id and revision. Omitted fields stay unchanged. Show the "
+                       "complete resulting instruction and execution time for approval on every "
+                       "call. An already started task cannot be changed. The owner App still "
+                       "must be running, awake and online for on-time execution.";
             case Action::Cancel:
                 return "Cancel a not-yet-started Agent task in this Session. Requires approval; "
                        "a started task must be stopped through the normal Session controls.";
@@ -71,7 +80,9 @@ public:
             case Action::Create:
                 return R"({"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":120},"instruction":{"type":"string","minLength":1,"maxLength":16384},"execute_at":{"type":"string","minLength":20,"maxLength":25}},"required":["title","instruction","execute_at"],"additionalProperties":false})";
             case Action::List:
-                return R"({"type":"object","properties":{},"additionalProperties":false})";
+                return R"({"type":"object","properties":{"offset":{"type":"integer","minimum":0,"maximum":199},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false})";
+            case Action::Update:
+                return R"({"type":"object","properties":{"task_id":{"type":"string"},"expected_revision":{"type":"integer","minimum":1},"title":{"type":"string","minLength":1,"maxLength":120},"instruction":{"type":"string","minLength":1,"maxLength":16384},"execute_at":{"type":"string","minLength":20,"maxLength":25}},"required":["task_id","expected_revision"],"additionalProperties":false})";
             case Action::Cancel:
                 return R"({"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"],"additionalProperties":false})";
         }
@@ -120,19 +131,72 @@ public:
             return MaiToolResult::success(output.dump());
         }
         if (action_ == Action::List) {
-            if (!arguments.empty()) return invalid("task list accepts no arguments");
+            if (arguments.size() > 2 ||
+                (arguments.contains("offset") && !arguments["offset"].is_number_integer()) ||
+                (arguments.contains("limit") && !arguments["limit"].is_number_integer()))
+                return invalid("task list accepts only offset and limit");
+            const int offset = arguments.value("offset", 0);
+            const int limit = arguments.value("limit", 30);
+            if (offset < 0 || offset > 199 || limit < 1 || limit > 50)
+                return invalid("task list offset or limit is out of range");
+            for (auto field = arguments.begin(); field != arguments.end(); ++field)
+                if (field.key() != "offset" && field.key() != "limit")
+                    return invalid("task list accepts only offset and limit");
             const auto listed = store_->list(context.sessionId);
             if (!listed) return MaiToolResult::failure(listed.error().code(),
                                                       listed.error().message());
             Json tasks = Json::array();
-            for (const auto& task : listed.value()) {
-                if (tasks.size() == 30) break;
-                tasks.push_back(serialize(task, true));
+            const auto& all = listed.value();
+            for (std::size_t index = std::size_t(offset);
+                 index < all.size() && tasks.size() < std::size_t(limit); ++index)
+                tasks.push_back(serialize(all[index], true));
+            Json output{{"execution_device", deviceName_}, {"tasks", tasks},
+                        {"total", all.size()}, {"offset", offset}};
+            const std::size_t next = std::size_t(offset) + tasks.size();
+            if (next < all.size()) output["next_offset"] = next;
+            return MaiToolResult::success(output.dump(), next < all.size());
+        }
+        if (action_ == Action::Update) {
+            if (arguments.size() < 3 || arguments.size() > 5 ||
+                !arguments.value("task_id", Json{}).is_string() ||
+                !arguments.value("expected_revision", Json{}).is_number_integer())
+                return invalid("task_id, expected_revision and one changed field are required");
+            for (auto field = arguments.begin(); field != arguments.end(); ++field)
+                if (field.key() != "task_id" && field.key() != "expected_revision" &&
+                    field.key() != "title" && field.key() != "instruction" &&
+                    field.key() != "execute_at")
+                    return invalid("unknown scheduled task update parameter");
+            MaiScheduledAgentTaskUpdate changes;
+            if (arguments.contains("title")) {
+                if (!arguments["title"].is_string()) return invalid("title must be text");
+                changes.title = arguments["title"].get<std::string>();
             }
-            return MaiToolResult::success(
-                Json{{"execution_device", deviceName_}, {"tasks", tasks},
-                     {"total", listed.value().size()}}.dump(),
-                listed.value().size() > tasks.size());
+            if (arguments.contains("instruction")) {
+                if (!arguments["instruction"].is_string())
+                    return invalid("instruction must be text");
+                changes.instruction = arguments["instruction"].get<std::string>();
+            }
+            if (arguments.contains("execute_at")) {
+                if (!arguments["execute_at"].is_string())
+                    return invalid("execute_at must include a time zone offset");
+                const auto when = maiParseScheduledTime(
+                    arguments["execute_at"].get<std::string>());
+                if (!when) return MaiToolResult::failure(when.error().code(),
+                                                          when.error().message());
+                changes.dueAtMs = when.value();
+            }
+            if (!changes.title && !changes.instruction && !changes.dueAtMs)
+                return invalid("update needs a new title, instruction or execution time");
+            const auto updated = store_->update(context.sessionId,
+                arguments["task_id"].get<std::string>(), changes,
+                MaiTime::getCurrentTime(),
+                arguments["expected_revision"].get<std::int64_t>());
+            if (!updated) return MaiToolResult::failure(updated.error().code(),
+                                                        updated.error().message());
+            Json output = serialize(updated.value(), true);
+            output["execution_device"] = deviceName_;
+            output["requires_owner_app_running"] = true;
+            return MaiToolResult::success(output.dump());
         }
         if (arguments.size() != 1 || !arguments.contains("task_id") ||
             !arguments["task_id"].is_string())
@@ -158,6 +222,7 @@ void registerMaiSessionScheduleTools(MaiToolRegistry& tools,
     const std::string& deviceName) {
     for (const auto action : {ScheduleTool::Action::Create,
                               ScheduleTool::Action::List,
+                              ScheduleTool::Action::Update,
                               ScheduleTool::Action::Cancel})
         tools.add(std::make_unique<ScheduleTool>(action, store, deviceName));
 }

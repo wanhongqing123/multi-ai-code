@@ -665,6 +665,7 @@ struct MaiMobileAgent {
                                              const MaiToolContext&) {
                 return callMaiMobileHostTool(dispatcher, name, argumentsJson);
             });
+        registerMobileBrowserTools(*tools, hostTools);
 #if defined(__ANDROID__)
         registerMobileScreenCaptureTools(*tools, hostTools);
 #endif

@@ -19,6 +19,7 @@ public final class MaiChatHostTools {
     private final MobileTelephonyTools telephony;
     private final MobileMediaTools media;
     private final MobileScreenCaptureTools screenCapture;
+    private final MobileBrowserTools browser;
     private final MaiChatIMTools im;
     private final MobileSshTools ssh;
 
@@ -30,12 +31,14 @@ public final class MaiChatHostTools {
         this.telephony = new MobileTelephonyTools(activity, permissions);
         this.media = new MobileMediaTools(activity);
         this.screenCapture = new MobileScreenCaptureTools(activity);
+        this.browser = new MobileBrowserTools(activity);
         this.im = new MaiChatIMTools(activity, session);
         this.ssh = new MobileSshTools(activity);
     }
 
     public void onDestroy() {
         MaiCloudDriveAgentTools.cancelAll(activity);
+        browser.onDestroy();
         photos.onDestroy();
         permissions.onDestroy();
     }
@@ -45,7 +48,10 @@ public final class MaiChatHostTools {
             permissions.onPermissionResult(requestCode);
     }
 
+    public MobileBrowserTools browser() { return browser; }
+
     public Object execute(String tool, JSONObject arguments) throws Exception {
+        if (tool.equals("mobile_browser")) return browser.execute(arguments);
         if (tool.equals("mobile_export_diagnostics"))
             return activity.exportDiagnosticsForAgent();
         if (tool.equals("generate_pdf"))

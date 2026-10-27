@@ -174,7 +174,7 @@ int main() {
              hasSeedream = false, hasCamera = false, hasLocalMusic = false, hasSessionList = false,
              hasSessionCreate = false, hasSessionDelete = false, hasLocalSessionWorkspace = false,
              hasRemoteSessionList = false, hasRemoteSessionCreate = false, hasRemoteSessionDelete = false,
-             hasRemoteSessionWorkspace = false;
+             hasRemoteSessionWorkspace = false, hasMobileBrowser = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "file_create") hasCreateFile = true;
@@ -197,6 +197,7 @@ int main() {
                 CHECK(schema["required"] ==
                       Json::array({"device_slot", "session_id", "workspace_path"}));
             }
+            if (tool["function"]["name"] == "mobile_browser") hasMobileBrowser = true;
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
@@ -244,6 +245,7 @@ int main() {
         CHECK(!hasLocalSessionWorkspace);
         CHECK(hasRemoteSessionList && hasRemoteSessionCreate && hasRemoteSessionDelete);
         CHECK(hasRemoteSessionWorkspace);
+        CHECK(hasMobileBrowser);
         CHECK(hasViewImage);
         CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
@@ -423,6 +425,30 @@ int main() {
         MaiFilePath::fromUtf8("mai-mobile-test-" + MaiIdGenerator::newEventId()));
     CHECK(!MaiFileSystem::createDirectories(testRoot).hasError());
     const std::string directory = testRoot.toUtf8();
+    HostToolProbe browserProbe;
+    auto browserDispatcher = makeMaiMobileHostDispatcher();
+    CHECK(setMaiMobileHostToolHandler(browserDispatcher, &browserProbe,
+        hostToolHandler, freeHostToolResponse, releaseHostToolContext));
+    MaiToolRegistry browserRegistry;
+    registerMobileBrowserTools(browserRegistry, browserDispatcher);
+    MaiTool* browser = browserRegistry.findForModel("mobile_browser");
+    CHECK(browser != nullptr);
+    CHECK(browser->requiresPerCallApproval(R"({"action":"open"})"));
+    CHECK(browser->requiresPerCallApproval(R"({"action":"click"})"));
+    CHECK(browser->requiresPerCallApproval(R"({"action":"screenshot"})"));
+    CHECK(!browser->requiresApproval(R"({"action":"observe"})"));
+    MaiToolContext browserContext;
+    browserContext.sessionId = "ses_browser";
+    browserContext.root = directory;
+    CHECK(browser->execute(R"({"action":"open","url":"file:///private/test"})",
+                           browserContext).hasError());
+    CHECK(browserProbe.calls.load() == 0);
+    CHECK(!browser->execute(R"({"action":"open","url":"https://example.com"})",
+                            browserContext).hasError());
+    CHECK(browserProbe.lastTool == "mobile_browser" &&
+          Json::parse(browserProbe.lastArguments)["session_id"] == "ses_browser");
+    clearMaiMobileHostToolHandler(browserDispatcher);
+    CHECK(browserProbe.released.load());
     void* agent = maiMobileAgentCreate();
     int fakeOrtApi = 0;
     HostToolProbe hostProbe;

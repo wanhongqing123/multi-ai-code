@@ -32,6 +32,7 @@ struct AIAssistantView: View {
     @ObservedObject private var model = AIAssistantModel.shared
     @ObservedObject private var videoCircle = MaiVideoCircleModel.shared
     @ObservedObject private var cloudDrive = MaiCloudDriveModel.shared
+    @ObservedObject private var browser = AIMobileBrowserTools.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSessions = false
     @State private var showActions = false
@@ -57,6 +58,7 @@ struct AIAssistantView: View {
         return arguments.contains("--ai-history-ui-test") ||
             arguments.contains("--ai-welcome-ui-test") ||
             arguments.contains("--ai-session-switch-ui-test") ||
+            arguments.contains("--ai-browser-ui-test") ||
             arguments.contains("--ai-media-draft-ui-test") ||
             arguments.contains("--ai-stream-typing-ui-test") ||
             arguments.contains("--voice-conversation-preview") ||
@@ -106,6 +108,11 @@ struct AIAssistantView: View {
                         } : nil
                     )
                     Divider().overlay(Color.black.opacity(0.06))
+                    if browser.isOpen && browser.ownerSessionID == model.selected &&
+                        model.selectedRemote == nil {
+                        AIAssistantBrowserPane(browser: browser)
+                            .frame(height: min(340, max(180, viewportSize.height * 0.4)))
+                    }
                     // 首次准备期间显示明确进度；已有会话的刷新继续展示旧消息，
                     // 待读取完成后才在相同容器内更新可见页。
                     if !model.ready {
@@ -267,12 +274,14 @@ struct AIAssistantView: View {
             await cloudDrive.probe()
         }
         .onAppear {
+            browser.setPageVisible(isActive)
             logAIHistoryEvent("page-appeared session=\(model.selected) active=\(isActive)")
             if isActive && !usesStandaloneUITestFixture {
                 model.appear()
             }
         }
         .onChange(of: isActive) { active in
+            browser.setPageVisible(active)
             guard !usesStandaloneUITestFixture else { return }
             if active {
                 model.setPageActive(true)
@@ -284,16 +293,25 @@ struct AIAssistantView: View {
             }
         }
         .onDisappear {
+            browser.setPageVisible(false)
             logAIHistoryEvent("page-disappeared session=\(model.selected) active=\(isActive)")
             if !usesStandaloneUITestFixture {
                 model.disappear()
             }
         }
         .onChange(of: scenePhase) { phase in
+            browser.setPageVisible(phase == .active && isActive)
             guard !usesStandaloneUITestFixture else { return }
             if phase == .active { model.appear() }
             else { model.disappear() }
         }
+        .onChange(of: model.selected) { selected in
+            if browser.isOpen && browser.ownerSessionID != selected { browser.close() }
+        }
+        .onChange(of: model.selectedRemote?.id) { remote in
+            if remote != nil { browser.close() }
+        }
+        .onChange(of: appState.maiChatAccountID) { _ in browser.close() }
     }
 
     private func navigateImagePreview(_ direction: Int) -> Bool {
@@ -2441,6 +2459,21 @@ struct AISessionSwitchUITestRoot: View {
             .onAppear { AIAssistantModel.shared.installSessionSwitchUITestFixture() }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+struct AIBrowserUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+
+    var body: some View {
+        AIAssistantView()
+            .environmentObject(appState)
+            .onAppear {
+                AIAssistantModel.shared.installSessionSwitchUITestFixture()
+                Task { await AIMobileBrowserTools.shared.runUITestFixture() }
+            }
+    }
+}
+#endif
 
 struct AIMediaDraftUITestRoot: View {
     var body: some View {

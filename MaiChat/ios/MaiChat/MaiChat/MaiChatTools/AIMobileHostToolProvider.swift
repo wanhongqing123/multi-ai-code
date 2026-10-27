@@ -45,6 +45,8 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "mobile_browser":
+            return await AIMobileBrowserTools.shared.execute(arguments)
         case "mobile_export_diagnostics": return await exportDiagnostics()
         case "maichat_calendar_create_event":
             return await createCalendarEvent(arguments)

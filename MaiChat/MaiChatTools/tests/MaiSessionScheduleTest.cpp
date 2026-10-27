@@ -7,6 +7,7 @@
 #include <thread>
 
 #include <json.hpp>
+#include <sqlite3.h>
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -38,11 +39,63 @@ int main() {
     {
     require(!MaiFileSystem::createDirectories(root).hasError(),
             "cannot make schedule test directory");
+    const auto editableStore = MaiSessionScheduleStore::open(":memory:");
+    require(editableStore.isOk(), "cannot open editable schedule store");
+    const std::int64_t now = 1'800'000'000'000LL;
+    const auto editable = editableStore.value()->create(
+        "ses_edit", "旧标题", "旧指令", now + 60'000, now);
+    require(editable.isOk() && editable.value().revision == 1,
+            "new task has an invalid revision");
+    MaiScheduledAgentTaskUpdate changes;
+    changes.title = "新标题";
+    changes.dueAtMs = now + 120'000;
+    const auto edited = editableStore.value()->update(
+        "ses_edit", editable.value().id, changes, now, editable.value().revision);
+    require(edited.isOk() && edited.value().revision == 2 &&
+            edited.value().instruction == "旧指令" && edited.value().dueAtMs == now + 120'000,
+            "partial scheduled task update lost unchanged fields");
+    require(editableStore.value()->update("ses_edit", editable.value().id,
+        changes, now, 1).error().code() == MaiErrorCode::Busy,
+        "stale task revision overwrote a newer edit");
+    require(!editableStore.value()->update("ses_other", editable.value().id,
+        changes, now, 2).isOk(),
+        "another Session edited the task");
+    require(editableStore.value()->claimDue(now + 60'000).value().empty(),
+            "task still ran at its old execution time");
+    const auto claimedEdit = editableStore.value()->claimDue(now + 120'000);
+    require(claimedEdit.isOk() && claimedEdit.value().size() == 1 &&
+            claimedEdit.value()[0].title == "新标题",
+            "edited task did not run once at the new time");
+    require(!editableStore.value()->update("ses_edit", editable.value().id,
+        changes, now, 2).isOk(),
+        "started task was edited");
+
+    const std::string legacyPath = root.append(
+        MaiFilePath::fromUtf8("legacy.sqlite")).toUtf8();
+    sqlite3* legacy = nullptr;
+    require(sqlite3_open(legacyPath.c_str(), &legacy) == SQLITE_OK,
+            "cannot create legacy schedule database");
+    const char* legacySql =
+        "CREATE TABLE maichat_scheduled_tasks("
+        "id TEXT PRIMARY KEY,session_id TEXT NOT NULL,title TEXT NOT NULL,"
+        "instruction TEXT NOT NULL,due_at_ms INTEGER NOT NULL,"
+        "created_at_ms INTEGER NOT NULL,started_at_ms INTEGER NOT NULL DEFAULT 0,"
+        "status TEXT NOT NULL,message_id TEXT NOT NULL DEFAULT '',"
+        "error TEXT NOT NULL DEFAULT '',origin_key TEXT);"
+        "INSERT INTO maichat_scheduled_tasks"
+        "(id,session_id,title,instruction,due_at_ms,created_at_ms,status) VALUES"
+        "('schtask_legacy','ses_legacy','old','prompt',1800000060000,1800000000000,'scheduled');";
+    require(sqlite3_exec(legacy, legacySql, nullptr, nullptr, nullptr) == SQLITE_OK,
+            "cannot seed legacy schedule database");
+    sqlite3_close(legacy);
+    const auto migrated = MaiSessionScheduleStore::open(legacyPath);
+    require(migrated.isOk() && migrated.value()->list("ses_legacy").value()[0].revision == 1,
+            "old scheduled task database did not gain revisions");
+
     const std::string path = root.append(MaiFilePath::fromUtf8("tasks.sqlite")).toUtf8();
     const auto opened = MaiSessionScheduleStore::open(path);
     require(opened.isOk(), "cannot open schedule store");
     const auto store = opened.value();
-    const std::int64_t now = 1'800'000'000'000LL;
     const auto task = store->create("ses_owner", "检查构建", "检查测试并总结", now + 60'000, now);
     require(task.isOk() && task.value().status == "scheduled", "could not schedule task");
     const auto idempotent = store->create("ses_idempotent", "同一请求", "只执行一次",
@@ -109,24 +162,53 @@ int main() {
 
     MaiToolRegistry tools;
     registerMaiSessionScheduleTools(tools, store, "Mac");
-    require(tools.specs().size() == 3, "schedule tool registry is incomplete");
+    require(tools.specs().size() == 4, "schedule tool registry is incomplete");
     MaiToolContext context;
     context.sessionId = "ses_owner";
     auto* create = tools.findForModel("maichat_session_task_create");
     auto* list = tools.findForModel("maichat_session_task_list");
+    auto* update = tools.findForModel("maichat_session_task_update");
     auto* cancel = tools.findForModel("maichat_session_task_cancel");
-    require(create && list && cancel && create->requiresPerCallApproval("{}") &&
-            !list->requiresApproval("{}") && cancel->requiresPerCallApproval("{}"),
+    require(create && list && update && cancel && create->requiresPerCallApproval("{}") &&
+            !list->requiresApproval("{}") && update->requiresPerCallApproval("{}") &&
+            cancel->requiresPerCallApproval("{}"),
             "schedule approval contract is wrong");
+    for (int index = 0; index < 35; ++index)
+        require(store->create("ses_page", "task " + std::to_string(index), "check",
+            now + 120'000 + index * 1000, now).isOk(),
+            "could not seed paged task list");
+    MaiToolContext pageContext;
+    pageContext.sessionId = "ses_page";
+    const auto page = list->execute(R"({"offset":30,"limit":10})", pageContext);
+    require(!page.hasError() &&
+            nlohmann::json::parse(page.output())["tasks"].size() == 5 &&
+            nlohmann::json::parse(page.output())["tasks"][4]["title"] == "task 0",
+            "scheduled task beyond the first page cannot be selected for an edit");
     const auto scheduled = create->execute(nlohmann::json{
         {"title", "明日检查"}, {"instruction", "检查 Agent 输出"},
         {"execute_at", MaiTime::formatIso8601Utc(MaiTime::getCurrentTime() + 60'000)}
     }.dump(), context);
     require(!scheduled.hasError(), "Agent tool could not schedule a real-time task");
     const auto created = nlohmann::json::parse(scheduled.output());
+    const auto changed = update->execute(nlohmann::json{
+        {"task_id", created["task_id"]}, {"expected_revision", created["revision"]},
+        {"execute_at", MaiTime::formatIso8601Utc(MaiTime::getCurrentTime() + 180'000)}
+    }.dump(), context);
+    require(!changed.hasError() && nlohmann::json::parse(changed.output())["revision"] == 2,
+            "Agent tool did not update a scheduled task");
+    require(update->execute(nlohmann::json{
+        {"task_id", created["task_id"]}, {"expected_revision", created["revision"]},
+        {"title", "过期修改"}
+    }.dump(), context).hasError(),
+            "Agent tool accepted a stale scheduled task revision");
     require(!list->execute("{}", context).hasError(),
             "Agent tool could not list Session tasks");
     context.sessionId = "ses_other";
+    require(update->execute(nlohmann::json{
+        {"task_id", created["task_id"]}, {"expected_revision", 2},
+        {"title", "跨会话修改"}
+    }.dump(), context).hasError(),
+            "another Session used the Agent tool to edit a task");
     require(cancel->execute(nlohmann::json{{"task_id", created["task_id"]}}.dump(),
                             context).hasError(),
             "another Session canceled the task");

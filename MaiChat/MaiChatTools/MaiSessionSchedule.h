@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -24,6 +25,13 @@ struct MaiScheduledAgentTask {
     std::int64_t dueAtMs = 0;
     std::int64_t createdAtMs = 0;
     std::int64_t startedAtMs = 0;
+    std::int64_t revision = 1;
+};
+
+struct MaiScheduledAgentTaskUpdate {
+    std::optional<std::string> title;
+    std::optional<std::string> instruction;
+    std::optional<std::int64_t> dueAtMs;
 };
 
 // Persistent owner-device store. All callers, including the Agent tools and
@@ -39,6 +47,9 @@ public:
         std::int64_t dueAtMs, std::int64_t nowMs,
         const std::string& originKey = {});
     MaiResult<std::vector<MaiScheduledAgentTask>> list(const std::string& sessionId);
+    MaiResult<MaiScheduledAgentTask> update(const std::string& sessionId,
+        const std::string& taskId, const MaiScheduledAgentTaskUpdate& changes,
+        std::int64_t nowMs, std::int64_t expectedRevision);
     MaiError cancel(const std::string& sessionId, const std::string& taskId);
     MaiError cancelSession(const std::string& sessionId);
     MaiResult<std::vector<MaiScheduledAgentTask>> claimDue(std::int64_t nowMs,

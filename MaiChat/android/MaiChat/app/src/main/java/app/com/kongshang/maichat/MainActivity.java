@@ -5,6 +5,7 @@
 package com.kongshang.maichat;
 
 import com.kongshang.maichat.tools.MaiChatHostTools;
+import com.kongshang.maichat.tools.MobileBrowserTools;
 import com.kongshang.maichat.tools.MobileScreenCaptureService;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.qrcode.QRCodeWriter;
@@ -684,6 +685,10 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         return voiceRecorder;
     }
 
+    MobileBrowserTools browserForAssistant() {
+        return maiChatHostTools == null ? null : maiChatHostTools.browser();
+    }
+
     SpeechRecognizer speechRecognizerForAssistant() {
         return speechRecognizer;
     }
@@ -862,6 +867,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
             assistantVoiceText = "";
             if (aiAssistant != null) {
                 aiAssistant.setForeground(false);
+                if (maiChatHostTools != null) maiChatHostTools.browser().close();
                 aiAssistant = null;
             }
             AIAssistantController.configureAccount(owner);

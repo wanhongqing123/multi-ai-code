@@ -5,6 +5,7 @@
 package com.kongshang.maichat;
 
 import com.kongshang.maichat.tools.MobileScreenCaptureService;
+import com.kongshang.maichat.tools.MobileBrowserTools;
 
 import android.Manifest;
 import android.app.Activity;
@@ -60,6 +61,8 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     private final Activity activity;
     final AIAssistantController controller;
     private final MaiVideoCircle videoCircle;
+    private final MobileBrowserTools browser;
+    private final LinearLayout browserHost;
     private final TextView videoCircleEntry;
     private boolean videoCircleAvailable;
     private String videoCircleAccount = "";
@@ -136,10 +139,18 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     AIAssistantPanel(Activity activity, AIAssistantController controller,
                      VoiceRecordingController voiceRecorder, SpeechRecognizer speechRecognizer) {
+        this(activity, controller, voiceRecorder, speechRecognizer,
+            activity instanceof MainActivity
+                ? ((MainActivity) activity).browserForAssistant() : null);
+    }
+    AIAssistantPanel(Activity activity, AIAssistantController controller,
+                     VoiceRecordingController voiceRecorder, SpeechRecognizer speechRecognizer,
+                     MobileBrowserTools browser) {
         super(activity);
         this.activity = activity;
         this.controller = controller;
         this.videoCircle = new MaiVideoCircle(activity);
+        this.browser = browser;
         this.localMusicPlayer = new LocalMusicPlayer(activity, this::refreshMusicMiniBar);
         this.voiceRecorder = voiceRecorder;
         this.speechRecognizer = speechRecognizer;
@@ -179,6 +190,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         View headerDivider = new View(activity);
         headerDivider.setBackgroundColor(Color.argb(18, 0, 0, 0));
         addView(headerDivider, new LayoutParams(LayoutParams.MATCH_PARENT, dp(1)));
+        browserHost = new LinearLayout(activity);
+        browserHost.setOrientation(VERTICAL);
+        browserHost.setVisibility(GONE);
+        addView(browserHost, new LayoutParams(LayoutParams.MATCH_PARENT, dp(300)));
         list = new LatestMessageList();
         list.setStackFromBottom(true);
         list.setTranscriptMode(ListView.TRANSCRIPT_MODE_NORMAL);
@@ -429,17 +444,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        if (browser != null) browser.attach(browserHost);
         setForeground(true);
         probeVideoCircle();
     }
     @Override
     protected void onDetachedFromWindow() {
         setForeground(false);
+        if (browser != null) browser.detach(browserHost);
         videoCircle.cancel();
         super.onDetachedFromWindow();
     }
     void setForeground(boolean value) {
         visibleToUser = value;
+        if (browser != null) browser.setVisible(value);
         if (!value && sessionDrawerPopup != null) sessionDrawerPopup.dismiss();
         if (!value && voiceRecording) finishVoice(true);
         if (!value) updateHostVoiceOverlay(false, "");
@@ -453,6 +471,7 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     }
     @Override
     public void onState(AIAssistantController.State next) {
+        if (browser != null) browser.sessionChanged(next.selected, next.remoteSession != null);
         if (next.remoteSession != null) remoteAttachmentTargets.add(next.selected);
         boolean changedSession = !selected.equals(next.selected);
         if (changedSession) {

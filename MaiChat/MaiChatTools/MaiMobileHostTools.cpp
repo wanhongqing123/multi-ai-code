@@ -3,7 +3,9 @@
 #include "MaiMobileHostTools.h"
 
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <json.hpp>
 #include <memory>
 #include <mutex>
@@ -154,6 +156,158 @@ private:
     std::string mSchema;
     std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;
     bool mApproval = false;
+};
+
+bool validBrowserUrl(const std::string& url) {
+    const std::size_t schemeEnd = url.find("://");
+    if (url.empty() || url.size() > 2048 ||
+        (url.compare(0, 7, "http://") != 0 &&
+         url.compare(0, 8, "https://") != 0) ||
+        schemeEnd == std::string::npos)
+        return false;
+    const std::size_t hostBegin = schemeEnd + 3;
+    const std::size_t hostEnd = url.find_first_of("/?#", hostBegin);
+    const std::string authority = url.substr(hostBegin, hostEnd - hostBegin);
+    return !authority.empty() && authority.find('@') == std::string::npos &&
+           authority.find('\\') == std::string::npos &&
+           url.find('\0') == std::string::npos;
+}
+
+class MaiMobileBrowserTool final : public MaiTool {
+public:
+    explicit MaiMobileBrowserTool(std::shared_ptr<MaiMobileHostDispatcher> dispatcher)
+        : mDispatcher(std::move(dispatcher)) {}
+
+    std::string name() const override { return "mobile_browser"; }
+    std::string description() const override {
+        return "Control one browser page owned by the current MaiChat Agent Session. "
+               "open shows a visible in-app page, observe returns bounded page text and "
+               "interactive elements, screenshot returns the current page image, and close "
+               "ends the page. To click or type, first observe and use its snapshot_id, "
+               "element_id, exact label and URL. Screenshot also needs that observed URL. "
+               "Password fields require manual user input. "
+               "Opening a URL, screenshots, clicks and typing require approval for every call. "
+               "A dispatched click or typing action does not prove the intended outcome; "
+               "call observe again to verify it. This tool cannot control Safari, Chrome or "
+               "other apps outside MaiChat.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["open","observe","screenshot","click","type","close"]},"url":{"type":"string","maxLength":2048},"expected_url":{"type":"string","maxLength":2048},"snapshot_id":{"type":"string"},"element_id":{"type":"string"},"expected_label":{"type":"string"},"text":{"type":"string","maxLength":4000}},"required":["action"],"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string& raw) const override {
+        return requiresPerCallApproval(raw);
+    }
+    bool requiresPerCallApproval(const std::string& raw) const override {
+        const Json args = Json::parse(raw, nullptr, false);
+        if (!args.is_object() || !args.value("action", Json{}).is_string()) return true;
+        const std::string action = args["action"].get<std::string>();
+        return action != "observe" && action != "close";
+    }
+
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
+        if (context.isCanceled())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "browser operation was canceled");
+        if (context.sessionId.empty() || context.root.empty())
+            return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                          "an Agent Session workspace is required for the browser");
+        Json args = Json::parse(raw, nullptr, false);
+        if (!args.is_object() || !args.value("action", Json{}).is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "browser action is required");
+        const std::string action = args["action"].get<std::string>();
+        const auto hasOnly = [&args](std::initializer_list<const char*> allowed) {
+            for (auto field = args.begin(); field != args.end(); ++field) {
+                bool known = false;
+                for (const char* name : allowed) known |= field.key() == name;
+                if (!known) return false;
+            }
+            return true;
+        };
+        if (action == "open") {
+            if (!hasOnly({"action", "url"}) ||
+                !args.value("url", Json{}).is_string() ||
+                !validBrowserUrl(args["url"].get<std::string>()))
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "open needs one HTTP(S) URL without credentials");
+        } else if (action == "observe" || action == "close") {
+            if (!hasOnly({"action"}))
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "this browser action accepts no other parameters");
+        } else if (action == "screenshot") {
+            if (!hasOnly({"action", "expected_url"}) ||
+                !args.value("expected_url", Json{}).is_string() ||
+                args["expected_url"].get<std::string>().empty() ||
+                args["expected_url"].get<std::string>().size() > 2048)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "screenshot needs the exact observed URL");
+        } else if (action == "click" || action == "type") {
+            if (!hasOnly(action == "click"
+                             ? std::initializer_list<const char*>{"action", "snapshot_id",
+                                                                   "element_id", "expected_label",
+                                                                   "expected_url"}
+                             : std::initializer_list<const char*>{"action", "snapshot_id",
+                                                                   "element_id", "expected_label",
+                                                                   "expected_url", "text"}) ||
+                !args.value("snapshot_id", Json{}).is_string() ||
+                !args.value("element_id", Json{}).is_string() ||
+                !args.value("expected_label", Json{}).is_string() ||
+                !args.value("expected_url", Json{}).is_string() ||
+                (action == "type" && !args.value("text", Json{}).is_string()))
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "use a current browser snapshot and element label");
+            for (const char* field : {"snapshot_id", "element_id", "expected_label"})
+                if (args[field].get<std::string>().empty() ||
+                    args[field].get<std::string>().size() > 200)
+                    return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                                  "browser target is empty or too long");
+            if (args["expected_url"].get<std::string>().empty() ||
+                args["expected_url"].get<std::string>().size() > 2048)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "browser action needs the exact observed URL");
+            if (action == "type" && args["text"].get<std::string>().size() > 4000)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "browser text is too long");
+        } else {
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "unknown browser action");
+        }
+
+        args["session_id"] = context.sessionId;
+        if (action != "screenshot") return mDispatcher->call(name(), args.dump());
+        if (context.model == "glm-5.3")
+            return MaiToolResult::failure(MaiErrorCode::NotSupported,
+                                          "the current model cannot inspect browser screenshots");
+        MaiFilePath directory = MaiFilePath::fromUtf8(context.root);
+#if defined(__ANDROID__)
+        directory = directory.append(MaiFilePath::fromUtf8("no_backup"));
+#endif
+        directory = directory.append(MaiFilePath::fromUtf8("browser"));
+        const MaiError created = MaiFileSystem::createDirectories(directory);
+        if (created.hasError()) return MaiToolResult::failure(created.code(), created.message());
+        const MaiFilePath path = directory.append(MaiFilePath::fromUtf8(
+            MaiIdGenerator::generate("browser_") + ".png"));
+        args["output_path"] = path.toUtf8();
+        const MaiToolResult result = mDispatcher->call(name(), args.dump());
+        if (result.hasError()) {
+            MaiFileSystem::removeFile(path);
+            return result;
+        }
+        std::uint64_t bytes = 0;
+        std::string header;
+        bool clipped = false;
+        const MaiError read = MaiFileSystem::readFile(path, header, 8, &clipped);
+        if (!MaiFileSystem::fileSize(path, bytes) || bytes == 0 ||
+            bytes > 20 * 1024 * 1024 || read.hasError() ||
+            header.compare(0, 8, "\x89PNG\r\n\x1a\n", 8) != 0) {
+            MaiFileSystem::removeFile(path);
+            return MaiToolResult::failure(MaiErrorCode::Protocol,
+                                          "browser screenshot was not saved as a bounded PNG");
+        }
+        return MaiToolResult::successWithImages(result.output(),
+                                                {MaiToolImage{path.toUtf8(), "image/png"}});
+    }
+
+private:
+    std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;
 };
 
 class MaiMobileScreenCaptureTool final : public MaiTool {
@@ -507,6 +661,11 @@ void registerMobileScreenCaptureTools(
         R"({"type":"object","properties":{},"additionalProperties":false})",
         dispatcher, false);
     tools.add(std::make_unique<MaiMobileScreenCaptureTool>(dispatcher));
+}
+
+void registerMobileBrowserTools(
+    MaiToolRegistry& tools, const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+    tools.add(std::make_unique<MaiMobileBrowserTool>(dispatcher));
 }
 
 // 移动端相册和播放器工具复用同一个宿主调度器；具体权限与媒体生命周期由手机宿主处理。

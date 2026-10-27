@@ -27,6 +27,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher);
 void registerMobileScreenCaptureTools(MaiToolRegistry& tools,
                                       const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher);
+void registerMobileBrowserTools(MaiToolRegistry& tools,
+                                const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher);
 void registerMobilePhotoTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher);
 void registerPlatformPhotoAlbumTools(MaiToolRegistry& tools,

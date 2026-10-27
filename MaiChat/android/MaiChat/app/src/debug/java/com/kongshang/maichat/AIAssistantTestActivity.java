@@ -3,6 +3,7 @@
 // 主要入口：onCreate、onDestroy。
 package com.kongshang.maichat;
 
+import com.kongshang.maichat.tools.MobileBrowserTools;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -11,16 +12,20 @@ import android.os.Bundle;
 /** Debug-only host. Production navigation uses the same AIAssistantPanel. */
 public final class AIAssistantTestActivity extends Activity {
     AIAssistantPanel panel;
+    MobileBrowserTools browser;
     @Override
     public void onCreate(Bundle saved) {
         super.onCreate(saved);
         String endpoint = getIntent().getStringExtra("model_url");
         if (endpoint == null || endpoint.isEmpty()) endpoint = "http://127.0.0.1:18189";
-        panel = new AIAssistantPanel(this, new AIAssistantController(this, endpoint));
+        browser = new MobileBrowserTools(this);
+        panel = new AIAssistantPanel(this, new AIAssistantController(this, endpoint),
+            null, null, browser);
         setContentView(panel);
     }
     @Override
     public void onDestroy() {
+        browser.onDestroy();
         panel.closeLocalMusic();
         panel.controller.close();
         super.onDestroy();

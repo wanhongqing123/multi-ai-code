@@ -13,6 +13,9 @@ set_target_properties(mai_curl_download PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(mai_cloud_vod STATIC MaiCloudVod.cpp)
 target_compile_features(mai_cloud_vod PUBLIC cxx_std_17)
+if(WIN32)
+  target_compile_definitions(mai_cloud_vod PRIVATE NOMINMAX)
+endif()
 target_include_directories(mai_cloud_vod PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party")
 target_link_libraries(mai_cloud_vod PUBLIC CURL::libcurl mai_cloud_drive_client)

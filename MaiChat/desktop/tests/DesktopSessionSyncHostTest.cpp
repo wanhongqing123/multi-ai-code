@@ -278,6 +278,7 @@ void DesktopSessionSyncHostTest::agentToolsReuseRemoteLifecycleCoordinator() {
     AgentController controller(AgentController::ModelConfig{}, {});
     QObject dispatcher;
     QJsonObject lastCommand;
+    DesktopSessionSyncCoordinator* coordinatorForReply = nullptr;
     DesktopSessionSyncCoordinator coordinator(
         [&](const QString& path, const QByteArray&, const QJsonObject& body,
             DesktopSessionSyncCoordinator::Completion completion) {
@@ -299,7 +300,8 @@ void DesktopSessionSyncHostTest::agentToolsReuseRemoteLifecycleCoordinator() {
                                        QStringLiteral("iPhone does not support Workspace switching")}}
                         : QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("session_id"), resultId}};
                 QTimer::singleShot(0, &dispatcher, [&, id, result, targetSlot, targetLogin] {
-                    coordinator.acceptInbox(
+                    if (!coordinatorForReply) return;
+                    coordinatorForReply->acceptInbox(
                         QJsonArray{QJsonObject{{QStringLiteral("id"), 7},
                                                {QStringLiteral("kind"), QStringLiteral("event")},
                                                {QStringLiteral("session_id"), QStringLiteral("session_lifecycle")},
@@ -314,6 +316,7 @@ void DesktopSessionSyncHostTest::agentToolsReuseRemoteLifecycleCoordinator() {
             QTimer::singleShot(0, &dispatcher, [completion = std::move(completion)] { completion({}, {}); });
         },
         [&] { return &controller; }, nullptr, QStringLiteral("mac-install"), QStringLiteral("Mac"));
+    coordinatorForReply = &coordinator;
     const QJsonObject device{{QStringLiteral("device_slot"), QStringLiteral("ios_phone")},
                              {QStringLiteral("device_name"), QStringLiteral("iPhone")},
                              {QStringLiteral("device_id"), QStringLiteral("phone-install")},

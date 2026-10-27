@@ -70,12 +70,13 @@ int main(int argc, char** argv) {
             "QR generator overwrote an existing output");
     require(scan(output.toUtf8()) == content,
             "rejected overwrite modified an existing image");
-    const std::string longText(2048, 'a');
+    const std::string longText(768, 'a');
     const MaiFilePath large = directory.append(MaiFilePath::fromUtf8("large.png"));
-    require(!maiGenerateQrCodePng(longText, large).hasError() &&
-            scan(large.toUtf8()) == longText,
+    require(!maiGenerateQrCodePng(longText, large).hasError(),
+            "the largest supported QR text cannot be generated");
+    require(scan(large.toUtf8()) == longText,
             "the largest supported QR text cannot be scanned");
-    require(!maiEncodeQrCodePng(std::string(2049, 'a')).isOk(),
+    require(!maiEncodeQrCodePng(std::string(769, 'a')).isOk(),
             "QR generator accepted text beyond its documented limit");
 
     MaiToolRegistry tools;

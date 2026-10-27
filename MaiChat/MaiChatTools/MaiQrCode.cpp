@@ -70,7 +70,7 @@ public:
                "contains exactly the supplied text; do not put secrets in it.";
     }
     std::string parametersSchema() const override {
-        return R"({"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":2048}},"required":["text"],"additionalProperties":false})";
+        return R"({"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":768}},"required":["text"],"additionalProperties":false})";
     }
     bool requiresApproval(const std::string&) const override { return true; }
     bool requiresPerCallApproval(const std::string&) const override { return true; }
@@ -85,9 +85,9 @@ public:
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "text must be a nonempty UTF-8 string");
         const std::string text = arguments["text"].get<std::string>();
-        if (text.empty() || text.size() > 2048 || text.find('\0') != std::string::npos)
+        if (text.empty() || text.size() > 768 || text.find('\0') != std::string::npos)
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
-                                          "text must contain 1 to 2048 UTF-8 bytes and no NUL");
+                                          "text must contain 1 to 768 UTF-8 bytes and no NUL");
         if (context.root.empty())
             return MaiToolResult::failure(MaiErrorCode::NotConfigured,
                                           "the Agent workspace is not configured");
@@ -113,9 +113,9 @@ public:
 }  // namespace
 
 MaiResult<std::string> maiEncodeQrCodePng(const std::string& text) {
-    if (text.empty() || text.size() > 2048 || text.find('\0') != std::string::npos)
+    if (text.empty() || text.size() > 768 || text.find('\0') != std::string::npos)
         return {MaiErrorCode::InvalidInput,
-                "QR code text must contain 1 to 2048 UTF-8 bytes and no NUL"};
+                "QR code text must contain 1 to 768 UTF-8 bytes and no NUL"};
     std::array<std::uint8_t, qrcodegen_BUFFER_LEN_MAX> scratch{};
     std::array<std::uint8_t, qrcodegen_BUFFER_LEN_MAX> code{};
     if (!qrcodegen_encodeText(text.c_str(), scratch.data(), code.data(),
@@ -125,7 +125,7 @@ MaiResult<std::string> maiEncodeQrCodePng(const std::string& text) {
                 "QR code text is too long for medium error correction"};
     constexpr int border = 4;
     const int modules = qrcodegen_getSize(code.data()) + border * 2;
-    const int scale = (std::max)(2, 512 / modules);
+    const int scale = (std::max)(4, 512 / modules);
     const int width = modules * scale;
     std::string raw;
     raw.reserve(std::size_t(width + 1) * std::size_t(width));

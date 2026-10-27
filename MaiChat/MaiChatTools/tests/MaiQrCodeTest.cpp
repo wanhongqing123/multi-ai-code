@@ -100,7 +100,8 @@ int main(int argc, char** argv) {
             "QR Agent tool did not return an image");
     const auto body = nlohmann::json::parse(result.output(), nullptr, false);
     require(body.is_object() && body.value("format", "") == "png" &&
-            body.value("file_path", "") == result.images()[0].path,
+            body.value("file_path", "") ==
+                MaiFilePath::fromUtf8(result.images()[0].path).toGenericUtf8(),
             "QR Agent tool did not return its saved file path");
     require(scan(result.images()[0].path) == "https://maichat.example/hello",
             "QR Agent image does not contain the requested URL");

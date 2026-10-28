@@ -20,6 +20,7 @@
 #include <QFrame>
 #include <QFutureWatcher>
 #include <QGuiApplication>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QJsonArray>
@@ -39,12 +40,14 @@
 #include <QPolygonF>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QSaveFile>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSet>
 #include <QSettings>
 #include <QSplitter>
+#include <QStackedLayout>
 #include <QStandardPaths>
 #include <QStyle>
 #include <QTextBlock>
@@ -427,6 +430,130 @@ QLabel* makeLabel(const QString& text, int pixelSize, const char* color, bool bo
     label->setFont(font);
     label->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(color));
     return label;
+}
+
+class WelcomeScrollArea final : public QScrollArea {
+public:
+    explicit WelcomeScrollArea(QWidget* parent) : QScrollArea(parent) {}
+
+    void setFeatures(QGridLayout* grid, const QList<QWidget*>& cards) {
+        grid_ = grid;
+        cards_ = cards;
+        arrangeFeatures();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QScrollArea::resizeEvent(event);
+        arrangeFeatures();
+    }
+
+private:
+    void arrangeFeatures() {
+        if (!grid_) return;
+        const int width = viewport()->width();
+        const int columns = width >= UiZoom::s(900) ? 4 : width >= UiZoom::s(650) ? 3 : 2;
+        if (columns == columns_) return;
+        for (QWidget* card : cards_) grid_->removeWidget(card);
+        for (int column = 0; column < 4; ++column) grid_->setColumnStretch(column, column < columns ? 1 : 0);
+        for (int index = 0; index < cards_.size(); ++index)
+            grid_->addWidget(cards_[index], index / columns, index % columns);
+        columns_ = columns;
+        setProperty("welcomeColumns", columns);
+    }
+
+    QGridLayout* grid_ = nullptr;
+    QList<QWidget*> cards_;
+    int columns_ = 0;
+};
+
+QWidget* makeWelcomeView(QWidget* parent) {
+    auto* scroll = new WelcomeScrollArea(parent);
+    scroll->setObjectName(QStringLiteral("agentWelcomeView"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet(QStringLiteral("QScrollArea#agentWelcomeView{background:#ffffff;border:0;}"));
+
+    auto* canvas = new QWidget(scroll);
+    canvas->setObjectName(QStringLiteral("agentWelcomeCanvas"));
+    auto* canvasLayout = new QVBoxLayout(canvas);
+    canvasLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    canvasLayout->setContentsMargins(UiZoom::s(20), UiZoom::s(24), UiZoom::s(20), UiZoom::s(24));
+    canvasLayout->addStretch(1);
+    auto* centered = new QHBoxLayout;
+    centered->addStretch(0);
+    auto* content = new QWidget(canvas);
+    content->setMaximumWidth(UiZoom::s(1100));
+    content->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto* contentLayout = new QVBoxLayout(content);
+    contentLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    contentLayout->setContentsMargins(0, 0, 0, 0);
+    contentLayout->setSpacing(0);
+
+    auto* sparkle = makeLabel(QStringLiteral("✦"), 28, kAccent, true);
+    sparkle->setObjectName(QStringLiteral("agentWelcomeSparkle"));
+    sparkle->setAlignment(Qt::AlignCenter);
+    sparkle->setFixedSize(UiZoom::s(52), UiZoom::s(52));
+    sparkle->setTextInteractionFlags(Qt::NoTextInteraction);
+    sparkle->setStyleSheet(UiZoom::scaleQss(
+        QStringLiteral("QLabel#agentWelcomeSparkle{background:#e4f4ff;color:#168bd4;border-radius:15px;}")));
+    contentLayout->addWidget(sparkle, 0, Qt::AlignHCenter);
+    auto* heading = makeLabel(QStringLiteral("从这里开始创作"), 25, kInk, true);
+    heading->setObjectName(QStringLiteral("agentWelcomeHeading"));
+    heading->setAlignment(Qt::AlignCenter);
+    heading->setTextInteractionFlags(Qt::NoTextInteraction);
+    contentLayout->addSpacing(UiZoom::s(18));
+    contentLayout->addWidget(heading);
+    contentLayout->addSpacing(UiZoom::s(28));
+
+    auto* grid = new QGridLayout;
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setHorizontalSpacing(UiZoom::s(10));
+    grid->setVerticalSpacing(UiZoom::s(10));
+    QList<QWidget*> cards;
+    const QList<QPair<QString, QString>> features = {
+        {QStringLiteral("AI 问答"), QStringLiteral("AI")},      {QStringLiteral("图片创作"), QStringLiteral("图")},
+        {QStringLiteral("视频创作"), QStringLiteral("视")},     {QStringLiteral("文件处理"), QStringLiteral("文")},
+        {QStringLiteral("拍照"), QStringLiteral("拍")},         {QStringLiteral("音乐播放"), QStringLiteral("音")},
+        {QStringLiteral("截屏"), QStringLiteral("屏")},         {QStringLiteral("我的云盘"), QStringLiteral("云")},
+        {QStringLiteral("MaiChat 消息"), QStringLiteral("聊")}, {QStringLiteral("联系人"), QStringLiteral("人")},
+        {QStringLiteral("浏览器操作"), QStringLiteral("网")},   {QStringLiteral("跨设备会话"), QStringLiteral("跨")},
+    };
+    for (int index = 0; index < features.size(); ++index) {
+        auto* card = new QFrame(content);
+        card->setObjectName(QStringLiteral("agentWelcomeFeature"));
+        card->setAccessibleName(features[index].first);
+        card->setAccessibleDescription(QStringLiteral("功能介绍"));
+        card->setMinimumHeight(UiZoom::s(58));
+        card->setStyleSheet(
+            UiZoom::scaleQss(QStringLiteral("QFrame#agentWelcomeFeature{background:#ffffff;border:1px solid #e5edf5;"
+                                            "border-radius:13px;}")));
+        auto* row = new QHBoxLayout(card);
+        row->setContentsMargins(UiZoom::s(14), UiZoom::s(8), UiZoom::s(14), UiZoom::s(8));
+        row->setSpacing(UiZoom::s(10));
+        auto* symbol = makeLabel(features[index].second, 14, kAccent, true);
+        symbol->setAlignment(Qt::AlignCenter);
+        symbol->setTextInteractionFlags(Qt::NoTextInteraction);
+        symbol->setFixedSize(UiZoom::s(28), UiZoom::s(28));
+        symbol->setStyleSheet(
+            UiZoom::scaleQss(QStringLiteral("QLabel{background:#eaf5ff;color:#168bd4;border-radius:7px;}")));
+        row->addWidget(symbol);
+        auto* label = makeLabel(features[index].first, 14, kInk, true);
+        label->setWordWrap(false);
+        label->setTextInteractionFlags(Qt::NoTextInteraction);
+        row->addWidget(label, 1);
+        cards.append(card);
+    }
+    contentLayout->addLayout(grid);
+    centered->addWidget(content, 1);
+    centered->addStretch(0);
+    canvasLayout->addLayout(centered);
+    canvasLayout->addStretch(1);
+    scroll->setWidget(canvas);
+    scroll->setFeatures(grid, cards);
+    return scroll;
 }
 
 void applyAgentMenuStyle(QMenu* menu) {
@@ -1025,6 +1152,7 @@ struct AgentChatPanel::Runtime {
     QList<QPushButton*> modelOptionButtons;
     QList<QPushButton*> policyOptionButtons;
     MarkdownView* view = nullptr;
+    QWidget* welcomeView = nullptr;
     PromptEdit* editor = nullptr;
     QWidget* composerHost = nullptr;
     ComposerResizeSplitter* composerSplitter = nullptr;
@@ -1143,6 +1271,14 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     MarkdownTheme conversationTheme = MarkdownTheme::standard(UiZoom::factor());
     conversationTheme.viewMargin = UiZoom::s(48);
     runtime_->view->setTheme(conversationTheme);
+    auto* conversationSurface = new QWidget(this);
+    conversationSurface->setObjectName(QStringLiteral("agentConversationSurface"));
+    auto* conversationLayers = new QStackedLayout(conversationSurface);
+    conversationLayers->setContentsMargins(0, 0, 0, 0);
+    conversationLayers->setStackingMode(QStackedLayout::StackAll);
+    conversationLayers->addWidget(runtime_->view);
+    runtime_->welcomeView = makeWelcomeView(conversationSurface);
+    conversationLayers->addWidget(runtime_->welcomeView);
 
     runtime_->flushTimer = new QTimer(this);
     runtime_->flushTimer->setSingleShot(true);
@@ -1629,7 +1765,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         QStringLiteral("QSplitter::handle{background:transparent;}"
                        "QSplitter::handle:vertical{height:1px;}"
                        "QSplitter::handle:hover{background:transparent;}"));
-    messageComposerSplitter->addWidget(runtime_->view);
+    messageComposerSplitter->addWidget(conversationSurface);
     messageComposerSplitter->addWidget(composerHost);
     messageComposerSplitter->setStretchFactor(0, 1);
     messageComposerSplitter->setStretchFactor(1, 0);
@@ -2118,6 +2254,7 @@ void AgentChatPanel::reloadFromStore() {
     }
     if (sessionBusy && !activeAssistantHasVisibleActivity && runtime_->pendingQuestionId.isEmpty())
         startPendingThinking();
+    updateWelcomeVisibility();
     refreshContextSize();
     // 切换会话时必须跳到该会话最新消息，不沿用上一会话的旧滚动位置。
     runtime_->view->scrollToBottom();
@@ -2158,6 +2295,7 @@ void AgentChatPanel::appendStoredUserMessage(const MaiMessage& message, const Ma
     appendUserVideos(videos);
     appendTextMediaCards(messageId, sourceText, fromUtf8(session.directory));
     appendQuoteAction(messageId);
+    updateWelcomeVisibility();
 }
 
 // 流式期间往某条回答后面追加。第一段到的时候先把条目建出来，
@@ -2168,6 +2306,7 @@ void AgentChatPanel::appendAnswerDelta(const QString& partId, const QString& del
     source += delta;
     if (isNew) {
         runtime_->view->addItem(partId, MarkdownView::Style::Document, source);
+        updateWelcomeVisibility();
         scrollToBottom();
         return;
     }
@@ -2198,6 +2337,7 @@ void AgentChatPanel::appendUserBubble(const QString& text, const QString& quoted
         ? text : QStringLiteral("> ↩ %1\n\n%2").arg(quotedPreview.simplified(), text);
     runtime_->view->addItem(QStringLiteral("local-%1").arg(++runtime_->noticeSerial),
                             MarkdownView::Style::Bubble, displayed);
+    updateWelcomeVisibility();
     scrollToBottom();
 }
 
@@ -2259,6 +2399,7 @@ void AgentChatPanel::clearQuote() {
 void AgentChatPanel::appendNotice(const QString& text, bool isError) {
     runtime_->view->addItem(QStringLiteral("notice-%1").arg(++runtime_->noticeSerial),
                             isError ? MarkdownView::Style::Error : MarkdownView::Style::Notice, text);
+    updateWelcomeVisibility();
     scrollToBottom();
 }
 
@@ -2267,6 +2408,7 @@ void AgentChatPanel::startPendingThinking() {
     runtime_->pendingThinkingItemId = QStringLiteral("pending-thinking-%1").arg(++runtime_->noticeSerial);
     runtime_->pendingThinking = new ThinkingLine;
     runtime_->view->addWidget(runtime_->pendingThinkingItemId, runtime_->pendingThinking);
+    updateWelcomeVisibility();
 }
 
 void AgentChatPanel::clearPendingThinking() {
@@ -3269,6 +3411,14 @@ void AgentChatPanel::setRunning(bool running) {
     } else {
         updateApprovalPolicyUi();
     }
+    updateWelcomeVisibility();
+}
+
+void AgentChatPanel::updateWelcomeVisibility() {
+    if (!runtime_->welcomeView) return;
+    const bool show = !runtime_->running && runtime_->pendingQuestionId.isEmpty() && runtime_->view->isEmpty();
+    runtime_->welcomeView->setVisible(show);
+    if (show) runtime_->welcomeView->raise();
 }
 
 void AgentChatPanel::scrollToBottom() {

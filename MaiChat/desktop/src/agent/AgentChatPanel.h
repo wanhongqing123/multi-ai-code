@@ -180,6 +180,7 @@ private:
     void clearQuote();
     void appendNotice(const QString& text, bool isError);
     void setRunning(bool running);
+    void updateWelcomeVisibility();
     void scrollToBottom();
     void refreshContextSize();
     void selectApprovalPolicy(MaiApprovalPolicy policy);

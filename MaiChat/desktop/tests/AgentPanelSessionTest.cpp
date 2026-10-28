@@ -271,6 +271,7 @@ class AgentPanelSessionTest : public QObject {
 
 private slots:
     void newSessionAvoidsFilesystemRoot();
+    void emptySessionShowsWelcomeAndFirstMessageHidesIt();
     void newSessionUsesAppWorkspaceInsteadOfProcessDirectory();
     void newSessionOffersWorkspaceChoice();
     void chosenWorkspaceKeepsCurrentSession();
@@ -359,6 +360,57 @@ struct Harness {
 };
 
 }  // namespace
+
+void AgentPanelSessionTest::emptySessionShowsWelcomeAndFirstMessageHidesIt() {
+    Harness harness;
+    harness.panel->resize(1100, 800);
+    QCoreApplication::processEvents();
+    auto* welcome = harness.panel->findChild<QWidget*>(QStringLiteral("agentWelcomeView"));
+    auto* heading = harness.panel->findChild<QLabel*>(QStringLiteral("agentWelcomeHeading"));
+    auto* editor = harness.panel->findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
+    QVERIFY(welcome != nullptr && heading != nullptr && editor != nullptr);
+    QCOMPARE(heading->text(), QStringLiteral("从这里开始创作"));
+    QCOMPARE(harness.panel->findChildren<QFrame*>(QStringLiteral("agentWelcomeFeature")).size(), 12);
+    QVERIFY(welcome->isVisibleTo(harness.panel.get()));
+    QVERIFY(harness.view()->isEmpty());
+    QCOMPARE(welcome->property("welcomeColumns").toInt(), 4);
+    const auto titlesFit = [welcome] {
+        for (QFrame* card : welcome->findChildren<QFrame*>(QStringLiteral("agentWelcomeFeature"))) {
+            const QList<QLabel*> labels = card->findChildren<QLabel*>();
+            if (labels.size() < 2) return false;
+            const QLabel* title = labels.last();
+            if (title->fontMetrics().horizontalAdvance(title->text()) > title->width()) return false;
+        }
+        return true;
+    };
+    QVERIFY2(titlesFit(), "wide Desktop welcome cards must show complete titles");
+    const QString capture = qEnvironmentVariable("MAICHAT_WELCOME_CAPTURE");
+    if (!capture.isEmpty()) QVERIFY(harness.panel->grab().save(capture));
+    harness.panel->resize(700, 500);
+    QCoreApplication::processEvents();
+    auto* scroll = qobject_cast<QScrollArea*>(welcome);
+    QVERIFY(scroll != nullptr);
+    QCOMPARE(welcome->property("welcomeColumns").toInt(), 3);
+    QVERIFY2(titlesFit(), "medium Desktop welcome cards must show complete titles");
+    QVERIFY(!scroll->horizontalScrollBar()->isVisible());
+    QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+    const QString compactCapture = qEnvironmentVariable("MAICHAT_WELCOME_COMPACT_CAPTURE");
+    if (!compactCapture.isEmpty()) QVERIFY(harness.panel->grab().save(compactCapture));
+    harness.panel->resize(550, 500);
+    QCoreApplication::processEvents();
+    QCOMPARE(welcome->property("welcomeColumns").toInt(), 2);
+    QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+
+    editor->setPlainText(QStringLiteral("检查欢迎页切换"));
+    harness.sendButton()->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!welcome->isVisibleTo(harness.panel.get()), 3000);
+    QVERIFY(!harness.view()->isEmpty());
+
+    harness.panel->openSession(harness.other);
+    QTRY_VERIFY_WITH_TIMEOUT(welcome->isVisibleTo(harness.panel.get()), 3000);
+    harness.panel->openSession(harness.mine);
+    QTRY_VERIFY_WITH_TIMEOUT(!welcome->isVisibleTo(harness.panel.get()), 3000);
+}
 
 void AgentPanelSessionTest::remotePromptAppearsInOpenOwnerSession() {
     AgentController controller(std::make_unique<SilentModel>(), QString());

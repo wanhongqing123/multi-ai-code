@@ -29,11 +29,18 @@ namespace {
 using Json = nlohmann::json;
 
 bool isPaidGenerationAction(const std::string& raw) {
-    // cancel/delete 不新建付费任务，但会取消或删除已有任务，仍需逐次确认。
+    // cancel/delete 不新建付费任务，在普通模式仍逐次确认。
     const Json args = Json::parse(raw, nullptr, false);
     if (!args.is_object() || !args.value("action", Json{}).is_string()) return true;
     const std::string action = args["action"].get<std::string>();
     return action != "discover" && action != "prepare" && action != "continue";
+}
+
+bool isBillableSubmissionAction(const std::string& raw) {
+    const Json args = Json::parse(raw, nullptr, false);
+    if (!args.is_object() || !args.value("action", Json{}).is_string()) return false;
+    const std::string action = args["action"].get<std::string>();
+    return action == "delegate" || action == "revise";
 }
 
 std::string arkAssetId(const std::string& value) {
@@ -376,6 +383,9 @@ public:
             }
         }
         return isPaidGenerationAction(raw);
+    }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        return isBillableSubmissionAction(raw);
     }
     // 描述这个媒体专家的能力、限制和调用身份，供委托路由使用。
     // 声明内容必须与实际执行入口一致，避免模型选择不存在的能力。
@@ -1595,6 +1605,9 @@ public:
     }
     bool requiresPerCallApproval(const std::string& raw) const override {
         return isPaidGenerationAction(raw);
+    }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        return isBillableSubmissionAction(raw);
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         // configured 只表示取到了 API Key。unverified 表示工具已接线，但当前账号的

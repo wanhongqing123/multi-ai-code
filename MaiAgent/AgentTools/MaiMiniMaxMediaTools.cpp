@@ -620,6 +620,10 @@ public:
         }
         return action != "discover" && action != "validate" && action != "continue";
     }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        const Json args = Json::parse(raw, nullptr, false);
+        return args.is_object() && value(args, "action") == "delegate";
+    }
     // 根据 action 分派 MiniMax 参数校验、图片生成、视频委托与状态查询。
     // 本地校验不触发付费请求；异步查询沿用受理时返回的云任务标识。
     MaiToolResult execute(const std::string& argumentsJson,

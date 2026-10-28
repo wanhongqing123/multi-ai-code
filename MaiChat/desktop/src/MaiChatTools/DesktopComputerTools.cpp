@@ -225,10 +225,10 @@ public:
     std::string name() const override { return "desktop_computer"; }
     std::string description() const override {
         return "Observe one exact visible Desktop window and its bounded Accessibility/UIA "
-               "elements; the result includes a screenshot and a snapshot_id. After approval, "
+               "elements; the result includes a screenshot and a snapshot_id. When allowed, "
                "click or scroll with 0..1 coordinates relative to that window, type into its "
                "focused non-password input, or send one supported key. The window ID, title and "
-               "geometry must still match. Every observation and action needs approval. An "
+               "geometry must still match. Approval follows the Agent policy. An "
                "action only dispatches input; observe again to verify its effect. macOS needs "
                "Screen Recording and Accessibility permissions; Windows uses the interactive "
                "desktop. This cannot control secure or locked screens.";

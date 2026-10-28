@@ -131,7 +131,8 @@ public:
                "or POST/PUT/PATCH/DELETE for explicitly requested API actions. Returns status, "
                "selected headers, body, and timing. Use curl_download for large responses and "
                "curl_upload for a local binary request body. "
-               "Every call requires approval; never put passwords or private keys in arguments.";
+               "Approval follows the selected Agent policy; never put passwords or private "
+               "keys in arguments.";
     }
     std::string parametersSchema() const override {
         // url 必填；method 只能在列出的六种 HTTP 方法中选择。

@@ -91,7 +91,7 @@ public:
         return "Inspect App temporary, cache and AI workspace storage. Scan returns sizes and a "
                "preview ID. Cleanup accepts that ID and removes only unchanged regular files "
                "older than 24 hours from App temporary/cache directories, never the workspace. "
-               "Cleanup requires fresh approval each time.";
+               "Cleanup follows the selected Agent approval policy.";
     }
     std::string parametersSchema() const override {
         // action=scan 只读并返回预览 ID；action=cleanup 要带这次预览 ID，

@@ -44,7 +44,8 @@ int main() {
                            spec.name == "maichat_cloud_drive_abort_upload" ||
                            spec.name == "maichat_cloud_drive_delete_media";
         require(tool->requiresApproval("{}") == write, "cloud tool approval policy is wrong");
-        require(tool->requiresPerCallApproval("{}") == write, "cloud write must be approved for every call");
+        require(tool->requiresPerCallApproval("{}") == write,
+                "cloud write must ask in prompting modes");
     }
 
     const MaiFilePath directory =
@@ -89,7 +90,7 @@ int main() {
     require(!pause->requiresApproval("{}") && !pause->requiresPerCallApproval("{}"),
             "pause should not require approval");
     require(abort->requiresApproval("{}") && abort->requiresPerCallApproval("{}"),
-            "abort should require approval on every call");
+            "abort should ask in prompting modes");
     const int beforeInvalidTask = calls;
     require(pause->execute(R"({"task_id":"bad"})", context).hasError(), "invalid pause ID reached host");
     require(abort->execute(R"({"task_id":"bad"})", context).hasError(), "invalid abort ID reached host");

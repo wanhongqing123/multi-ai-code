@@ -540,6 +540,11 @@ public:
         if (!args.is_object() || !args.value("action", Json{}).is_string()) return true;
         return field(args, "action") == "begin_real_validation";
     }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        // 真人认证目前限时免费，服务返回是否计费标志；保留未来扣费时的确认。
+        const Json args = Json::parse(raw, nullptr, false);
+        return args.is_object() && field(args, "action") == "begin_real_validation";
+    }
 
     // 解析模型提供的参数并把媒体素材安全上传到方舟资产服务。
     // 成功和失败都转成明确的工具结果；中间状态不能冒充最终产物。

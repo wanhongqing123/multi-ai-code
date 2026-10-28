@@ -51,14 +51,15 @@ public:
             case Action::Create:
                 return "Schedule one future Agent instruction in the current MaiChat Session. "
                        "Call current_time first, resolve the user's time zone, and provide an "
-                       "ISO 8601 timestamp with a UTC offset. Show title, full instruction, execution time and "
-                       "owner device for approval. The owner App must stay running and the "
+                       "ISO 8601 timestamp with a UTC offset. When approval is requested, "
+                       "show title, full instruction, execution time and owner device. "
+                       "The owner App must stay running and the "
                        "device must be awake and online for on-time execution; after an outage "
                        "the task runs once within 24 hours. A mobile app suspended or "
                        "force-quit by the OS cannot run it on time. "
                        "If the user wants a system calendar reminder, call "
                        "maichat_calendar_create_event separately. Model and later tool "
-                       "approvals still apply when the task runs.";
+                       "approval policy also applies when the task runs.";
             case Action::List:
                 return "List scheduled and recent completed Agent tasks in this MaiChat Session, "
                        "including execution device and status.";
@@ -66,11 +67,12 @@ public:
                 return "Change the title, instruction or execution time of one not-yet-started "
                        "Agent task in this Session. Call maichat_session_task_list first and "
                        "use its task_id and revision. Omitted fields stay unchanged. Show the "
-                       "complete resulting instruction and execution time for approval on every "
-                       "call. An already started task cannot be changed. The owner App still "
+                       "complete resulting instruction and execution time when approval is "
+                       "requested. An already started task cannot be changed. The owner App still "
                        "must be running, awake and online for on-time execution.";
             case Action::Cancel:
-                return "Cancel a not-yet-started Agent task in this Session. Requires approval; "
+                return "Cancel a not-yet-started Agent task in this Session. "
+                       "Approval follows the Agent policy; "
                        "a started task must be stopped through the normal Session controls.";
         }
         return {};

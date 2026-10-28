@@ -74,24 +74,26 @@ and model tool calls:
 - `desktop_process_start/read/write/stop` keeps a command running between Agent turns. Its
   output uses a byte cursor, is returned in bounded chunks, and retains at most 1 MiB per
   process. Only the owning Session can read, write or stop it. Starting, writing and stopping
-  each require approval. Commands run with the App user's OS permissions. Use the existing
+  use the selected Agent approval mode. Commands run with the App user's OS permissions. Use the existing
   `shell` tool for short, single commands.
 - `desktop_browser` opens a separate visible Chrome or Edge profile. It reads bounded page
   text and elements, captures a PNG, and acts only on an observed element with the same URL,
   snapshot and label. It does not use the user's normal browser profile or execute
-  model-supplied JavaScript. Opening, screenshots, clicking and typing each require approval.
+  model-supplied JavaScript. Opening, screenshots, clicking and typing follow the Agent approval mode.
   After an action, observe again to confirm the outcome. A new `open` starts a clean profile;
   two Agent browser Sessions may be open at once. Chrome requires a separate profile for
   remote debugging ([source](https://developer.chrome.com/blog/remote-debugging-port)).
 - `desktop_computer` selects one visible window by exact title, returns a screenshot and
   bounded Accessibility or UI Automation elements, then accepts a click, text, supported key
-  or scroll for that same window and observation token. Observe and every action require
-  approval. The result of an action only means input was sent; observe again to verify the
+  or scroll for that same window and observation token. Approval follows the selected Agent mode.
+  The result of an action only means input was sent; observe again to verify the
   screen. Password fields, locked screens and invisible windows are excluded. On macOS,
   grant Screen & System Audio Recording and Accessibility to the running MaiChat App.
 
 The browser uses Chrome or Edge; installing Qt WebSockets is required when building the
 Desktop App. Windows packages must include `Qt5WebSockets.dll`.
+Full Access skips prompts for these general tools; billable provider submissions still
+require confirmation.
 
 ## Windows 免安装绿色包
 

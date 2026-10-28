@@ -186,7 +186,7 @@ public:
                "ends the page. To click or type, first observe and use its snapshot_id, "
                "element_id, exact label and URL. Screenshot also needs that observed URL. "
                "Password fields require manual user input. "
-               "Opening a URL, screenshots, clicks and typing require approval for every call. "
+               "Opening a URL, screenshots, clicks and typing follow the Agent approval policy. "
                "A dispatched click or typing action does not prove the intended outcome; "
                "call observe again to verify it. This tool cannot control Safari, Chrome or "
                "other apps outside MaiChat.";
@@ -420,7 +420,8 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
             R"("maximum":200}},"additionalProperties":false})");
     add("maichat_create_group",
         "Create a MaiChat text group with 1 to 19 accepted friends. The owner is added "
-        "automatically. Show the complete group name and member list for approval on every call.",
+        "automatically. Approval follows the Agent policy; show the group name and members "
+        "when approval is requested.",
         R"({"type":"object","properties":{"name":{"type":"string","minLength":1},)"
             R"("member_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
             R"("maxItems":19,"uniqueItems":true}},"required":["name","member_ids"],)"
@@ -432,13 +433,14 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
             R"("limit":{"type":"integer","minimum":1,"maximum":20}},)"
             R"("required":["group_id"],"additionalProperties":false})");
     add("maichat_request_friend",
-        "Send a MaiChat friend request by phone number or account ID. Requires user approval. "
+        "Send a MaiChat friend request by phone number or account ID. "
+        "Approval follows the Agent policy. "
         "The recipient must accept.",
         R"({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]})",
         true);
     add("maichat_set_nickname",
         "Set or clear the current MaiChat account nickname. Empty string clears it. "
-        "Requires user approval.",
+        "Approval follows the Agent policy.",
         R"({"type":"object","properties":{"nickname":{"type":"string","maxLength":32}},)"
             R"("required":["nickname"]})",
         true);
@@ -472,14 +474,14 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
             R"("required":["device_slot"],"additionalProperties":false})");
     add("maichat_remote_session_delete",
         "Permanently delete a Session and its chat history on another online MaiChat device. "
-        "Requires approval for every call.",
+        "Approval follows the Agent policy.",
         R"({"type":"object","properties":{"device_slot":{"type":"string"},)"
             R"("session_id":{"type":"string"}},"required":["device_slot","session_id"],)"
             R"("additionalProperties":false})",
         true);
     add("maichat_remote_session_set_workspace",
         "Set an existing Session's Workspace on another online Desktop device. The path must "
-        "be absolute and already exist on that device. Requires approval for every call.",
+        "be absolute and already exist on that device. Approval follows the Agent policy.",
         R"({"type":"object","properties":{"device_slot":{"type":"string"},)"
             R"("session_id":{"type":"string"},"workspace_path":{"type":"string","maxLength":4096}},)"
             R"("required":["device_slot","session_id","workspace_path"],)"
@@ -493,16 +495,16 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
         "Return only the file path and size, never the log contents. A shareable file card "
         "appears in the current AI conversation; this tool does not send it to anyone.",
         R"({"type":"object","properties":{},"additionalProperties":false})");
-    // 发消息会影响其他人，文本、媒体、回复和群发均需要用户确认；群发每次都要确认完整名单。
+    // 普通模式下发送消息须确认；完全访问按用户选定的权限策略执行。
     add("maichat_send_text",
-        "Send text to a MaiChat contact through the host. Requires user approval.",
-        // peer_id 与 text 均必填；真正发送前弹出用户确认。
+        "Send text to a MaiChat contact through the host. Approval follows the Agent policy.",
+        // peer_id 与 text 均必填；权限闸门按当前 Agent 策略处理发送。
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id",)"
             R"("text"]})",
         true);
     add("maichat_send_group_text",
-        "Send text to a joined MaiChat group. Show the group and full text for approval "
-        "on every call.",
+        "Send text to a joined MaiChat group. Approval follows the Agent policy; show the "
+        "group and full text when approval is requested.",
         R"({"type":"object","properties":{"group_id":{"type":"string"},)"
             R"("text":{"type":"string","minLength":1}},"required":["group_id","text"],)"
             R"("additionalProperties":false})",
@@ -510,22 +512,23 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
     add("maichat_send_media",
         "Send an accessible Agent workspace image or video as a persistent media bubble, "
         "or audio as a file card. The optional caption stays in the same media message. "
-        "Requires user approval.",
+        "Approval follows the Agent policy.",
         // file_path 指 Agent 可访问媒体；type 为 image/video/audio；caption 另发文本。
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},)"
             R"("type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},)"
             R"("required":["peer_id","file_path","type"],"additionalProperties":false})",
         true);
     add("maichat_reply_message",
-        "Send a quoted reply to a MaiChat message through the host. Requires user approval.",
-        // 回复要同时给联系人、原消息 ID 和回复正文；发出前逐次确认。
+        "Send a quoted reply to a MaiChat message through the host. "
+        "Approval follows the Agent policy.",
+        // 回复要同时给联系人、原消息 ID 和回复正文；权限按当前策略核对。
         R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},)"
             R"("text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
         true);
     add("maichat_broadcast_text",
         "Send the same text to multiple MaiChat contacts through the host. The complete recipient list and text "
-        "require user approval for every call.",
-        // peer_ids 为本次完整收件人列表，1–200 人；群发每次都显示名单和正文供确认。
+        "follow the Agent approval policy.",
+        // peer_ids 为本次完整收件人列表，1–200 人；需要审批时展示名单和正文。
         R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
         R"("maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
         true);

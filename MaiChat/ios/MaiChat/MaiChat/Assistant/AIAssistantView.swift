@@ -1129,6 +1129,12 @@ private struct AIActionPanel: View {
                     policyOption("请求批准", value: "on-request")
                     policyOption("帮我批准", value: "unless-trusted")
                     policyOption("完全访问", value: "never")
+                    Text("完全访问免除一般操作确认；付费任务仍需批准。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 6)
                 }
             }
             Divider().padding(.leading, 42)

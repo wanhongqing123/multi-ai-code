@@ -107,6 +107,11 @@ bool MaiTool::requiresPerCallApproval(const std::string& argumentsJson) const {
     return false;
 }
 
+bool MaiTool::requiresPaidApproval(const std::string& argumentsJson) const {
+    (void)argumentsJson;
+    return false;
+}
+
 std::optional<MaiSpecialistInfo> MaiTool::specialistInfo() const {
     return std::nullopt;
 }

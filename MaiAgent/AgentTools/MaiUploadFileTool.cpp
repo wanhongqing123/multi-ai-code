@@ -165,7 +165,7 @@ public:
         return "Stream an existing workspace file as the raw body of one HTTP(S) PUT or POST "
                "request, for example to a user-approved short-lived upload URL. This is not "
                "multipart form upload. The source remains unchanged; the remote host and file "
-               "path need approval for every call. Never put permanent credentials in the URL.";
+               "path follow the Agent approval policy. Never put permanent credentials in the URL.";
     }
     std::string parametersSchema() const override {
         // url/path 指向上传目标和本地文件；method 仅 PUT/POST；content_type

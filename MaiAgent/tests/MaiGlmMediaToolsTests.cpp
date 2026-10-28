@@ -36,6 +36,8 @@ void testImageDiscoveryAndApproval() {
     CHECK(!image->requiresPerCallApproval(R"({"action":"discover"})"));
     CHECK(!image->requiresPerCallApproval(R"({"action":"continue"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"delegate"})"));
+    CHECK(image->requiresPaidApproval(R"({"action":"delegate"})"));
+    CHECK(!image->requiresPaidApproval(R"({"action":"continue"})"));
     auto info = nlohmann::json::parse(image->execute(R"({"action":"discover"})", context).output());
     CHECK(info.at("bound_model") == "glm-image");
     CHECK(!info.at("configured").get<bool>());

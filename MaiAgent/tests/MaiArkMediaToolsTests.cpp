@@ -79,7 +79,12 @@ void testDynamicCredentialAndToolIdentity() {
     CHECK(!video->requiresPerCallApproval(discover));
     CHECK(!image->requiresPerCallApproval(discover));
     CHECK(video->requiresPerCallApproval(R"({"action":"delegate","message":"create"})"));
+    CHECK(video->requiresPaidApproval(R"({"action":"delegate","message":"create"})"));
+    CHECK(image->requiresPaidApproval(R"({"action":"revise","message":"adjust"})"));
+    CHECK(!video->requiresPaidApproval(R"({"action":"cancel"})"));
     CHECK(!video->requiresPerCallApproval(
+        R"({"action":"delegate","mode":"edit","video_path":"clip.mp4"})"));
+    CHECK(video->requiresPaidApproval(
         R"({"action":"delegate","mode":"edit","video_path":"clip.mp4"})"));
     CHECK(!video->requiresPerCallApproval(
         R"({"action":"delegate","mode":"reference","local_image_paths":["first.jpg"]})"));
@@ -1344,6 +1349,7 @@ void testRealPortraitValidationHandoff() {
         });
     CHECK(tool->requiresApproval(R"({"action":"begin_real_validation"})"));
     CHECK(tool->requiresPerCallApproval(R"({"action":"begin_real_validation"})"));
+    CHECK(tool->requiresPaidApproval(R"({"action":"begin_real_validation"})"));
     CHECK(!tool->requiresApproval(R"({"action":"get_real_validation"})"));
     const MaiToolResult begin = tool->execute(R"({"action":"begin_real_validation"})", context);
     CHECK(!begin.hasError());

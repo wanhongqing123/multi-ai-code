@@ -2973,6 +2973,11 @@ final class AIAssistantUITests: XCTestCase {
             .matching(identifier: "ai-policy-menu").firstMatch
         XCTAssertTrue(policyMenu.waitForExistence(timeout: 3))
         XCTAssertLessThan(policyMenu.frame.width, app.frame.width * 0.75)
+        XCTAssertTrue(app.staticTexts["完全访问免除一般操作确认；付费任务仍需批准。"].exists)
+        let policyCapture = XCTAttachment(screenshot: app.screenshot())
+        policyCapture.name = "agent-approval-policy-options"
+        policyCapture.lifetime = .keepAlways
+        add(policyCapture)
         app.buttons["完全访问"].tap()
 
         XCTAssertTrue(app.buttons["思考强度"].exists)

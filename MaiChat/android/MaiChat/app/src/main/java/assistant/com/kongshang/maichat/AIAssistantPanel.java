@@ -1333,8 +1333,12 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         String[] values = {"on-request", "unless-trusted", "never"};
         int checked = state.policy.equals("never") ? 2
             : state.policy.equals("unless-trusted") ? 1 : 0;
+        TextView explanation = text("完全访问免除一般操作审批；付费任务仍需确认。",
+            14, MaiChatTheme.SECONDARY);
+        explanation.setPadding(dp(24), dp(8), dp(24), dp(8));
         new AlertDialog.Builder(activity)
             .setTitle("操作权限")
+            .setView(explanation)
             .setSingleChoiceItems(titles, checked, (dialog, which) -> {
                 if (state.busy()) {
                     Toast.makeText(activity, "请先停止当前任务再修改权限", Toast.LENGTH_LONG).show();

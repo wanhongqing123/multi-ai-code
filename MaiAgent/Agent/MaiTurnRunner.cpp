@@ -622,7 +622,8 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
     // 会话授权按工具给出的每个键核对：文件操作逐个路径，终端按完整命令。
     std::vector<std::string> approvalKeys = tool->approvalKeys(call.arguments, context);
     if (approvalKeys.empty()) approvalKeys.push_back(tool->approvalKey(call.arguments));
-    const bool perCallApproval = tool->requiresPerCallApproval(call.arguments);
+    const bool perCallApproval =
+        tool->requiresPerCallApproval(call.arguments) || tool->requiresPaidApproval(call.arguments);
     if (!perCallApproval) {
         const bool allAllowed =
             std::all_of(approvalKeys.begin(), approvalKeys.end(), [&](const std::string& key) {
@@ -681,9 +682,10 @@ MaiToolResult MaiTurnRunner::checkPermission(const MaiToolInvocation& call,
 bool MaiTurnRunner::toolNeedsApproval(const MaiToolInvocation& call) const {
     MaiTool* tool = mDependencies.tools ? mDependencies.tools->findForModel(call.name) : nullptr;
     if (tool == nullptr) return false;
+    if (tool->requiresPaidApproval(call.arguments)) return true;
+    if (mDependencies.approvalPolicy == MaiApprovalPolicy::Never) return false;
     if (tool->requiresPerCallApproval(call.arguments)) return true;
     if (!tool->requiresApproval(call.arguments)) return false;
-    if (mDependencies.approvalPolicy == MaiApprovalPolicy::Never) return false;
     if (mDependencies.approvalPolicy == MaiApprovalPolicy::UnlessTrusted) {
         // 每个新的文件目标都要问一次。闸门记住已批准的规范化路径；
         // 其他修改性工具或对外调用仍照常经过各自的审批。

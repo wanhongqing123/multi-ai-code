@@ -209,7 +209,7 @@ public:
             return "Start one interactive or long-running shell command in this Desktop "
                    "Session's working directory and "
                    "return a process_id. The command can continue across Agent turns. It runs "
-                   "with the App user's OS permissions. Every start requires approval. "
+                   "with the App user's OS permissions. Approval follows the Agent policy. "
                    "Prefer shell for one-shot commands; use read for "
                    "incremental output and stop when finished.";
         case Action::Read:
@@ -218,9 +218,9 @@ public:
                    "1 MiB; the response says when that happened.";
         case Action::Write:
             return "Send text to stdin of a running process owned by this Session. This queues "
-                   "input, so read again to confirm the process handled it. Every write needs approval.";
+                   "input, so read again to confirm the process handled it. Approval follows the Agent policy.";
         case Action::Stop:
-            return "Terminate a running process owned by this Session. Every stop needs approval; "
+            return "Terminate a running process owned by this Session. Approval follows the Agent policy; "
                    "read afterward for its final output and exit status.";
         }
         return {};

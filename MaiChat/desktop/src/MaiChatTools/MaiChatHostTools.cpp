@@ -768,13 +768,14 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
           R"(}})",
       app);
   addTool(registry, HostToolKind::RequestFriend, "maichat_request_friend",
-          "Send a MaiChat friend request by phone or account ID. Requires user approval. "
+          "Send a MaiChat friend request by phone or account ID. "
+          "Approval follows the Agent policy. "
           "The recipient must accept.",
           R"({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]})",
           app, true);
   addTool(registry, HostToolKind::SetNickname, "maichat_set_nickname",
           "Set or clear the current MaiChat account nickname. Empty string clears it. "
-          "Requires user approval.",
+          "Approval follows the Agent policy.",
           R"({"type":"object","properties":{"nickname":{"type":"string","maxLength":32}})"
           R"(,"required":["nickname"]})",
           app, true);
@@ -803,7 +804,7 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
   addTool(
       registry, HostToolKind::SendText, "maichat_send_text",
       "Queue a text message to a MaiChat contact. This changes external state "
-      "and requires user approval.",
+      "and follows the Agent approval policy.",
       R"({"type":"object","properties":{"peer_id":{"type":"string"},"text":{"type":"string"}},"required":["peer_id",)"
           R"("text"]})",
       app, true);
@@ -811,7 +812,7 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
       registry, HostToolKind::SendMedia, "maichat_send_media",
       "Send an Agent workspace image or video as a persistent MaiChat message "
       "bubble, or audio as a file card. Optional caption is kept with the media. "
-      "This changes external state and requires user approval.",
+      "This changes external state; approval follows the Agent policy.",
       R"({"type":"object","properties":{"peer_id":{"type":"string"},"file_path":{"type":"string"},)"
           R"("type":{"type":"string","enum":["image","video","audio"]},"caption":{"type":"string"}},)"
           R"("required":["peer_id","file_path","type"],"additionalProperties":false})",
@@ -819,14 +820,14 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
   addTool(
       registry, HostToolKind::ReplyMessage, "maichat_reply_message",
       "Queue a quoted text reply to a MaiChat message. This changes external "
-      "state and requires user approval.",
+      "state; approval follows the Agent policy.",
       R"({"type":"object","properties":{"peer_id":{"type":"string"},"message_id":{"type":"string"},)"
           R"("text":{"type":"string"}},"required":["peer_id","message_id","text"]})",
       app, true);
   addTool(
       registry, HostToolKind::BroadcastText, "maichat_broadcast_text",
       "Queue the same text message to multiple MaiChat contacts. The complete "
-      "recipient list and text require user approval for every call.",
+      "recipient list and text follow the Agent approval policy.",
       R"({"type":"object","properties":{"peer_ids":{"type":"array","items":{"type":"string"},"minItems":1,)"
           R"("maxItems":200},"text":{"type":"string"}},"required":["peer_ids","text"]})",
       app, true);
@@ -835,7 +836,8 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
           R"({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false})",
           app);
   addTool(registry, HostToolKind::CreateGroup, "maichat_create_group",
-          "Create a MaiChat Work group with accepted friend IDs. Requires approval for each call.",
+          "Create a MaiChat Work group with accepted friend IDs. "
+          "Approval follows the Agent policy.",
           R"({"type":"object","properties":{"name":{"type":"string","minLength":1},"member_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":19,"uniqueItems":true}},"required":["name","member_ids"],"additionalProperties":false})",
           app, true);
   addTool(registry, HostToolKind::GetGroupMessages, "maichat_get_group_messages",
@@ -843,7 +845,8 @@ void registerMaiChatHostTools(MaiToolRegistry &registry,
           R"({"type":"object","properties":{"group_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["group_id"],"additionalProperties":false})",
           app);
   addTool(registry, HostToolKind::SendGroupText, "maichat_send_group_text",
-          "Send a text message to a joined MaiChat group. Requires approval for each call.",
+          "Send a text message to a joined MaiChat group. "
+          "Approval follows the Agent policy.",
           R"({"type":"object","properties":{"group_id":{"type":"string"},"text":{"type":"string","minLength":1}},"required":["group_id","text"],"additionalProperties":false})",
           app, true);
 }

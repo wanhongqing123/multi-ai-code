@@ -27,12 +27,19 @@ namespace {
 using Json = nlohmann::json;
 
 bool isPaidGenerationAction(const std::string& raw) {
-    // delegate/revise 可能扣费；cancel/delete 虽不发起新生成，也会改变云端或本地
-    // 任务状态，因此继续走每次确认。discover/diagnose/continue 才是纯只读。
+    // delegate/revise 可能扣费；cancel/delete 不扣费，但在普通模式仍逐次确认。
+    // 完全访问只保留实际付费提交的确认。
     const Json args = Json::parse(raw, nullptr, false);
     if (!args.is_object() || !args.value("action", Json{}).is_string()) return true;
     const std::string action = args["action"].get<std::string>();
     return action != "discover" && action != "diagnose" && action != "continue";
+}
+
+bool isBillableSubmissionAction(const std::string& raw) {
+    const Json args = Json::parse(raw, nullptr, false);
+    if (!args.is_object() || !args.value("action", Json{}).is_string()) return false;
+    const std::string action = args["action"].get<std::string>();
+    return action == "delegate" || action == "revise";
 }
 
 constexpr char kWanVideoModel[] = "wan3.0-video";
@@ -585,6 +592,9 @@ public:
     }
     bool requiresPerCallApproval(const std::string& raw) const override {
         return isPaidGenerationAction(raw);
+    }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        return isBillableSubmissionAction(raw);
     }
 
     // 描述这个媒体专家的能力、限制和调用身份，供委托路由使用。
@@ -1167,6 +1177,9 @@ public:
     bool requiresPerCallApproval(const std::string& raw) const override {
         return isPaidGenerationAction(raw);
     }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        return isBillableSubmissionAction(raw);
+    }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const MaiWanCredentials credentials = mCredentials ? mCredentials() : MaiWanCredentials{};
         const bool configured = hasCredentials(credentials);
@@ -1558,6 +1571,9 @@ public:
     bool requiresPerCallApproval(const std::string& raw) const override {
         return isPaidGenerationAction(raw);
     }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        return isBillableSubmissionAction(raw);
+    }
 
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const MaiWanCredentials credentials = mCredentials ? mCredentials() : MaiWanCredentials{};
@@ -1875,6 +1891,9 @@ public:
     }
     bool requiresPerCallApproval(const std::string& raw) const override {
         return isPaidGenerationAction(raw);
+    }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        return isBillableSubmissionAction(raw);
     }
     std::optional<MaiSpecialistInfo> specialistInfo() const override {
         const MaiWanCredentials credentials = mCredentials ? mCredentials() : MaiWanCredentials{};

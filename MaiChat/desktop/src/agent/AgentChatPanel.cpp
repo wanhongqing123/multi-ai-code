@@ -1346,7 +1346,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     addPolicy(QStringLiteral("帮我批准"),
               QStringLiteral("每个文件首次变更先询问，此后本会话免问；网络和高风险命令仍询问"),
               MaiApprovalPolicy::UnlessTrusted);
-    addPolicy(QStringLiteral("完全访问"), QStringLiteral("文件写入不逐次询问；外部发送仍会确认"),
+    addPolicy(QStringLiteral("完全访问"), QStringLiteral("一般操作不询问；付费操作仍会确认"),
               MaiApprovalPolicy::Never);
     runtime_->hint->setMenu(policyMenu);
     connect(policyMenu, &QMenu::triggered, this,
@@ -1902,7 +1902,7 @@ void AgentChatPanel::updateApprovalPolicyUi() {
     }
     if (policy == MaiApprovalPolicy::Never) {
         runtime_->hint->setText(QStringLiteral("完全访问"));
-        runtime_->hint->setToolTip(QStringLiteral("可读写系统允许的文件位置；文件写入不逐次询问，外部发送仍会确认。"));
+        runtime_->hint->setToolTip(QStringLiteral("一般操作不逐次询问；付费操作仍会确认。"));
     } else if (policy == MaiApprovalPolicy::UnlessTrusted) {
         runtime_->hint->setText(QStringLiteral("帮我批准"));
         runtime_->hint->setToolTip(

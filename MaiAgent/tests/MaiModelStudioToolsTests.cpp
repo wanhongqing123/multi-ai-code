@@ -60,6 +60,10 @@ void testOtherSpecialistBoundaries() {
     auto image = makeMaiWanImageTool([&] { return credentials; });
     CHECK(video->requiresPerCallApproval(R"({"action":"delegate"})"));
     CHECK(image->requiresPerCallApproval(R"({"action":"delegate"})"));
+    CHECK(video->requiresPaidApproval(R"({"action":"delegate"})"));
+    CHECK(image->requiresPaidApproval(R"({"action":"revise"})"));
+    CHECK(!video->requiresPaidApproval(R"({"action":"cancel"})"));
+    CHECK(!image->requiresPaidApproval(R"({"action":"continue"})"));
     CHECK(!video->requiresPerCallApproval(R"({"action":"continue"})"));
     CHECK(video
               ->execute(R"({"action":"continue","message":"","conversation_id":"../other"})",
@@ -349,6 +353,7 @@ void testBailianKlingUsesWanCredentialsAndRequiresOssForMedia() {
     CHECK(!tool->requiresPerCallApproval(R"({"action":"discover"})"));
     CHECK(!tool->requiresPerCallApproval(R"({"action":"diagnose"})"));
     CHECK(tool->requiresPerCallApproval(R"({"action":"delegate"})"));
+    CHECK(tool->requiresPaidApproval(R"({"action":"delegate"})"));
     auto discovered =
         nlohmann::json::parse(tool->execute(R"({"action":"discover"})", context).output());
     CHECK(discovered.at("configured") == false);
@@ -398,6 +403,7 @@ void testWanAndKlingImageToolsValidateBeforePaidSubmission() {
     CHECK(nlohmann::json::parse(kling->parametersSchema())["properties"].contains("poll_once"));
     CHECK(!kling->requiresPerCallApproval(R"({"action":"discover"})"));
     CHECK(kling->requiresPerCallApproval(R"({"action":"delegate"})"));
+    CHECK(kling->requiresPaidApproval(R"({"action":"delegate"})"));
     CHECK(wan->execute(R"({"action":"delegate","message":"Draw a cat","negative_prompt":"dog"})",
                        context)
               .hasError());

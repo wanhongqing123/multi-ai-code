@@ -663,7 +663,7 @@ public:
         if (MaiFileSystem::isSymbolicLink(requested))
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "file_delete refuses symbolic links; use shell with "
-                                          "explicit approval to remove the link itself");
+                                          "the selected Agent policy to remove the link itself");
         if (!MaiFileSystem::exists(path))
             return MaiToolResult::failure(MaiErrorCode::NotFound,
                                           "file does not exist: " + stringArgument(args, "path"));

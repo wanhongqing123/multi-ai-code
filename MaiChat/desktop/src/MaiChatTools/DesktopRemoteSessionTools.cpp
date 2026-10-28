@@ -78,12 +78,13 @@ public:
                    "absolute path on the target device.";
         case Kind::Delete:
             return "Permanently delete a Session and its chat history on another MaiChat device. "
-                   "Find its session_id with maichat_remote_session_list first. Always requires "
-                   "approval for this exact call.";
+                   "Find its session_id with maichat_remote_session_list first. Approval "
+                   "follows the selected Agent policy.";
         case Kind::SetWorkspace:
             return "Change an existing idle Session's Workspace on another online MaiChat device. "
                    "The path must already exist as an absolute directory on that device. "
-                   "The Session ID and chat history stay the same. Requires approval for each call.";
+                   "The Session ID and chat history stay the same. "
+                   "Approval follows the selected Agent policy.";
         }
         return {};
     }

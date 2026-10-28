@@ -36,6 +36,8 @@ void checkTool(MaiTool& tool, const std::string& expectedName, const std::string
     CHECK(!tool.requiresPerCallApproval(R"({"action":"continue"})"));
     CHECK(tool.requiresPerCallApproval(R"({"action":"delegate"})") ==
           (expectedName != "minimax_video"));
+    CHECK(tool.requiresPaidApproval(R"({"action":"delegate"})"));
+    CHECK(!tool.requiresPaidApproval(R"({"action":"continue"})"));
     CHECK(tool.requiresPerCallApproval("broken json"));
     const auto discovered =
         nlohmann::json::parse(tool.execute(R"({"action":"discover"})", context).output());

@@ -412,7 +412,7 @@ MaiResult<std::string> DesktopBrowserManager::observe(const std::string& session
     QString pageHost;
     if (!allowedUrl(url, &pageHost) || pageHost != session->allowedHost)
         return {MaiErrorCode::NotSupported,
-                "page left the approved host; open its current URL with approval before acting"};
+                "page left the selected host; open its current URL before acting"};
     session->snapshotId = nonce;
     session->observedUrl = url;
     session->observedLabels.clear();
@@ -519,7 +519,7 @@ public:
                "snapshot_id, element_id and label from observe, then observe again to verify. "
                "Passwords/OTP inputs are excluded. Only the approved host can be observed or "
                "acted on. This does not control the user's existing browser profile. open, "
-               "screenshot, click and type each require approval.";
+               "screenshot, click and type follow the Agent approval policy.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{)"

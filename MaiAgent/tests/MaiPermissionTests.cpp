@@ -38,6 +38,7 @@ namespace {
 
 const std::atomic<bool> kNeverCancel{false};
 std::atomic<int> forcedToolRuns{0};
+std::atomic<int> paidToolRuns{0};
 
 class AlwaysConfirmTool final : public MaiTool {
 public:
@@ -59,6 +60,26 @@ public:
     MaiToolResult execute(const std::string&, const MaiToolContext&) override {
         ++forcedToolRuns;
         return MaiToolResult::success("sent");
+    }
+};
+
+class MaiPaidChargeTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "paid_charge";
+    }
+    std::string description() const override {
+        return "Submit one paid provider task.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"text":{"type":"string"}}})";
+    }
+    bool requiresPaidApproval(const std::string&) const override {
+        return true;
+    }
+    MaiToolResult execute(const std::string&, const MaiToolContext&) override {
+        ++paidToolRuns;
+        return MaiToolResult::success("charged");
     }
 };
 
@@ -307,6 +328,7 @@ AgentUnderTest makeAgent(std::vector<MaiFakeModelClient::Turn> script,
     auto tools = std::make_unique<MaiToolRegistry>();
     registerMaiBuiltinTools(*tools);
     tools->add(std::make_unique<AlwaysConfirmTool>());
+    tools->add(std::make_unique<MaiPaidChargeTool>());
 
     MaiAgent::Options options;
     options.defaultModel = "glm-5.3";
@@ -716,13 +738,13 @@ void test_never_policy_runs_without_prompting() {
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
 }
 
-void test_per_call_approval_ignores_policy_and_session_grants() {
+void test_per_call_approval_ignores_session_grants() {
     Workspace workspace;
     forcedToolRuns = 0;
     auto underTest =
         makeAgent({callTurn("external_send", R"({"text":"first"})", "call_1"),
                    callTurn("external_send", R"({"text":"second"})", "call_2"), sayTurn("Sent.")},
-                  MaiApprovalPolicy::Never);
+                  MaiApprovalPolicy::OnRequest);
     Recorder recorder;
     recorder.attach(*underTest.agent);
     const std::string sessionId =
@@ -747,6 +769,54 @@ void test_per_call_approval_ignores_policy_and_session_grants() {
     underTest.agent->waitIdle();
 
     CHECK(forcedToolRuns == 2);
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 2);
+}
+
+void test_full_access_bypasses_nonpaid_per_call_approval() {
+    Workspace workspace;
+    forcedToolRuns = 0;
+    auto underTest =
+        makeAgent({callTurn("external_send", R"({"text":"first"})", "call_1"),
+                   callTurn("external_send", R"({"text":"second"})", "call_2"), sayTurn("Sent.")},
+                  MaiApprovalPolicy::Never);
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "send two messages"});
+    underTest.agent->waitIdle();
+    CHECK(forcedToolRuns == 2);
+    CHECK(recorder.count(MaiEventType::PermissionAsked) == 0);
+}
+
+void test_paid_approval_ignores_full_access_and_session_grants() {
+    Workspace workspace;
+    paidToolRuns = 0;
+    auto underTest =
+        makeAgent({callTurn("paid_charge", R"({"text":"first"})", "call_1"),
+                   callTurn("paid_charge", R"({"text":"second"})", "call_2"), sayTurn("Done.")},
+                  MaiApprovalPolicy::Never);
+    Recorder recorder;
+    recorder.attach(*underTest.agent);
+    const std::string sessionId =
+        underTest.agent->submit(MaiCreateSession{workspace.utf8Root(), "", ""}).value();
+    underTest.agent->submit(MaiSendPrompt{sessionId, "submit two paid tasks"});
+    CHECK(waitFor([&] { return underTest.agent->listPendingPermissions().size() == 1; }));
+    CHECK(paidToolRuns == 0);
+    auto first = underTest.agent->listPendingPermissions().front();
+    CHECK(!first.allowForSession);
+    CHECK(underTest.agent
+              ->submit(MaiReplyPermission{first.id, MaiPermissionDecision::ApprovedForSession})
+              .isOk());
+    CHECK(waitFor([&] {
+        return paidToolRuns == 1 && underTest.agent->listPendingPermissions().size() == 1;
+    }));
+    auto second = underTest.agent->listPendingPermissions().front();
+    CHECK(!second.allowForSession);
+    CHECK(underTest.agent->submit(MaiReplyPermission{second.id, MaiPermissionDecision::Approved})
+              .isOk());
+    underTest.agent->waitIdle();
+    CHECK(paidToolRuns == 2);
     CHECK(recorder.count(MaiEventType::PermissionAsked) == 2);
 }
 
@@ -885,8 +955,12 @@ int main() {
     test_unless_trusted_still_asks_for_risky_shell();
     std::printf("-> test_never_policy_runs_without_prompting\n");
     test_never_policy_runs_without_prompting();
-    std::printf("-> test_per_call_approval_ignores_policy_and_session_grants\n");
-    test_per_call_approval_ignores_policy_and_session_grants();
+    std::printf("-> test_per_call_approval_ignores_session_grants\n");
+    test_per_call_approval_ignores_session_grants();
+    std::printf("-> test_full_access_bypasses_nonpaid_per_call_approval\n");
+    test_full_access_bypasses_nonpaid_per_call_approval();
+    std::printf("-> test_paid_approval_ignores_full_access_and_session_grants\n");
+    test_paid_approval_ignores_full_access_and_session_grants();
     test_session_delete_needs_approval_before_removing_history();
     std::printf("-> test_interrupt_while_waiting_for_approval\n");
     test_interrupt_while_waiting_for_approval();

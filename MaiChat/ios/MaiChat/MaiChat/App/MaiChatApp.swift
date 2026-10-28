@@ -330,7 +330,7 @@ struct MaiChatApp: App {
                                 ProcessInfo.processInfo.arguments.contains("--im-search-focus-ui-test") {
                         ChatLandscapeUITestRoot()
                     } else {
-                        AIAssistantView()
+                        AIAssistantUITestRoot()
                     }
                 } else {
                     appContent
@@ -419,6 +419,14 @@ struct MaiChatApp: App {
 }
 
 #if targetEnvironment(simulator)
+private struct AIAssistantUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+
+    var body: some View {
+        AIAssistantView().environmentObject(appState)
+    }
+}
+
 /// Local TLS integration route for the production iOS downloader and C bridge.
 /// It is reachable only from a simulator launch carrying an explicit test flag.
 private struct IMCurlDownloadUITestRoot: View {

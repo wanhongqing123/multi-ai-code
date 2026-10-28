@@ -37,8 +37,8 @@ public:
     std::string description() const override {
         return "Add one event to the device's system calendar, or open an import "
                "sheet where direct writing is unavailable. Call current_time first "
-               "and confirm the user's time zone. Show the full title, times and notes "
-               "for approval. A calendar event reminds the user; it does not run an "
+               "and confirm the user's time zone. When approval is requested, show the "
+               "full title, times and notes. A calendar event reminds the user; it does not run an "
                "Agent task. Use maichat_session_task_create separately for execution.";
     }
     std::string parametersSchema() const override {

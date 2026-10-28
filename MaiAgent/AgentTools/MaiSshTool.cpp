@@ -155,13 +155,13 @@ public:
         return "ssh_exec";
     }
     std::string description() const override {
-        // SSH 在同一 AI 会话可复用短期连接，但每条远程命令仍须单独受权限闸门约束。
+        // SSH 在同一 AI 会话可复用短期连接；远程命令按当前 Agent 策略过权限闸门。
         return "Connect to a remote SSH server and execute one command. A live SSH connection "
                "is reused within this AI conversation for up to ten idle minutes; each command "
                "still runs in a separate remote channel, so cd and shell variables do not "
                "persist. The host asks for the password in a secure native dialog; never put "
                "a password in arguments or chat. A new server's SHA-256 fingerprint must be "
-               "verified before login. Every remote command needs user approval.";
+               "verified before login. Command approval follows the Agent policy.";
     }
     std::string parametersSchema() const override {
         // host/username/command 必填；port 限合法 TCP 端口，timeout_seconds

@@ -49,7 +49,7 @@ const char* toolDescription(Action action) {
             return "Only after maichat_cloud_drive_list_media succeeds, upload an existing "
                    "local MP4 or MOV video (maximum 2 GB) or JPEG, PNG, WebP or HEIC image "
                    "(maximum 20 MB) to this account's private drive. Account quota is 10 GB. "
-                   "Requires approval for every call. A queued result is not completion.";
+                   "Approval follows the Agent policy. A queued result is not completion.";
         case Action::Pause:
             return "Pause an active upload by task ID from maichat_cloud_drive_list_pending_uploads. "
                    "Confirmed parts remain available for later resume. A pausing result is a request, "
@@ -57,20 +57,20 @@ const char* toolDescription(Action action) {
         case Action::Resume:
             return "Only while this account's private cloud drive is enabled, resume a "
                    "paused upload by task ID from maichat_cloud_drive_list_pending_uploads. "
-                   "Requires approval for every call.";
+                   "Approval follows the Agent policy.";
         case Action::Abort:
             return "Only while this account's private cloud drive is enabled, permanently discard "
                    "a paused upload by task ID from maichat_cloud_drive_list_pending_uploads. "
                    "This starts cleanup; reserved cloud space is released after cleanup completes. "
                    "Pause an active upload first. "
-                   "Requires approval for every call.";
+                   "Approval follows the Agent policy.";
         case Action::Play:
             return "Only while this account's private cloud drive is enabled, open one "
                    "of its images or videos in the device viewer. Use a media_id from "
                    "maichat_cloud_drive_list_media.";
         case Action::Delete:
             return "Only while this account's private cloud drive is enabled, permanently "
-                   "delete one of its images or videos. Requires approval for every call.";
+                   "delete one of its images or videos. Approval follows the Agent policy.";
         case Action::SessionOpen:
             return "Open an attachment ID already shared in this MaiChat Agent Session. "
                    "Download it from the account's separate private Session space into this "

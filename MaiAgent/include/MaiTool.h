@@ -165,12 +165,17 @@ public:
     // 这一层的兜底方向永远是「不放行」，看不懂的东西不能当成安全的。
     virtual bool requiresApproval(const std::string& argumentsJson) const;
 
-    // 这一类调用**每一次**都必须由用户明确确认，不受 approvalPolicy、
-    // 「本会话都允许」或其它自动放行规则影响。用于向外部系统发送消息、付款、发布等动作。
+    // 在请求批准/帮我批准模式下，这一类调用每次都要确认，不能记入会话授权。
+    // 完全访问会跳过它；付费动作由 requiresPaidApproval() 单独保留确认。
     //
     // 默认 false。返回 true 的工具也应让 requiresApproval() 返回 true，便于宿主在工具清单和
     // 审计界面里保持一致；核心会优先按本方法处理。
     virtual bool requiresPerCallApproval(const std::string& argumentsJson) const;
+
+    // 这次调用会向供应商提交可能扣费的任务。完全访问模式也必须逐次确认。
+    // 仅标记计费类提交（含限时免费），不要把取消、删除、发送消息等混进来。
+    // 默认 false；无效参数由 execute() 拒绝，不会因此产生费用。
+    virtual bool requiresPaidApproval(const std::string& argumentsJson) const;
 
     // 用户选「这个会话以后都允许」时，记住的是哪一类调用。
     //

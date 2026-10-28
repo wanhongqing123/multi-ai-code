@@ -62,7 +62,7 @@ public:
                "yourself. It returns an id immediately; use wait_agent when you need its answer. "
                "The point is to keep a large search out of your own context: let it read thirty "
                "files and tell you the one conclusion. It works in the same directory as you and "
-               "has to ask the user for its own approvals. Do not use it for work you could "
+               "uses the selected Agent approval policy. Do not use it for work you could "
                "finish in a couple of steps yourself.";
     }
 

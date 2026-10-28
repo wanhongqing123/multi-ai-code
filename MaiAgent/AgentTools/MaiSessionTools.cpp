@@ -214,7 +214,7 @@ public:
     }
     std::string description() const override {
         return "Permanently delete an idle conversation and its message history on this device "
-               "after the user's explicit approval. Workspace files are not deleted. "
+               "under the selected Agent approval policy. Workspace files are not deleted. "
                "The conversation running this tool cannot delete itself.";
     }
     std::string parametersSchema() const override {
@@ -271,7 +271,7 @@ public:
         return "Change an existing conversation's Workspace without creating a new Session. "
                "The path must be an absolute existing directory on this device. "
                "Changing the conversation running this tool takes effect on its next turn. "
-               "Requires approval for each call.";
+               "Approval follows the selected Agent policy.";
     }
     std::string parametersSchema() const override {
         return R"({"type":"object","properties":{"session_id":{"type":"string"},)"

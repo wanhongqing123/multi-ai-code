@@ -291,6 +291,10 @@ public:
         const std::string action = value(args, "action");
         return action != "discover" && action != "continue";
     }
+    bool requiresPaidApproval(const std::string& raw) const override {
+        const Json args = Json::parse(raw, nullptr, false);
+        return args.is_object() && value(args, "action") == "delegate";
+    }
     MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
         const Json args = Json::parse(raw, nullptr, false);
         if (!args.is_object()) return invalid("arguments must be a JSON object");

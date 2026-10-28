@@ -8,6 +8,7 @@
 
 #include "../../ios/MaiChat/MaiChat/Media/MaiFfplayIosBridge.h"
 #include "../FfplayCompat/MaiFfplayEntry.h"
+#include "../../Network/MaiCloudVod.h"
 
 namespace {
 
@@ -71,6 +72,14 @@ extern "C" int maiFfplayProbeHdrSource(const char*, MaiFfplayHdrSourceInfo* info
     std::memcpy(info->ambient, ambient, sizeof(ambient));
     return 1;
 }
+
+// These tests use local media only. Keep unrelated cloud entry points inert so
+// the same bridge can be linked without a network stack in this regression.
+extern "C" int maiFfplayProbeHdrSourceFromHost(const MaiFfplayHost*, MaiFfplayHdrSourceInfo*) { return 0; }
+extern "C" uint64_t mai_cloud_vod_size(const MaiCloudVod*) { return 0; }
+extern "C" void mai_cloud_vod_interrupt_read(MaiCloudVod*) {}
+extern "C" int mai_cloud_vod_read_at(MaiCloudVod*, uint64_t, uint8_t*, size_t,
+                                     size_t*, MaiCloudVodResult*) { return 0; }
 
 extern "C" int maiFfplayRunAtSpeed(const MaiFfplayHost* host, int argc, char**,
                                     double, int64_t) {
@@ -151,6 +160,8 @@ int main() {
         return failed("ordinary software RGBA playback did not finish");
     if (nativeRuns != 0 || softwareRuns != 1 || maiFfplayIosExitCode(session) != 0)
         return failed("presented RGBA frame must count as successful playback");
+    if (maiFfplayIosHasFirstFrame(session) != 1)
+        return failed("presented RGBA frame was not exposed to the viewer");
     if (hlgEnableRequests != 0 || hlgDisableRequests != 0)
         return failed("SDR playback must not change the Metal layer color mode");
     maiFfplayIosStop(session);
@@ -161,6 +172,8 @@ int main() {
         return failed("native success did not finish");
     if (nativeRuns != 1 || softwareRuns != 0 || maiFfplayIosExitCode(session) != 0)
         return failed("native success should not retry");
+    if (maiFfplayIosHasFirstFrame(session) != 1)
+        return failed("presented native frame was not exposed to the viewer");
     if (hlgEnableRequests != 1 || hlgDisableRequests != 0)
         return failed("native HLG playback did not request per-view EDR");
     maiFfplayIosStop(session);
@@ -191,6 +204,8 @@ int main() {
         return failed("both zero-frame attempts did not finish");
     if (nativeRuns != 1 || softwareRuns != 1 || maiFfplayIosExitCode(session) == 0)
         return failed("two zero-frame attempts must be reported as failure");
+    if (maiFfplayIosHasFirstFrame(session) != 0 || maiFfplayIosHasFirstFrame(nullptr) != 0)
+        return failed("zero-frame or absent session was reported as a ready video");
     maiFfplayIosStop(session);
 
     reset(Scenario::StopNative);

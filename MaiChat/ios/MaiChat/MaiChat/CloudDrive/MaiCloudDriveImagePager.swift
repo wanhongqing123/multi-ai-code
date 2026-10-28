@@ -1,56 +1,60 @@
-// Cloud images stay in one native paging container throughout a drag. Downloaded
+// Cloud images and videos stay in one native paging container throughout a drag. Downloaded
 // preview URLs belong to this presentation and are removed when it closes.
 import SwiftUI
 import UIKit
 
 @MainActor
-struct MaiCloudDriveImagePager: UIViewControllerRepresentable {
-    let images: [MaiCloudDriveVideo]
+struct MaiCloudDriveMediaPager: UIViewControllerRepresentable {
+    let items: [MaiCloudDriveVideo]
     let initialIndex: Int
     let loadImage: @MainActor (MaiCloudDriveVideo) async throws -> URL
+    let loadVideo: @MainActor (MaiCloudDriveVideo) async throws -> MaiCloudVodSession
     let close: () -> Void
     let hasMore: Bool
     let loadMore: @MainActor () -> Void
 
-    init(images: [MaiCloudDriveVideo], initialIndex: Int,
+    init(items: [MaiCloudDriveVideo], initialIndex: Int,
          loadImage: @escaping @MainActor (MaiCloudDriveVideo) async throws -> URL,
+         loadVideo: @escaping @MainActor (MaiCloudDriveVideo) async throws -> MaiCloudVodSession,
          close: @escaping () -> Void, hasMore: Bool = false,
          loadMore: @escaping @MainActor () -> Void = {}) {
-        self.images = images
+        self.items = items
         self.initialIndex = initialIndex
         self.loadImage = loadImage
+        self.loadVideo = loadVideo
         self.close = close
         self.hasMore = hasMore
         self.loadMore = loadMore
     }
 
-    func makeUIViewController(context: Context) -> MaiCloudDriveImagePagerController {
-        MaiCloudDriveImagePagerController(images: images, initialIndex: initialIndex,
-                                         loader: loadImage, close: close,
+    func makeUIViewController(context: Context) -> MaiCloudDriveMediaPagerController {
+        MaiCloudDriveMediaPagerController(items: items, initialIndex: initialIndex,
+                                         loader: loadImage, videoLoader: loadVideo, close: close,
                                          hasMore: hasMore, loadMore: loadMore)
     }
 
-    func updateUIViewController(_ controller: MaiCloudDriveImagePagerController,
+    func updateUIViewController(_ controller: MaiCloudDriveMediaPagerController,
                                 context: Context) {
         // Retain each loaded page's order/identity while later metadata pages
         // append to this presentation's snapshot.
         controller.updatePagination(hasMore: hasMore, loadMore: loadMore)
-        controller.appendImages(images)
+        controller.appendImages(items)
         controller.close = close
     }
 
-    static func dismantleUIViewController(_ controller: MaiCloudDriveImagePagerController,
+    static func dismantleUIViewController(_ controller: MaiCloudDriveMediaPagerController,
                                           coordinator: ()) {
         controller.dispose()
     }
 }
 
 @MainActor
-final class MaiCloudDriveImagePagerController: UIViewController,
+final class MaiCloudDriveMediaPagerController: UIViewController,
                                                UIPageViewControllerDataSource,
                                                UIPageViewControllerDelegate {
-    private var images: [MaiCloudDriveVideo]
+    private var items: [MaiCloudDriveVideo]
     private let loader: @MainActor (MaiCloudDriveVideo) async throws -> URL
+    private let videoLoader: @MainActor (MaiCloudDriveVideo) async throws -> MaiCloudVodSession
     var close: () -> Void
     private var index: Int
     private let pager = UIPageViewController(transitionStyle: .scroll,
@@ -63,7 +67,7 @@ final class MaiCloudDriveImagePagerController: UIViewController,
     private var hasMore: Bool
     private var loadMore: @MainActor () -> Void
     private var requestedCount: Int?
-    private var pages: [Int: MaiCloudDriveImagePageController] = [:]
+    private var pages: [Int: MaiCloudDriveMediaPageController] = [:]
     private var files: [Int: URL] = [:]
     private var recent: [Int] = []
     private var tasks: [Int: Task<Void, Never>] = [:]
@@ -72,13 +76,15 @@ final class MaiCloudDriveImagePagerController: UIViewController,
     private var transitioning = false
     private var refreshPending = false
 
-    init(images: [MaiCloudDriveVideo], initialIndex: Int,
+    init(items: [MaiCloudDriveVideo], initialIndex: Int,
          loader: @escaping @MainActor (MaiCloudDriveVideo) async throws -> URL,
+         videoLoader: @escaping @MainActor (MaiCloudDriveVideo) async throws -> MaiCloudVodSession,
          close: @escaping () -> Void, hasMore: Bool,
          loadMore: @escaping @MainActor () -> Void) {
-        self.images = images
-        index = max(0, min(initialIndex, max(0, images.count - 1)))
+        self.items = items
+        index = max(0, min(initialIndex, max(0, items.count - 1)))
         self.loader = loader
+        self.videoLoader = videoLoader
         self.close = close
         self.hasMore = hasMore
         self.loadMore = loadMore
@@ -117,7 +123,7 @@ final class MaiCloudDriveImagePagerController: UIViewController,
     }
 
     private func buildControls() {
-        let closeButton = actionButton(symbol: "xmark", label: "关闭图片",
+        let closeButton = actionButton(symbol: "xmark", label: "关闭预览",
                                        identifier: "cloud-drive-image-close")
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         caption.textColor = .white
@@ -159,7 +165,7 @@ final class MaiCloudDriveImagePagerController: UIViewController,
         feedback.numberOfLines = 2
         feedback.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(feedback)
-        moreButton.setTitle("加载更多图片", for: .normal)
+        moreButton.setTitle("加载更多", for: .normal)
         moreButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         moreButton.tintColor = .white
         moreButton.backgroundColor = UIColor.black.withAlphaComponent(0.6)
@@ -179,7 +185,7 @@ final class MaiCloudDriveImagePagerController: UIViewController,
             feedback.bottomAnchor.constraint(equalTo: actions.topAnchor, constant: -12),
             moreButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor,
                                                   constant: 20),
-            moreButton.centerYAnchor.constraint(equalTo: actions.centerYAnchor),
+            moreButton.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: 12),
             moreButton.heightAnchor.constraint(equalToConstant: 44),
             moreButton.widthAnchor.constraint(equalToConstant: 130),
             moreButton.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor,
@@ -210,15 +216,21 @@ final class MaiCloudDriveImagePagerController: UIViewController,
         ])
     }
 
-    private func page(at target: Int) -> MaiCloudDriveImagePageController? {
-        guard images.indices.contains(target), !disposed else { return nil }
+    private func page(at target: Int) -> MaiCloudDriveMediaPageController? {
+        guard items.indices.contains(target), !disposed else { return nil }
         if let existing = pages[target] { return existing }
-        let page = MaiCloudDriveImagePageController(index: target, name: images[target].name)
+        let page = MaiCloudDriveMediaPageController(index: target, name: items[target].name,
+                                                   isImage: items[target].isImage)
         page.retry = { [weak self] in self?.load(target, retry: true) }
         page.zoomChanged = { [weak self] zoomed in
             guard let self, self.index == target else { return }
             self.pagingScrollView?.isScrollEnabled = !zoomed
         }
+        page.controlsInteractionChanged = { [weak self] interacting in
+            guard let self, self.index == target else { return }
+            self.pagingScrollView?.isScrollEnabled = !interacting
+        }
+        page.readyChanged = { [weak self] in self?.refreshActions() }
         pages[target] = page
         load(target)
         return page
@@ -229,7 +241,15 @@ final class MaiCloudDriveImagePagerController: UIViewController,
     }
 
     private func load(_ target: Int, retry: Bool = false) {
-        guard !disposed, images.indices.contains(target) else { return }
+        guard !disposed, items.indices.contains(target) else { return }
+        if !items[target].isImage {
+            guard target == index else {
+                pages[target]?.showVideoPlaceholder()
+                return
+            }
+            loadVideo(target, retry: retry)
+            return
+        }
         if !retry, tasks[target] != nil { return }
         tasks[target]?.cancel()
         if retry, let old = files.removeValue(forKey: target) {
@@ -239,7 +259,7 @@ final class MaiCloudDriveImagePagerController: UIViewController,
         let ticket = UUID()
         tickets[target] = ticket
         let cached = files[target]
-        let item = images[target]
+        let item = items[target]
         let loader = loader
         tasks[target] = Task { @MainActor [weak self] in
             do {
@@ -276,11 +296,53 @@ final class MaiCloudDriveImagePagerController: UIViewController,
         }
     }
 
+    private func loadVideo(_ target: Int, retry: Bool) {
+        guard !disposed, target == index else { return }
+        if !retry && (tasks[target] != nil || pages[target]?.hasVideo == true) { return }
+        tasks[target]?.cancel()
+        pages[target]?.stopVideo()
+        pages[target]?.showLoading()
+        let ticket = UUID()
+        tickets[target] = ticket
+        let item = items[target]
+        let open = videoLoader
+        tasks[target] = Task { @MainActor [weak self] in
+            do {
+                let vod = try await open(item)
+                guard !Task.isCancelled, let self, !self.disposed,
+                      self.index == target, self.tickets[target] == ticket,
+                      let page = self.pages[target] else {
+                    vod.cancel()
+                    return
+                }
+                self.tasks[target] = nil
+                page.showVideo(vod, close: { [weak self] in self?.closeTapped() })
+                self.refreshActions()
+            } catch {
+                guard !Task.isCancelled, let self, !self.disposed,
+                      self.index == target, self.tickets[target] == ticket else { return }
+                self.tasks[target] = nil
+                self.pages[target]?.showError(error.localizedDescription)
+                self.refreshActions()
+            }
+        }
+    }
+
+    private func synchronizePlayback() {
+        for (target, page) in pages where target != index && !items[target].isImage {
+            tasks.removeValue(forKey: target)?.cancel()
+            tickets.removeValue(forKey: target)
+            page.stopVideo()
+        }
+        if items.indices.contains(index), !items[index].isImage { load(index) }
+    }
+
     private func trimCache() {
         let neighbors = Set([index - 1, index, index + 1])
         // At most three decoded pages and eight downloaded originals survive.
         // In-flight pages next to the visible one are retained until transition.
         for target in Array(pages.keys) where !neighbors.contains(target) {
+            pages[target]?.stopVideo()
             pages.removeValue(forKey: target)
             tasks.removeValue(forKey: target)?.cancel()
             tickets.removeValue(forKey: target)
@@ -295,9 +357,9 @@ final class MaiCloudDriveImagePagerController: UIViewController,
     }
 
     private func refreshCaption() {
-        caption.text = images.isEmpty ? "没有可浏览的图片" :
-            "\(index + 1)/\(hasMore ? "已加载\(images.count)" : "\(images.count)") · \(images[index].name)"
-        moreButton.isHidden = !hasMore || index < images.count - 1
+        caption.text = items.isEmpty ? "没有可浏览的文件" :
+            "\(index + 1)/\(hasMore ? "已加载\(items.count)" : "\(items.count)") · \(items[index].name)"
+        moreButton.isHidden = !hasMore || index < items.count - 1
         feedback.text = nil
         refreshActions()
         requestMoreIfNeeded()
@@ -312,28 +374,47 @@ final class MaiCloudDriveImagePagerController: UIViewController,
     }
 
     private func requestMoreIfNeeded(force: Bool = false) {
-        guard !disposed, hasMore, index >= images.count - 5,
-              force || requestedCount != images.count else { return }
-        requestedCount = images.count
+        guard !disposed, hasMore, index >= items.count - 5,
+              force || requestedCount != items.count else { return }
+        requestedCount = items.count
         loadMore()
     }
 
     @objc private func loadMoreTapped() { requestMoreIfNeeded(force: true) }
 
     private func refreshActions() {
+        let isImage = items.indices.contains(index) && items[index].isImage
         let ready = pages[index]?.hasImage == true && files[index] != nil
+        shareButton.isHidden = !isImage
+        saveButton.isHidden = !isImage
         shareButton.isEnabled = ready
         saveButton.isEnabled = ready
         shareButton.alpha = ready ? 1 : 0.4
         saveButton.alpha = ready ? 1 : 0.4
+        if items.indices.contains(index) {
+            let page = pages[index]
+            let ready = isImage ? page?.hasImage == true : page?.hasVideoFrame == true
+            if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") ||
+                ProcessInfo.processInfo.environment["MAICHAT_MEDIA_UI_TEST_STATE"] == "YES" {
+                caption.accessibilityValue = "\(isImage ? "image" : "video"):\(ready ? "ready" : "loading");" +
+                    "media_id=\(items[index].id);" +
+                    "has_first_frame=\(page?.hasVideoFrame == true ? 1 : 0);" +
+                    "active=\(MaiFfplayMobilePlayer.active == nil ? 0 : 1);" +
+                    "owned_active=\(page?.isActiveVideo == true ? 1 : 0)"
+            } else {
+                caption.accessibilityValue = isImage
+                    ? (ready ? "图片已加载" : "正在加载图片")
+                    : (ready ? "视频已播放" : "正在加载视频")
+            }
+        }
     }
 
     func appendImages(_ incoming: [MaiCloudDriveVideo]) {
         guard !disposed else { return }
-        var known = Set(images.map(\.id))
+        var known = Set(items.map(\.id))
         let additions = incoming.filter { known.insert($0.id).inserted }
         guard !additions.isEmpty else { return }
-        images.append(contentsOf: additions)
+        items.append(contentsOf: additions)
         guard isViewLoaded else { return }
         refreshCaption()
         refreshPending = true
@@ -352,13 +433,13 @@ final class MaiCloudDriveImagePagerController: UIViewController,
 
     func pageViewController(_ pageViewController: UIPageViewController,
                             viewControllerBefore viewController: UIViewController) -> UIViewController? {
-        guard let page = viewController as? MaiCloudDriveImagePageController else { return nil }
+        guard let page = viewController as? MaiCloudDriveMediaPageController else { return nil }
         return self.page(at: page.index - 1)
     }
 
     func pageViewController(_ pageViewController: UIPageViewController,
                             viewControllerAfter viewController: UIViewController) -> UIViewController? {
-        guard let page = viewController as? MaiCloudDriveImagePageController else { return nil }
+        guard let page = viewController as? MaiCloudDriveMediaPageController else { return nil }
         return self.page(at: page.index + 1)
     }
 
@@ -375,8 +456,9 @@ final class MaiCloudDriveImagePagerController: UIViewController,
         defer { refreshPagingNeighbors() }
         guard completed,
               let current = pageViewController.viewControllers?.first
-                as? MaiCloudDriveImagePageController else { return }
+                as? MaiCloudDriveMediaPageController else { return }
         index = current.index
+        synchronizePlayback()
         pagingScrollView?.isScrollEnabled = !current.isZoomed
         refreshCaption()
         trimCache()
@@ -425,6 +507,7 @@ final class MaiCloudDriveImagePagerController: UIViewController,
         tickets.removeAll()
         for url in files.values { try? FileManager.default.removeItem(at: url) }
         files.removeAll()
+        for page in pages.values { page.stopVideo() }
         pages.removeAll()
         pager.dataSource = nil
         pager.delegate = nil
@@ -443,11 +526,14 @@ private final class MaiCloudDriveZoomScrollView: UIScrollView {
 }
 
 @MainActor
-private final class MaiCloudDriveImagePageController: UIViewController, UIScrollViewDelegate {
+private final class MaiCloudDriveMediaPageController: UIViewController, UIScrollViewDelegate {
     let index: Int
     private let name: String
+    private let isImage: Bool
     var retry: (() -> Void)?
     var zoomChanged: ((Bool) -> Void)?
+    var controlsInteractionChanged: ((Bool) -> Void)?
+    var readyChanged: (() -> Void)?
     private let scroll = MaiCloudDriveZoomScrollView()
     private let imageView = UIImageView()
     private let spinner = UIActivityIndicatorView(style: .large)
@@ -455,12 +541,21 @@ private final class MaiCloudDriveImagePageController: UIViewController, UIScroll
     private let retryButton = UIButton(type: .system)
     private let stateStack = UIStackView()
     private var lastSize = CGSize.zero
+    private var videoController: MaiFfplayVideoController?
+    private var videoSession: MaiCloudVodSession?
+    private(set) var hasVideoFrame = false
     var hasImage: Bool { imageView.image != nil }
     var isZoomed: Bool { scroll.zoomScale > scroll.minimumZoomScale + 0.01 }
+    var hasVideo: Bool { videoController != nil }
+    var isActiveVideo: Bool {
+        guard let controller = videoController else { return false }
+        return MaiFfplayMobilePlayer.active === controller
+    }
 
-    init(index: Int, name: String) {
+    init(index: Int, name: String, isImage: Bool) {
         self.index = index
         self.name = name
+        self.isImage = isImage
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -477,6 +572,7 @@ private final class MaiCloudDriveImagePageController: UIViewController, UIScroll
         scroll.showsHorizontalScrollIndicator = false
         scroll.showsVerticalScrollIndicator = false
         scroll.contentInsetAdjustmentBehavior = .never
+        scroll.isHidden = !isImage
         view.addSubview(scroll)
         imageView.contentMode = .scaleAspectFit
         imageView.isAccessibilityElement = true
@@ -522,7 +618,7 @@ private final class MaiCloudDriveImagePageController: UIViewController, UIScroll
         stateStack.isHidden = false
         spinner.isHidden = false
         spinner.startAnimating()
-        message.text = "正在加载图片…"
+        message.text = isImage ? "正在加载图片…" : "正在打开视频…"
         retryButton.isHidden = true
     }
 
@@ -539,8 +635,77 @@ private final class MaiCloudDriveImagePageController: UIViewController, UIScroll
         stateStack.isHidden = false
         spinner.stopAnimating()
         spinner.isHidden = true
-        message.text = "图片加载失败\n\(detail)"
+        message.text = "\(isImage ? "图片" : "视频")加载失败\n\(detail)"
         retryButton.isHidden = false
+    }
+
+    func showVideoPlaceholder() {
+        loadViewIfNeeded()
+        stateStack.isHidden = false
+        spinner.stopAnimating()
+        spinner.isHidden = true
+        message.text = "视频 · \(name)"
+        retryButton.isHidden = true
+    }
+
+    func showVideo(_ vod: MaiCloudVodSession, close: @escaping () -> Void) {
+        loadViewIfNeeded()
+        stopVideo(showPlaceholder: false)
+        videoSession = vod
+        showLoading()
+        let controller = MaiFfplayVideoController(path: vod.displayPath,
+            onPlaybackReady: { [weak self] in
+                guard let self, self.videoController != nil else { return }
+                self.hasVideoFrame = true
+                self.spinner.stopAnimating()
+                self.stateStack.isHidden = true
+                self.readyChanged?()
+            }, vod: vod, embeddedInMediaPager: true, close: close)
+        controller.controlsInteractionChanged = { [weak self] interacting in
+            self?.controlsInteractionChanged?(interacting)
+        }
+        controller.onPlaybackFailure = { [weak self, weak controller] detail in
+            // Attach can fail while UIKit is adding the child. Remove the child
+            // after that lifecycle step, and only if it is still our player.
+            Task { @MainActor [weak self, weak controller] in
+                guard let self, let controller,
+                      self.videoController === controller else { return }
+                self.stopVideo(showPlaceholder: false)
+                self.showError(detail)
+                self.readyChanged?()
+            }
+        }
+        videoController = controller
+        // Match the standalone host: stop the old global player before the
+        // new Metal view can enter a window and start its playback worker.
+        controller.activateForVisibleHost()
+        addChild(controller)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(controller.view, belowSubview: stateStack)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        controller.didMove(toParent: self)
+        readyChanged?()
+    }
+
+    func stopVideo(showPlaceholder: Bool = true) {
+        // Stop the worker before releasing its borrowed VOD pointer. Each return
+        // to a video obtains a fresh source; canceled sources are never reused.
+        if let controller = videoController {
+            controller.stop()
+            controller.willMove(toParent: nil)
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            videoController = nil
+        }
+        videoSession?.cancel()
+        videoSession = nil
+        hasVideoFrame = false
+        if !isImage && showPlaceholder && isViewLoaded { showVideoPlaceholder() }
     }
 
     private func fitImage() {
@@ -650,8 +815,9 @@ struct MaiCloudImagePagerUITestRoot: View {
             if cleaned { Text("云盘图片缓存已清理") }
         }
         .fullScreenCover(isPresented: $showing) {
-            MaiCloudDriveImagePager(images: Array(fixture.images.prefix(fixture.loadedCount)),
+            MaiCloudDriveMediaPager(items: Array(fixture.images.prefix(fixture.loadedCount)),
                 initialIndex: 0, loadImage: { try await fixture.load($0) },
+                loadVideo: { _ in throw CancellationError() },
                 close: { showing = false }, hasMore: fixture.loadedCount < 3,
                 loadMore: { fixture.loadMore() })
                 .ignoresSafeArea()

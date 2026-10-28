@@ -24,6 +24,8 @@ int maiFfplayIosSeekAbsoluteUs(MaiFfplayIosSession* session, int64_t position_us
 int maiFfplayIosSeekPercent(MaiFfplayIosSession* session, double fraction);
 int maiFfplayIosHasFinished(const MaiFfplayIosSession* session);
 int maiFfplayIosExitCode(const MaiFfplayIosSession* session);
+// True only after a video frame was accepted by the graphics presenter.
+int maiFfplayIosHasFirstFrame(const MaiFfplayIosSession* session);
 void maiFfplayIosStop(MaiFfplayIosSession* session);
 uint64_t maiFfplayAppleNonSilentBufferCount(void);
 

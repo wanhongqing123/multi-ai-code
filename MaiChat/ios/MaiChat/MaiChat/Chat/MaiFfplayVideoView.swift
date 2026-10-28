@@ -466,6 +466,11 @@ private final class MaiFfplayMetalView: UIView {
         return status
     }
 
+    var hasFirstFrame: Bool {
+        guard let session else { return false }
+        return maiFfplayIosHasFirstFrame(session) == 1
+    }
+
     var unavailableReason: String {
         guard let session else { return "the video popup has no playback session" }
         if maiFfplayIosHasFinished(session) == 1 {
@@ -493,9 +498,12 @@ final class MaiFfplayVideoController: UIViewController {
     private let vod: MaiCloudVodSession?
     private let startSeconds: Double
     private let entryDirection: Int
+    private let embeddedInMediaPager: Bool
     private let onClose: () -> Void
     private var onNavigate: ((Int) -> Bool)?
     private var onPlaybackReady: (() -> Void)?
+    var onPlaybackFailure: ((String) -> Void)?
+    var controlsInteractionChanged: ((Bool) -> Void)?
     private let metalView = MaiFfplayMetalView()
     private let pauseButton = UIButton(type: .system)
     private let seekSlider = UISlider()
@@ -516,11 +524,13 @@ final class MaiFfplayVideoController: UIViewController {
          entryDirection: Int = 0, navigate: ((Int) -> Bool)? = nil,
          onPlaybackReady: (() -> Void)? = nil,
          vod: MaiCloudVodSession? = nil,
+         embeddedInMediaPager: Bool = false,
          close: @escaping () -> Void) {
         self.path = path
         self.vod = vod
         self.startSeconds = startSeconds
         self.entryDirection = entryDirection
+        self.embeddedInMediaPager = embeddedInMediaPager
         onNavigate = navigate
         self.onPlaybackReady = onPlaybackReady
         onClose = close
@@ -542,6 +552,7 @@ final class MaiFfplayVideoController: UIViewController {
         metalView.onError = { [weak self] message in
             self?.errorLabel.text = message
             self?.errorLabel.isHidden = false
+            self?.onPlaybackFailure?(message)
         }
         metalView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(metalView)
@@ -666,6 +677,7 @@ final class MaiFfplayVideoController: UIViewController {
         closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.accessibilityIdentifier = "ffplay-close"
         closeButton.accessibilityLabel = "关闭视频"
+        closeButton.isHidden = embeddedInMediaPager
         closeButton.tintColor = .white
         closeButton.backgroundColor = UIColor.white.withAlphaComponent(0.2)
         closeButton.layer.cornerRadius = 25
@@ -702,6 +714,7 @@ final class MaiFfplayVideoController: UIViewController {
             closeButton.widthAnchor.constraint(equalToConstant: 50),
             closeButton.heightAnchor.constraint(equalToConstant: 50),
         ])
+        if embeddedInMediaPager { observeControlTouches(in: view) }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -716,6 +729,13 @@ final class MaiFfplayVideoController: UIViewController {
                 self.view.alpha = 1
             }
         }
+        activateForVisibleHost()
+    }
+
+    // A selected page can embed this controller after its parent appeared.
+    // Match the standalone SwiftUI host's ownership without starting neighbors.
+    func activateForVisibleHost() {
+        MaiLocalMusicPlayer.shared.stop()
         if let previous = MaiFfplayMobilePlayer.active, previous !== self {
             previous.stop()
         }
@@ -740,11 +760,11 @@ final class MaiFfplayVideoController: UIViewController {
 
     private func refreshPlayback() {
         metalView.checkPlayback()
-        guard let status = metalView.playbackStatus(), status.duration_us > 0 else { return }
-        if !didReportPlaybackReady && status.position_us > 100_000 {
+        if !didReportPlaybackReady && metalView.hasFirstFrame {
             didReportPlaybackReady = true
             onPlaybackReady?()
         }
+        guard let status = metalView.playbackStatus(), status.duration_us > 0 else { return }
         let position = min(max(status.position_us, 0), status.duration_us)
         if !seekSlider.isTracking {
             seekSlider.value = Float(Double(position) / Double(status.duration_us))
@@ -766,6 +786,7 @@ final class MaiFfplayVideoController: UIViewController {
         playbackTimer?.invalidate()
         playbackTimer = nil
         metalView.stop()
+        controlsInteractionChanged?(false)
         if MaiFfplayMobilePlayer.active === self { MaiFfplayMobilePlayer.active = nil }
     }
 
@@ -824,6 +845,18 @@ final class MaiFfplayVideoController: UIViewController {
     }
 
     func close() { onClose() }
+
+    private func observeControlTouches(in parent: UIView) {
+        if let control = parent as? UIControl {
+            control.addTarget(self, action: #selector(controlTouchBegan), for: .touchDown)
+            control.addTarget(self, action: #selector(controlTouchEnded),
+                              for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        }
+        parent.subviews.forEach { observeControlTouches(in: $0) }
+    }
+
+    @objc private func controlTouchBegan() { controlsInteractionChanged?(true) }
+    @objc private func controlTouchEnded() { controlsInteractionChanged?(false) }
 
     @objc private func togglePause() { _ = sendCommand("toggle_pause") }
     @objc private func seekReleased() { _ = seekPercent(Double(seekSlider.value)) }

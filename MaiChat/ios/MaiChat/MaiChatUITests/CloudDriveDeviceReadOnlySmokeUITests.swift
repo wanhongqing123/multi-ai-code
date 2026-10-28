@@ -9,6 +9,7 @@ final class CloudDriveDeviceReadOnlySmokeUITests: XCTestCase {
         else { throw XCTSkip("真实账号云盘只读验收需要显式开启") }
         continueAfterFailure = false
         let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_MEDIA_UI_TEST_STATE"] = "YES"
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["云盘"].waitForExistence(timeout: 30))
@@ -22,13 +23,18 @@ final class CloudDriveDeviceReadOnlySmokeUITests: XCTestCase {
         let row = app.otherElements["cloud-drive-row-\(id)"]
         XCTAssertTrue(row.exists)
         row.swipeRight()
+        XCTAssertFalse(app.buttons["cloud-drive-delete-\(id)"].exists,
+                       "右滑不应揭露删除按钮")
+        row.swipeLeft()
         XCTAssertTrue(app.buttons["cloud-drive-delete-\(id)"].waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(app.buttons["cloud-drive-delete-\(id)"].frame.midX,
+                             row.frame.midX, "左滑删除按钮应位于文件行右侧")
         let revealed = XCTAttachment(screenshot: app.screenshot())
-        revealed.name = "device-cloud-right-swipe-delete-revealed"
+        revealed.name = "device-cloud-left-swipe-delete-revealed"
         revealed.lifetime = .keepAlways
         add(revealed)
         // Close the revealed action without invoking deletion or its confirmation.
-        row.swipeLeft()
+        row.swipeRight()
         first.tap()
         let counter = app.staticTexts["cloud-drive-image-counter"]
         XCTAssertTrue(counter.waitForExistence(timeout: 45))
@@ -57,6 +63,65 @@ final class CloudDriveDeviceReadOnlySmokeUITests: XCTestCase {
         XCTAssertTrue(counter.label.hasPrefix("1/"), "第一张不能循环到末尾")
         app.buttons["cloud-drive-image-close"].tap()
         XCTAssertTrue(first.waitForExistence(timeout: 10), "关闭预览后应回到原文件列表")
+        #endif
+    }
+
+    @MainActor func testInstalledCloudVideoPlaysAndCanSwipeToAdjacentMedia() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("此用例验收已连接真机上的真实云盘视频")
+        #else
+        guard ProcessInfo.processInfo.environment["MAICHAT_RUN_DEVICE_CLOUD_GALLERY"] == "YES"
+        else { throw XCTSkip("真实账号云盘只读验收需要显式开启") }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_MEDIA_UI_TEST_STATE"] = "YES"
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["云盘"].waitForExistence(timeout: 30))
+        app.buttons["云盘"].tap()
+        let candidates = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label == %@",
+            "cloud-drive-play-", "播放视频"))
+        var selected: XCUIElement?
+        for _ in 0..<15 {
+            selected = candidates.allElementsBoundByIndex.first(where: { $0.isHittable })
+            if selected != nil { break }
+            let more = app.buttons["cloud-drive-load-more"]
+            if more.exists && more.isHittable { more.tap() }
+            else { app.swipeUp() }
+        }
+        guard let selected else { throw XCTSkip("当前账号没有可见视频，混合播放另由隔离素材验收") }
+        selected.tap()
+        let counter = app.staticTexts["cloud-drive-image-counter"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 15))
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value BEGINSWITH %@", "video:ready"), object: counter)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 60), .completed,
+                       "真实视频需要渲染出首帧")
+        let caption = counter.label
+        let index = Int(caption.components(separatedBy: "/")[0]) ?? 0
+        XCTAssertGreaterThan(index, 0)
+        let pause = app.buttons["ffplay-pause"]
+        XCTAssertTrue(pause.exists)
+        pause.tap()
+        XCTAssertEqual(pause.label, "播放视频")
+        pause.tap()
+        XCTAssertEqual(pause.label, "暂停视频")
+        let frame = XCTAttachment(screenshot: app.screenshot())
+        frame.name = "device-cloud-video-first-frame"
+        frame.lifetime = .keepAlways
+        add(frame)
+        if index > 1 { app.swipeRight() } else { app.swipeLeft() }
+        let expectedIndex = index > 1 ? index - 1 : index + 1
+        XCTAssertTrue(counter.label.hasPrefix("\(expectedIndex)/"), "视频应能滑到相邻媒体")
+        if index > 1 { app.swipeLeft() } else { app.swipeRight() }
+        XCTAssertTrue(counter.label.hasPrefix("\(index)/"))
+        let returned = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value BEGINSWITH %@", "video:ready"), object: counter)
+        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 60), .completed,
+                       "重新滑回视频需要建立可播放的新点播会话")
+        app.buttons["cloud-drive-image-close"].tap()
+        XCTAssertTrue(selected.waitForExistence(timeout: 10))
         #endif
     }
 

@@ -267,6 +267,8 @@ struct MaiChatApp: App {
                         GroupChatUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--video-circle-ui-test") {
                         AIVideoCircleUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--cloud-drive-mixed-media-test") {
+                        MaiCloudMixedMediaUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--cloud-drive-image-pager-test") {
                         MaiCloudImagePagerUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--cloud-drive-ui-test") {

@@ -28,6 +28,7 @@ struct MaiFfplayIosSession {
     std::atomic<bool> finished{false};
     std::atomic<int> result{0};
     std::atomic<bool> firstFrameLogged{false};
+    std::atomic<bool> firstFramePresented{false};
     std::atomic<uint64_t> presentedFrames{0};
     std::atomic<bool> hlgOutputRequested{false};
     MaiFfplayHdrSourceInfo sourceInfo{};
@@ -54,6 +55,7 @@ bool presentVideo(void* user, const MaiVideoFrame* frame,
     const bool shown = maiGraphicsPresenterShowVideoFrameWithSubtitle(
         session->viewId, frame, subtitle, false);
     if (!shown) return false;
+    if (frame) session->firstFramePresented.store(true, std::memory_order_release);
     const uint64_t count = ++session->presentedFrames;
 #if !defined(NDEBUG)
     if (count % 100 == 0)
@@ -76,6 +78,7 @@ bool presentRgba(void* user, const uint8_t* pixels,
     const bool shown = maiGraphicsPresenterShowFrame(session->viewId, pixels,
                                                       width, height, stride, false);
     if (!shown) return false;
+    session->firstFramePresented.store(true, std::memory_order_release);
     ++session->presentedFrames;
 #if !defined(NDEBUG)
     if (!session->firstFrameLogged.exchange(true))
@@ -213,6 +216,10 @@ extern "C" int maiFfplayIosHasFinished(const MaiFfplayIosSession* session) {
 
 extern "C" int maiFfplayIosExitCode(const MaiFfplayIosSession* session) {
     return session ? session->result.load() : -1;
+}
+
+extern "C" int maiFfplayIosHasFirstFrame(const MaiFfplayIosSession* session) {
+    return session && session->firstFramePresented.load(std::memory_order_acquire) ? 1 : 0;
 }
 
 extern "C" void maiFfplayIosStop(MaiFfplayIosSession* session) {

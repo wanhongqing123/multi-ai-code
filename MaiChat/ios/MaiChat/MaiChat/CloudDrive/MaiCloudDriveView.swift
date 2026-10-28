@@ -107,15 +107,12 @@ private struct MaiCloudPhotoMedia: Transferable, Sendable {
 }
 
 private struct MaiCloudDrivePreview: Identifiable {
-    let url: URL
-    let isImage: Bool
-    let vod: MaiCloudVodSession?
-    var images: [MaiCloudDriveVideo] = []
-    var initialIndex: Int = 0
-    var accountID: String = ""
+    let id = UUID().uuidString
+    var items: [MaiCloudDriveVideo]
+    let initialIndex: Int
+    let accountID: String
     var nextCursor: String?
     var visitedCursors = Set<String>()
-    var id: String { url.path }
 }
 
 @MainActor private final class MaiCloudThumbnailCache {
@@ -201,7 +198,7 @@ private struct MaiCloudThumbnail: View {
 }
 
 // ScrollView does not host native swipeActions. Keep the existing card alive
-// while revealing its leading action, and let vertical drags scroll normally.
+// while revealing its trailing action, and let vertical drags scroll normally.
 private struct MaiCloudDriveHorizontalPan: UIViewRepresentable {
     let enabled: Bool
     let changed: (CGFloat) -> Void
@@ -274,11 +271,11 @@ private struct MaiCloudDriveSwipeRow<Content: View>: View {
     @State private var visible = true
     private let actionWidth: CGFloat = 84
 
-    private var offset: CGFloat { dragOffset ?? (revealedID == id ? actionWidth : 0) }
+    private var offset: CGFloat { dragOffset ?? (revealedID == id ? -actionWidth : 0) }
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            if offset > 0 {
+        ZStack(alignment: .trailing) {
+            if offset < 0 {
                 Button(role: .destructive, action: delete) {
                     Label("删除", systemImage: "trash")
                         .labelStyle(.titleAndIcon)
@@ -298,10 +295,10 @@ private struct MaiCloudDriveSwipeRow<Content: View>: View {
         .contentShape(Rectangle())
         .background(MaiCloudDriveHorizontalPan(enabled: enabled && visible,
             changed: { translation in
-                let start = revealedID == id ? actionWidth : 0
-                dragOffset = min(max(start + translation, 0), actionWidth)
+                let start = revealedID == id ? -actionWidth : 0
+                dragOffset = min(max(start + translation, -actionWidth), 0)
             }, ended: {
-                let shouldReveal = offset > actionWidth / 2
+                let shouldReveal = offset < -actionWidth / 2
                 withAnimation(.easeOut(duration: 0.2)) {
                     revealedID = shouldReveal ? id : nil
                     dragOffset = nil
@@ -327,8 +324,6 @@ struct MaiCloudDriveView: View {
     @State private var revealedMediaID: String?
     @State private var discardingTaskID: String?
     @State private var preview: MaiCloudDrivePreview?
-    @State private var openingID: String?
-    @State private var playbackTask: Task<Void, Never>?
     @State private var previewPageTask: Task<Void, Never>?
     @State private var previewPageRequestID: UUID?
     @State private var savingID: String?
@@ -549,7 +544,6 @@ struct MaiCloudDriveView: View {
             await model.reload()
         }
         .onChange(of: appState.maiChatAccountID) { _ in
-            playbackTask?.cancel()
             saveTask?.cancel()
             closePreview()
             MaiCloudThumbnailCache.shared.clear()
@@ -557,37 +551,32 @@ struct MaiCloudDriveView: View {
             revealedMediaID = nil
         }
         .onDisappear {
-            playbackTask?.cancel()
             if preview == nil { previewPageTask?.cancel() }
             saveTask?.cancel()
         }
         .fullScreenCover(item: $preview) { item in
-            if item.isImage {
-                MaiCloudDriveImagePager(images: item.images,
-                    initialIndex: item.initialIndex, loadImage: { media in
-                        let file: URL
-                        if media.id == item.images[item.initialIndex].id,
-                           FileManager.default.fileExists(atPath: item.url.path) {
-                            file = item.url
-                        } else {
-                            file = try await MaiCloudDriveClient.shared.downloadForPreview(media)
-                        }
-                        guard !Task.isCancelled,
-                              item.accountID == appState.maiChatAccountID else {
-                            try? FileManager.default.removeItem(at: file)
-                            throw CancellationError()
-                        }
-                        return file
-                    }, close: { closePreview() }, hasMore: item.nextCursor != nil,
-                    loadMore: { loadMorePreviewImages(item.id) })
-                    .ignoresSafeArea()
-            } else {
-                MaiFfplayVideoScreen(path: item.url.path, vod: item.vod) {
-                    closePreview()
-                }
-                    .ignoresSafeArea()
-                    .statusBarHidden()
-            }
+            MaiCloudDriveMediaPager(items: item.items,
+                initialIndex: item.initialIndex, loadImage: { media in
+                    let file = try await MaiCloudDriveClient.shared.downloadForPreview(media)
+                    guard !Task.isCancelled,
+                          item.accountID == appState.maiChatAccountID else {
+                        try? FileManager.default.removeItem(at: file)
+                        throw CancellationError()
+                    }
+                    return file
+                }, loadVideo: { media in
+                    let vod = try await MaiCloudDriveClient.shared.openVod(
+                        videoID: media.id,
+                        extensionName: media.contentType == "video/quicktime" ? "mov" : "mp4")
+                    guard !Task.isCancelled,
+                          item.accountID == appState.maiChatAccountID else {
+                        vod.cancel()
+                        throw CancellationError()
+                    }
+                    return vod
+                }, close: { closePreview() }, hasMore: item.nextCursor != nil,
+                loadMore: { loadMorePreviewMedia(item.id) })
+                .ignoresSafeArea()
         }
         .confirmationDialog("从我的云盘删除这个文件？",
                             isPresented: Binding(get: { deletingID != nil },
@@ -723,7 +712,7 @@ struct MaiCloudDriveView: View {
                                                 if ready { loadedThumbnailIDs.insert(media.id) }
                                                 else { loadedThumbnailIDs.remove(media.id) }
                                             }))
-                        if openingID == media.id || savingID == media.id {
+                        if savingID == media.id {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(.black.opacity(0.45))
                             ProgressView().tint(.white)
@@ -742,7 +731,6 @@ struct MaiCloudDriveView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(openingID != nil)
             .accessibilityLabel(media.isImage ? "查看图片" : "播放视频")
             .accessibilityValue(loadedThumbnailIDs.contains(media.id)
                 ? "封面已加载" : "封面待加载")
@@ -770,58 +758,24 @@ struct MaiCloudDriveView: View {
             withAnimation(.easeOut(duration: 0.2)) { revealedMediaID = nil }
             return
         }
-        guard openingID == nil else { return }
-        let expectedAccount = appState.maiChatAccountID
-        openingID = media.id
-        playbackTask = Task {
-            defer { openingID = nil }
-            do {
-                if media.isImage {
-                    let url = try await MaiCloudDriveClient.shared.downloadForPreview(media)
-                    guard !Task.isCancelled, expectedAccount == appState.maiChatAccountID else {
-                        try? FileManager.default.removeItem(at: url)
-                        return
-                    }
-                    let images = model.videos.filter(\.isImage)
-                    guard let index = images.firstIndex(where: { $0.id == media.id }) else {
-                        try? FileManager.default.removeItem(at: url)
-                        return
-                    }
-                    preview = MaiCloudDrivePreview(url: url, isImage: true, vod: nil,
-                        images: images, initialIndex: index, accountID: expectedAccount,
-                        nextCursor: model.nextCursor)
-                    loadMorePreviewImages(url.path)
-                } else {
-                    let vod = try await MaiCloudDriveClient.shared.openVod(
-                        videoID: media.id,
-                        extensionName: media.contentType == "video/quicktime" ? "mov" : "mp4")
-                    guard !Task.isCancelled, expectedAccount == appState.maiChatAccountID else {
-                        vod.cancel()
-                        return
-                    }
-                    preview = MaiCloudDrivePreview(
-                        url: URL(fileURLWithPath: vod.displayPath), isImage: false, vod: vod)
-                }
-            } catch {
-                if !Task.isCancelled { model.showError(error.localizedDescription) }
-            }
-        }
+        guard preview == nil,
+              let index = model.videos.firstIndex(where: { $0.id == media.id }) else { return }
+        let next = MaiCloudDrivePreview(items: model.videos, initialIndex: index,
+            accountID: appState.maiChatAccountID, nextCursor: model.nextCursor)
+        preview = next
+        loadMorePreviewMedia(next.id)
     }
 
     private func closePreview() {
         previewPageTask?.cancel()
         previewPageTask = nil
         previewPageRequestID = nil
-        preview?.vod?.cancel()
-        if let preview, preview.isImage {
-            try? FileManager.default.removeItem(at: preview.url)
-        }
         preview = nil
     }
 
-    private func loadMorePreviewImages(_ id: String) {
+    private func loadMorePreviewMedia(_ id: String) {
         guard previewPageTask == nil, let initial = preview,
-              initial.id == id, initial.isImage, initial.nextCursor != nil else { return }
+              initial.id == id, initial.nextCursor != nil else { return }
         let requestID = UUID()
         previewPageRequestID = requestID
         previewPageTask = Task { @MainActor in
@@ -831,7 +785,7 @@ struct MaiCloudDriveView: View {
                     previewPageRequestID = nil
                 }
             }
-            // Render the first image immediately. Append metadata in bounded
+            // Render the selected media immediately. Append metadata in bounded
             // batches; approaching the loaded end can request another batch.
             for _ in 0..<50 {
                 guard !Task.isCancelled, let current = preview,
@@ -841,9 +795,9 @@ struct MaiCloudDriveView: View {
                     let page = try await MaiCloudDriveClient.shared.list(before: cursor)
                     guard !Task.isCancelled, var updated = preview, updated.id == id,
                           updated.accountID == appState.maiChatAccountID else { return }
-                    var known = Set(updated.images.map(\.id))
-                    updated.images.append(contentsOf: page.videos.filter {
-                        $0.isImage && known.insert($0.id).inserted
+                    var known = Set(updated.items.map(\.id))
+                    updated.items.append(contentsOf: page.videos.filter {
+                        known.insert($0.id).inserted
                     })
                     if let next = page.nextCursor,
                        next == cursor || updated.visitedCursors.contains(next) {
@@ -893,6 +847,121 @@ struct MaiCloudDriveView: View {
 }
 
 #if targetEnvironment(simulator)
+@MainActor
+private final class MaiCloudMixedMediaFixture: ObservableObject {
+    @Published var items: [MaiCloudDriveVideo] = []
+    @Published var error = ""
+    @Published var opens = 0
+    @Published var cleanup = ""
+    private var imageFiles: [URL] = []
+
+    func prepare() async {
+        do {
+            let environment = ProcessInfo.processInfo.environment
+            guard environment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] == "https://localhost:18448",
+                  environment["MAICHAT_LOCAL_UI_PHONE"] == "sync-ui-test",
+                  let password = environment["MAICHAT_LOCAL_UI_PASSWORD"],
+                  let sample = Bundle.main.url(forResource: "ffplay-seek-sample",
+                                               withExtension: "mp4"),
+                  let cancel = MaiCloudDriveCancelToken() else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            let session = try await MaiChatAuthClient.shared.loginWithPassword(
+                account: "sync-ui-test", password: password, ageConfirmed: true)
+            let bytes = try sample.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            let id = UUID().uuidString.lowercased()
+            let task = MaiCloudDriveLocalTask(id: id, accountID: session.user.id,
+                name: sample.lastPathComponent, contentType: "video/mp4", sizeBytes: UInt64(bytes),
+                sourceID: sample.path, sourcePath: sample.path, bookmark: nil,
+                ownsSource: false, createdAt: Date())
+            let checkpoint = FileManager.default.temporaryDirectory
+                .appendingPathComponent(id + ".maicloud.json")
+            defer { try? FileManager.default.removeItem(at: checkpoint) }
+            let uploaded = try await MaiCloudDriveClient.shared.upload(source: task,
+                checkpointURL: checkpoint, cancel: cancel, progress: { _, _ in })
+            guard let receipt = try JSONSerialization.jsonObject(with: uploaded) as? [String: Any],
+                  let mediaID = receipt["video_id"] as? String,
+                  let video = try await MaiCloudDriveClient.shared.list().videos.first(where: {
+                    $0.id == mediaID
+                  }) else { throw CocoaError(.fileReadCorruptFile) }
+            func image(_ id: String, _ name: String) -> MaiCloudDriveVideo {
+                MaiCloudDriveVideo(id: id, name: name, sizeBytes: 1024,
+                    contentType: "image/png", mediaType: "image",
+                    createdAt: 1_793_181_600_000, folderId: nil)
+            }
+            items = [image("223e4567-e89b-42d3-a456-426614174000", "图片一.png"), video,
+                     image("323e4567-e89b-42d3-a456-426614174000", "图片三.png")]
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func loadImage(_ item: MaiCloudDriveVideo) throws -> URL {
+        let first = item.id == items.first?.id
+        let pixels = UIGraphicsImageRenderer(size: CGSize(width: 900, height: 1200)).image { context in
+            (first ? UIColor.systemRed : UIColor.systemBlue).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 900, height: 1200))
+            ((first ? "IMAGE BEFORE VIDEO" : "IMAGE AFTER VIDEO") as NSString).draw(
+                at: CGPoint(x: 40, y: 550), withAttributes: [
+                    .font: UIFont.boldSystemFont(ofSize: 58), .foregroundColor: UIColor.white])
+        }
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cloud-mixed-image-" + UUID().uuidString + ".png")
+        try pixels.pngData()!.write(to: file)
+        imageFiles.append(file)
+        return file
+    }
+
+    func loadVideo(_ item: MaiCloudDriveVideo) async throws -> MaiCloudVodSession {
+        let source = try await MaiCloudDriveClient.shared.openVod(videoID: item.id)
+        opens += 1
+        return source
+    }
+
+    func checkCleanup() async {
+        for _ in 0..<20 {
+            if MaiFfplayMobilePlayer.active == nil && imageFiles.allSatisfy({
+                !FileManager.default.fileExists(atPath: $0.path)
+            }) {
+                cleanup = "混合预览已停止且缓存已清理；视频打开\(opens)次"
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        cleanup = "混合预览清理失败"
+    }
+}
+
+struct MaiCloudMixedMediaUITestRoot: View {
+    private struct Presentation: Identifiable {
+        let index: Int
+        var id: Int { index }
+    }
+    @StateObject private var fixture = MaiCloudMixedMediaFixture()
+    @State private var presentation: Presentation?
+
+    var body: some View {
+        VStack(spacing: 20) {
+            if !fixture.error.isEmpty { Text(fixture.error).foregroundStyle(.red) }
+            if fixture.items.isEmpty { ProgressView("正在准备混合媒体") }
+            else {
+                Button("从图片开始") { presentation = Presentation(index: 0) }
+                    .accessibilityIdentifier("cloud-mixed-open-image")
+                Button("从视频开始") { presentation = Presentation(index: 1) }
+                    .accessibilityIdentifier("cloud-mixed-open-video")
+            }
+            if !fixture.cleanup.isEmpty { Text(fixture.cleanup) }
+        }
+        .task { await fixture.prepare() }
+        .fullScreenCover(item: $presentation, onDismiss: {
+            Task { await fixture.checkCleanup() }
+        }) { selected in
+            MaiCloudDriveMediaPager(items: fixture.items, initialIndex: selected.index,
+                loadImage: { try fixture.loadImage($0) },
+                loadVideo: { try await fixture.loadVideo($0) }, close: { presentation = nil })
+                .ignoresSafeArea()
+        }
+    }
+}
+
 struct MaiCloudDriveUITestRoot: View {
     @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
     @State private var loginError = ""

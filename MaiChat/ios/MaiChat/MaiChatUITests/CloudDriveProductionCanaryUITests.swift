@@ -79,12 +79,12 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
         uploaded.lifetime = .keepAlways
         add(uploaded)
         video.tap()
-        let close = app.buttons["ffplay-close"]
+        let close = app.buttons["cloud-drive-image-close"]
         XCTAssertTrue(close.waitForExistence(timeout: 60), "真实视频未进入播放器")
         close.tap()
         let row = app.otherElements["cloud-drive-row-\(videoID)"]
         XCTAssertTrue(row.waitForExistence(timeout: 10))
-        row.swipeRight()
+        row.swipeLeft()
         app.buttons["cloud-drive-delete-\(videoID)"].tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30),
@@ -167,7 +167,7 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
         close.tap()
         let row = app.otherElements["cloud-drive-row-\(id)"]
         XCTAssertTrue(row.waitForExistence(timeout: 10))
-        row.swipeRight()
+        row.swipeLeft()
         app.buttons["cloud-drive-delete-\(id)"].tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))

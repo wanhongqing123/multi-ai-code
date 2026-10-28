@@ -587,7 +587,8 @@ final class AIAssistantUITests: XCTestCase {
         uploaded.lifetime = .keepAlways
         add(uploaded)
         item.tap()
-        XCTAssertTrue(app.buttons["ffplay-close"].waitForExistence(timeout: 60))
+        XCTAssertTrue(app.buttons["cloud-drive-image-close"].waitForExistence(timeout: 60))
+        waitForMixedMedia(app, label: "1/1", state: "video:ready", active: true)
         let (rangeData, _) = try await URLSession.shared.data(
             from: URL(string: "http://127.0.0.1:18449/test/state")!)
         let rangeState = try XCTUnwrap(JSONSerialization.jsonObject(
@@ -598,7 +599,7 @@ final class AIAssistantUITests: XCTestCase {
         streaming.name = "cloud-drive-local-range-playback"
         streaming.lifetime = .keepAlways
         add(streaming)
-        app.buttons["ffplay-close"].tap()
+        app.buttons["cloud-drive-image-close"].tap()
         let menu = app.buttons["cloud-drive-video-menu-123e4567-e89b-42d3-a456-426614174000"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
         menu.tap()
@@ -613,8 +614,18 @@ final class AIAssistantUITests: XCTestCase {
         }
         XCTAssertTrue(app.staticTexts["已保存到相册"].waitForExistence(timeout: 60))
         let row = app.otherElements["cloud-drive-row-123e4567-e89b-42d3-a456-426614174000"]
+        let remove = app.buttons["cloud-drive-delete-123e4567-e89b-42d3-a456-426614174000"]
         row.swipeRight()
-        app.buttons["cloud-drive-delete-123e4567-e89b-42d3-a456-426614174000"].tap()
+        XCTAssertFalse(remove.exists, "右滑不能显示删除按钮")
+        row.swipeLeft()
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(remove.frame.midX, row.frame.midX, "左滑后删除按钮应出现在右侧")
+        XCTAssertTrue(item.exists, "完整左滑只能显示按钮，不能直接删除")
+        let trailing = XCTAttachment(screenshot: app.screenshot())
+        trailing.name = "cloud-drive-video-left-swipe-delete"
+        trailing.lifetime = .keepAlways
+        add(trailing)
+        remove.tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))
         app.terminate()
@@ -651,7 +662,7 @@ final class AIAssistantUITests: XCTestCase {
         let item = app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
         XCTAssertTrue(item.waitForExistence(timeout: 30))
         item.tap()
-        let close = app.buttons["ffplay-close"]
+        let close = app.buttons["cloud-drive-image-close"]
         XCTAssertTrue(close.waitForExistence(timeout: 30))
         try await Task.sleep(for: .seconds(3))
         XCTAssertTrue(app.buttons["ffplay-pause"].exists)
@@ -729,10 +740,13 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertFalse(app.buttons["cloud-drive-delete-\(id)"].exists)
         row.swipeRight()
         let remove = app.buttons["cloud-drive-delete-\(id)"]
+        XCTAssertFalse(remove.exists, "右滑不能显示删除按钮")
+        row.swipeLeft()
         XCTAssertTrue(remove.waitForExistence(timeout: 5))
-        XCTAssertTrue(image.exists, "完整右滑只能显示删除按钮，不能直接删除文件")
+        XCTAssertGreaterThan(remove.frame.midX, row.frame.midX, "左滑后删除按钮应出现在右侧")
+        XCTAssertTrue(image.exists, "完整左滑只能显示删除按钮，不能直接删除文件")
         let revealed = XCTAttachment(screenshot: app.screenshot())
-        revealed.name = "cloud-drive-image-right-swipe-delete"
+        revealed.name = "cloud-drive-image-left-swipe-delete"
         revealed.lifetime = .keepAlways
         add(revealed)
         remove.tap()
@@ -792,6 +806,105 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["云盘图片缓存已清理"].waitForExistence(timeout: 5))
         #else
         throw XCTSkip("连续图片手势测试使用隔离模拟器素材")
+        #endif
+    }
+
+    @MainActor private func launchCloudMixedMediaFixture() async throws -> XCUIApplication {
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        var reset = URLRequest(url: URL(string: "http://127.0.0.1:18449/test/reset")!)
+        reset.httpMethod = "POST"
+        _ = try await URLSession.shared.data(for: reset)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-mixed-media-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] = "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+        XCTAssertTrue(app.buttons["cloud-mixed-open-image"].waitForExistence(timeout: 90),
+                      "普通 Swift 云盘上传未准备好混合媒体")
+        return app
+    }
+
+    @MainActor private func waitForMixedMedia(_ app: XCUIApplication,
+                                              label: String, state: String,
+                                              active: Bool) {
+        let counter = app.staticTexts["cloud-drive-image-counter"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(
+            format: "label BEGINSWITH %@ AND value CONTAINS %@ AND value CONTAINS %@ AND value CONTAINS %@",
+            label, state, active ? ";active=1;" : ";active=0;",
+            active ? ";owned_active=1" : ";owned_active=0"), object: counter)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
+    }
+
+    @MainActor func testCloudDriveMixedImagesAndVodKeepOnePagerAndStopOldVideo() async throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let app = try await launchCloudMixedMediaFixture()
+        defer { app.terminate() }
+        app.buttons["cloud-mixed-open-image"].tap()
+        waitForMixedMedia(app, label: "1/3", state: "image:ready", active: false)
+        app.images["cloud-drive-image-preview"].firstMatch.swipeLeft()
+        waitForMixedMedia(app, label: "2/3", state: "video:ready", active: true)
+        let pause = app.buttons["ffplay-pause"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        pause.tap()
+        XCTAssertEqual(pause.label, "播放视频")
+        let slider = app.sliders["ffplay-seek"]
+        XCTAssertTrue(slider.exists)
+        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: slider.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)))
+        XCTAssertTrue(app.staticTexts["cloud-drive-image-counter"].label.hasPrefix("2/3"),
+                      "拖动视频进度条不能切换媒体")
+        let videoFrame = XCTAttachment(screenshot: app.screenshot())
+        videoFrame.name = "cloud-mixed-vod-paused-first-frame"
+        videoFrame.lifetime = .keepAlways
+        add(videoFrame)
+        app.swipeLeft()
+        waitForMixedMedia(app, label: "3/3", state: "image:ready", active: false)
+        app.swipeRight()
+        waitForMixedMedia(app, label: "2/3", state: "video:ready", active: true)
+        let returned = XCTAttachment(screenshot: app.screenshot())
+        returned.name = "cloud-mixed-vod-reopened"
+        returned.lifetime = .keepAlways
+        add(returned)
+        app.buttons["cloud-drive-image-close"].tap()
+        XCTAssertTrue(app.staticTexts["混合预览已停止且缓存已清理；视频打开2次"]
+            .waitForExistence(timeout: 5))
+        let (data, _) = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:18449/test/state")!)
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertGreaterThan(state["range_requests"] as? Int ?? 0, 0,
+                             "混合预览的视频必须使用真实共享 VOD Range 请求")
+        #else
+        throw XCTSkip("混合媒体预览使用隔离模拟器服务")
+        #endif
+    }
+
+    @MainActor func testCloudDriveMixedPagerStartsFromVideoAndNavigatesBothWays() async throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let app = try await launchCloudMixedMediaFixture()
+        defer { app.terminate() }
+        app.buttons["cloud-mixed-open-video"].tap()
+        waitForMixedMedia(app, label: "2/3", state: "video:ready", active: true)
+        app.swipeRight()
+        waitForMixedMedia(app, label: "1/3", state: "image:ready", active: false)
+        app.swipeLeft()
+        waitForMixedMedia(app, label: "2/3", state: "video:ready", active: true)
+        app.swipeLeft()
+        waitForMixedMedia(app, label: "3/3", state: "image:ready", active: false)
+        app.buttons["cloud-drive-image-close"].tap()
+        XCTAssertTrue(app.staticTexts["混合预览已停止且缓存已清理；视频打开2次"]
+            .waitForExistence(timeout: 5))
+        #else
+        throw XCTSkip("混合媒体预览使用隔离模拟器服务")
         #endif
     }
 

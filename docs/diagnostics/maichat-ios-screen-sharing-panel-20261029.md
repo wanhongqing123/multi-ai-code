@@ -37,11 +37,12 @@
 - 已亲看宿主实际输出 `/private/tmp/maichat-current-app-host.png`（1206×2622），包含正常可见测试画面“MaiChat 当前页面截图 / CURRENT APP ONLY”，不是空白图或测试框架截图替代物。普通 API、宿主和一次性验收 hook 各自输出独立 PNG。
 - DEBUG 的 `MAICHAT_CURRENT_APP_CAPTURE_SMOKE=YES` 仅供约定的集中真机验收：正常 App 切至云盘后一次性等待 750ms，调用同一普通 API，写入 `Library/Application Support/MaiChat/ScreenCaptureSmoke/<UUID>/result.json` 和独立 PNG。默认关闭，不改会话、不开始共享。模拟器已验证 JSON 与 PNG；实际云盘内容须在真机候选上另行核对。
 - C++ `MaiMobileAgentTests --capture-contract-only` 在 iOS 模拟器 native 与 Android emulator native 各一次 exit 0。真实 context 在 5000ms 延迟的约 50ms 处取消后，宿主调用与 PNG 均为零；正常延迟 75ms 后进入宿主且 `delay_ms=0`；宿主返回时取消只清理自己生成的文件。两个平台的参数 schema 和 Android 原路径也通过。日志 `/private/tmp/maichat-screen-capture-native-contract-{ios,android}.log`。该层只用 PNG signature 验证协议，不代替 Swift 输出图片的解码/画面证据。iOS 独立测试目标使用本机链接参数补入既有 FFmpeg SecureTransport 所需 Security framework，没有修改产品 CMake；完整 App 原本已链接该 framework。
-- 本地 `generic/platform=iOS` Debug 签名构建 exit 0，`codesign --verify --deep --strict` 通过。候选为 `MaiChat-dpmznbhuepzeitfmwzvmmzmcdeql/Build/Products/Debug-iphoneos/MaiChat.app`，版本 2.2.4 (131)，`MaiChat.debug.dylib` SHA-256 `799852f67d149af96461e8a5e05405feb7f063c1ca63187f1fcde9eaa6ddb983`。日志 `/private/tmp/maichat-ios-cloud-capture-candidate-build.log`，清单 `/private/tmp/maichat-ios-cloud-capture-candidate.json`。这是本地候选身份，不代表手机已更新。
+- 最终产品源码提交 `a12184bc541d6fd7983005e3a3f2a213d6932d87` 已推送并从 origin/main 独立回读一致，包含用户补证后的共享指引。该提交的本地 `generic/platform=iOS` Debug `build-for-testing` exit 0，`codesign --verify --deep --strict` 通过，仅构建而未连接执行真机测试。候选为 `MaiChat-dpmznbhuepzeitfmwzvmmzmcdeql/Build/Products/Debug-iphoneos/MaiChat.app`，版本 2.2.4 (131)，`MaiChat.debug.dylib` SHA-256 `3080572127f5a17062f696a49569283220018a7ad0e4405e3753b1c6a7bc145f`。日志 `/private/tmp/maichat-ios-cloud-capture-final-build.log`，清单 `/private/tmp/maichat-ios-cloud-capture-final-candidate.json`。这份最终候选取代前一 `799852f6...ddb983` 本地候选，不代表手机已更新。
 - 同轮云盘目录模拟器 2/2 PASS、零跳过，证据在 [云盘目录记录](maichat-cloud-drive-folders-and-ios-gallery-20261028.md)。本轮改名服务部署与宿主验收在 [改名记录](maichat-cloud-drive-file-rename-20261029.md)。
 
 ## 手机操作暂停与剩余边界
 
 - 用户指出来回测试影响手机使用后，已停止真机 UI 自动化、安装和启动；后续只做本地验证及签名候选准备。未把模拟器通过写成最终合并 App 已装机。
 - 下一次手机操作应在双方约定的一个集中窗口内完成一次安装、正常云盘目录浏览和一次 current_app PNG 回读；不继续系统面板探索实验，不移动、改名或删除用户真实云盘文件。
+- 已准备 opt-in 的 `CloudDriveDeviceReadOnlySmokeUITests/testInstalledCloudFolderReadOnlyRoundTrip`，通过上述本地编译但尚未运行。它只启动正常 App 一次，进入约定的已有目录、等待首项图片解码/视频首帧、关闭预览并返回根目录；不操作账号或云盘数据。不能将“用例已编译”写成“真机已验收”。
 - 当前页面截图无法包含其他 App、系统界面或保证 GPU 视频画面；其他 App 的整屏共享仍由系统授权与用户切换控制。用户已确认手动点灰色空白收起面板，App 主动收起系统面板或自动退到后台本轮未实现。

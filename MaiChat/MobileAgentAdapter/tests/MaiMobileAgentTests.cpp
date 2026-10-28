@@ -18,20 +18,34 @@
 #include <json.hpp>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 #if !defined(_WIN32)
 #include <pthread.h>
+#endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
 #endif
 using Json = nlohmann::json;
 #if defined(__APPLE__)
 static const char* kPhotoAlbumTool = "mobile_photos_add_to_album";
+static const char* kCameraTool = "maichat_camera_command";
+static const char* kCameraArguments = "{\"action\":\"open\"}";
 #elif defined(__ANDROID__)
 static const char* kPhotoAlbumTool = "mobile_photos_copy_to_album";
+static const char* kCameraTool = "mobile_take_photo";
+static const char* kCameraArguments = "{}";
 #else
 static const char* kPhotoAlbumTool = nullptr;
+static const char* kCameraTool = "mobile_take_photo";
+static const char* kCameraArguments = "{}";
 #endif
-#define CHECK(x)                                \
-    do {                                        \
-        if (!(x)) throw std::runtime_error(#x); \
+#define CHECK(x)                                                      \
+    do {                                                              \
+        if (!(x)) {                                                   \
+            std::fprintf(stderr, "CHECK failed at %s:%d: %s\n",     \
+                         __FILE__, __LINE__, #x);                    \
+            throw std::runtime_error(#x);                            \
+        }                                                             \
     } while (0)
 static Json call(void* agent, const Json& value) {
     char* response = maiMobileAgentRequest(agent, value.dump().c_str());
@@ -161,6 +175,10 @@ int main() {
         }
         CHECK(body["messages"].front()["content"].get<std::string>().find(
                   "GitHub-Flavored Markdown") != std::string::npos);
+        const std::string instructions = body["messages"].front()["content"].get<std::string>();
+        CHECK(instructions.find("Seedance") == std::string::npos);
+        CHECK(instructions.find("Seedream") == std::string::npos);
+        CHECK(instructions.find("ark_assets") == std::string::npos);
         // 移动端不能向模型宣称可以执行桌面 shell。
         bool hasCreateFile = false, hasCreateDirectory = false, hasDeleteFile = false, hasViewImage = false,
              hasMaiChatContacts = false, hasMaiChatRequestFriend = false, hasMaiChatNickname = false,
@@ -171,10 +189,12 @@ int main() {
              hasPersonSegmentation = false, hasMobilePhotoAlbumWrite = false, hasPermissionRequest = false,
              hasSceneDetect = false, hasMotionDetect = false, hasDownloadFile = false, hasLocation = false,
              hasMaiChatMedia = false, hasVideoMatting = false, hasAgentMedia = false, hasSeedance = false,
-             hasSeedream = false, hasCamera = false, hasLocalMusic = false, hasSessionList = false,
+             hasSeedream = false, hasArkAssets = false, hasCamera = false, hasLocalMusic = false, hasSessionList = false,
              hasSessionCreate = false, hasSessionDelete = false, hasLocalSessionWorkspace = false,
              hasRemoteSessionList = false, hasRemoteSessionCreate = false, hasRemoteSessionDelete = false,
-             hasRemoteSessionWorkspace = false, hasMobileBrowser = false;
+             hasRemoteSessionWorkspace = false, hasMobileBrowser = false,
+             hasScreenShareStart = false, hasScreenShareStop = false,
+             hasScreenCapture = false;
         for (const auto& tool : body["tools"]) {
             CHECK(tool["function"]["name"] != "shell");
             if (tool["function"]["name"] == "file_create") hasCreateFile = true;
@@ -198,6 +218,9 @@ int main() {
                       Json::array({"device_slot", "session_id", "workspace_path"}));
             }
             if (tool["function"]["name"] == "mobile_browser") hasMobileBrowser = true;
+            if (tool["function"]["name"] == "mobile_start_screen_share") hasScreenShareStart = true;
+            if (tool["function"]["name"] == "mobile_stop_screen_share") hasScreenShareStop = true;
+            if (tool["function"]["name"] == "mobile_capture_screen") hasScreenCapture = true;
             if (tool["function"]["name"] == "view_image") hasViewImage = true;
             if (tool["function"]["name"] == "generate_pdf") hasGeneratePdf = true;
             if (tool["function"]["name"] == "maichat_list_contacts") hasMaiChatContacts = true;
@@ -208,11 +231,13 @@ int main() {
             if (tool["function"]["name"] == "agent_send_media") hasAgentMedia = true;
             if (tool["function"]["name"] == "seedance_video") hasSeedance = true;
             if (tool["function"]["name"] == "seedream_image") hasSeedream = true;
+            if (tool["function"]["name"] == "ark_assets") hasArkAssets = true;
             if (tool["function"]["name"] == "curl") hasDownloadFile = true;
             if (tool["function"]["name"] == "maichat_broadcast_text")
                 hasMaiChatBroadcast = true;
             if (tool["function"]["name"] == "mobile_list_photos") hasMobilePhotos = true;
-            if (tool["function"]["name"] == "mobile_take_photo") hasCamera = true;
+            if (tool["function"]["name"] == "mobile_take_photo" ||
+                tool["function"]["name"] == "maichat_camera_command") hasCamera = true;
             if (tool["function"]["name"] == "mobile_play_local_music") hasLocalMusic = true;
             if (tool["function"]["name"] == "mobile_list_albums") hasMobileAlbums = true;
             if (tool["function"]["name"] == "mobile_read_photo") hasMobilePhotoRead = true;
@@ -246,6 +271,11 @@ int main() {
         CHECK(hasRemoteSessionList && hasRemoteSessionCreate && hasRemoteSessionDelete);
         CHECK(hasRemoteSessionWorkspace);
         CHECK(hasMobileBrowser);
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+        CHECK(hasScreenShareStart && hasScreenShareStop && hasScreenCapture);
+#else
+        CHECK(!hasScreenShareStart && !hasScreenShareStop && !hasScreenCapture);
+#endif
         CHECK(hasViewImage);
         CHECK(hasGeneratePdf);
         CHECK(hasMaiChatContacts);
@@ -258,6 +288,7 @@ int main() {
         CHECK(hasLocalMusic);
         CHECK(!hasSeedance);
         CHECK(!hasSeedream);
+        CHECK(!hasArkAssets);
         CHECK(hasDownloadFile);
         CHECK(hasMaiChatBroadcast);
         CHECK(hasMobilePhotos);
@@ -341,7 +372,7 @@ int main() {
         if (input == "camera-open") {
             Json invocation = {
                 {"index", 0}, {"id", "call_camera_open"}, {"type", "function"},
-                {"function", {{"name", "mobile_take_photo"}, {"arguments", "{}"}}}};
+                {"function", {{"name", kCameraTool}, {"arguments", kCameraArguments}}}};
             response.set_content(frame({{"tool_calls", Json::array({invocation})}}, "tool_calls") +
                                      "data: [DONE]\n\n",
                                  "text/event-stream");
@@ -467,6 +498,9 @@ int main() {
             {"apiKey", "test-key"},   {"model", "test"},
             {"workspace", directory}, {"database", directory + "/sessions.db"},
             {"rvmModelPath", modelPath}};
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        config["supportsScreenCapture"] = true;
+#endif
         CHECK(call(agent, config)["ok"] == true);
         const Json suggestions = call(
             agent,
@@ -486,12 +520,15 @@ int main() {
             return call(agent, {{"op", "snapshot"}, {"session", session}, {"force", true}});
         };
         auto wait = [&](const auto& condition) {
+            Json last;
             for (int i = 0; i < 160; ++i) {
                 auto s = snapshot();
                 if (condition(s)) return s;
+                last = std::move(s);
                 std::this_thread::sleep_for(std::chrono::milliseconds(30));
             }
-            throw std::runtime_error("timed out waiting for native state");
+            throw std::runtime_error("timed out waiting for native state: " +
+                                     last.value("error", std::string{}));
         };
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "host-send"}})["ok"] ==
               true);
@@ -535,7 +572,7 @@ int main() {
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "camera-open"}})["ok"] == true);
         const auto cameraDone = wait([](const Json& s) { return s["busy"] == false; });
         CHECK(cameraDone["permissions"].empty());
-        CHECK(hostProbe.lastTool == "mobile_take_photo");
+        CHECK(hostProbe.lastTool == kCameraTool);
         CHECK(hostProbe.calls == initialHostCalls + (kPhotoAlbumTool == nullptr ? 5 : 6));
         CHECK(call(agent, {{"op", "send"}, {"session", session}, {"text", "music-open"}})["ok"] == true);
         const auto musicDone = wait([](const Json& s) { return s["busy"] == false; });

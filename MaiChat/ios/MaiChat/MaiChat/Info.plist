@@ -43,6 +43,12 @@
 	<string>用于将你选择保存的图片或视频作品添加到手机相册，不会修改原文件。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于在授权后让创作中心读取系统图库照片和视频、处理媒体并保存新作品，也用于发送远程 IM 媒体消息。</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>仅在你通过系统选择器开启整屏共享后，允许创作中心读取最近的屏幕画面供 Agent 分析。</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>screen-capture</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

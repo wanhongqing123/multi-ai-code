@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */; };
 		F2D771B8A5334D159C238C01 /* AIMobileBrowserTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2D771B8A5334D159C238C02 /* AIMobileBrowserTools.swift */; };
+		80A93D25352CFB7F9675EB89 /* AIMobileScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7090E768648CE5F2D55AD135 /* AIMobileScreenCapture.swift */; };
 		060F9E4EA6E9FABAF30CF2E5 /* RemoteDiagnosticsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 862125851990D87705405E68 /* RemoteDiagnosticsCoordinator.swift */; };
 		06A4AB7E2BF7C60D639D23CA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C56C06620B6A4AB7289B13D /* SettingsView.swift */; };
 		0877D888456B3E24B13A6ED3 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781F92B5DE618E07394EA0C /* ChatView.swift */; };
@@ -158,6 +159,7 @@
 		24AF3608C85D5AE5D045283D /* AIAssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantModel.swift; sourceTree = "<group>"; };
 		29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileHostToolProvider.swift; sourceTree = "<group>"; };
 		F2D771B8A5334D159C238C02 /* AIMobileBrowserTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileBrowserTools.swift; sourceTree = "<group>"; };
+		7090E768648CE5F2D55AD135 /* AIMobileScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileScreenCapture.swift; sourceTree = "<group>"; };
 		29ED9E52F55FF7B33F57D37C /* video-circle-source.mp4 */ = {isa = PBXFileReference; path = "video-circle-source.mp4"; sourceTree = "<group>"; };
 		2ABED4C39BFBF823F387BE75 /* RemoteDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsTests.swift; sourceTree = "<group>"; };
 		2AF4D9C0BD1E990F8C3DAF26 /* MaiChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MaiChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -353,6 +355,7 @@
 				A66CCCBA03D225DD809F9F11 /* AgentDocumentTools.swift */,
 				29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */,
 				F2D771B8A5334D159C238C02 /* AIMobileBrowserTools.swift */,
+				7090E768648CE5F2D55AD135 /* AIMobileScreenCapture.swift */,
 				2BD57C56FFB1D7BD773DD1A1 /* AIMobileSshTools.swift */,
 				C12D574F08359081230E0D3A /* MaiChatIMTools.swift */,
 				8888872A869DC80CF8DF58B6 /* MobileImageTools.swift */,
@@ -849,6 +852,7 @@
 				91722667D29CD5A82A3A2E00 /* AIAssistantView.swift in Sources */,
 				0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */,
 				F2D771B8A5334D159C238C01 /* AIMobileBrowserTools.swift in Sources */,
+				80A93D25352CFB7F9675EB89 /* AIMobileScreenCapture.swift in Sources */,
 				4AF5DDAC5AC5B4962C55600B /* AIMobileSshTools.swift in Sources */,
 				DF6DB710A7BAB0AD6FA5093B /* AgentDocumentTools.swift in Sources */,
 				17D2334D14B8A1F571A7D69B /* AppDiagnosticLog.swift in Sources */,

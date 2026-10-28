@@ -311,7 +311,9 @@ struct AIAssistantView: View {
         .onChange(of: model.selectedRemote?.id) { remote in
             if remote != nil { browser.close() }
         }
-        .onChange(of: appState.maiChatAccountID) { _ in browser.close() }
+        .onChange(of: appState.maiChatAccountID) { _ in
+            browser.close()
+        }
     }
 
     private func navigateImagePreview(_ direction: Int) -> Bool {
@@ -818,7 +820,8 @@ private struct AIAssistantMessageList: View {
                         MessageScrollPositionReader(
                             restoreInitialScrollableHistory: isActive && followsLatest &&
                                 !model.visibleMessages.isEmpty,
-                            allowsBottomFollowing: isActive && followsLatest,
+                            allowsBottomFollowing: isActive && followsLatest &&
+                                !model.messages.isEmpty,
                             bottomCorrectionRequest: bottomCorrectionRequest,
                             userScrollAwayThreshold: 60,
                             minimumOlderDragDistance: 24,
@@ -842,7 +845,8 @@ private struct AIAssistantMessageList: View {
                         .frame(height: 1)
                     }
                 }
-                .modifier(MessageInitialScrollAnchor())
+                .modifier(MessageInitialScrollAnchor(
+                    startsAtLatest: !model.messages.isEmpty))
                 .contentShape(Rectangle())
                 .onTapGesture {
                     focusController.dismiss()
@@ -999,13 +1003,22 @@ private struct AIAssistantMessageList: View {
                 welcomeFeature("图片创作", icon: "photo")
                 welcomeFeature("视频创作", icon: "play.rectangle")
                 welcomeFeature("文件处理", icon: "doc.text")
+                if aiSupportsWholeDeviceScreenCapture() {
+                    welcomeFeature("整屏截屏", icon: "rectangle.on.rectangle")
+                }
+                welcomeFeature("浏览器操作", icon: "globe")
+                welcomeFeature("会话定时任务", icon: "clock")
+                welcomeFeature("系统日历", icon: "calendar")
+                welcomeFeature("二维码生成", icon: "qrcode")
+                welcomeFeature("当前位置", icon: "location")
+                welcomeFeature("本地媒体处理", icon: "slider.horizontal.3")
                 welcomeFeature("拍照", icon: "camera")
                 welcomeFeature("音乐播放", icon: "music.note")
                 welcomeFeature("相册管理", icon: "photo.on.rectangle")
                 welcomeFeature("我的云盘", icon: "icloud")
                 welcomeFeature("MaiChat 消息", icon: "bubble.left.and.bubble.right")
-                welcomeFeature("联系人", icon: "person.2")
-                welcomeFeature("电话与短信", icon: "phone.arrow.up.right")
+                welcomeFeature("手机通讯录", icon: "person.2")
+                welcomeFeature("拨号与发短信", icon: "phone.arrow.up.right")
                 welcomeFeature("跨设备会话", icon: "iphone.and.arrow.forward")
             }
             .padding(.top, 28)
@@ -2453,8 +2466,11 @@ struct AIHistoryUITestRoot: View {
 }
 
 struct AIWelcomeUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+
     var body: some View {
         AIAssistantView()
+            .environmentObject(appState)
             .onAppear { AIAssistantModel.shared.installWelcomeUITestFixture() }
     }
 }
@@ -2850,6 +2866,7 @@ private struct AIComposer: View, Equatable {
     @State private var draft = ""
     @State private var importing = false
     @ObservedObject private var music = MaiLocalMusicPlayer.shared
+    @ObservedObject private var screenCapture = AIMobileScreenCapture.shared
     @ObservedObject private var localMediaRequests = AIMobileLocalMediaRequests.shared
     @State private var importingMusic = false
     @State private var showingMusicSource = false
@@ -2982,6 +2999,27 @@ private struct AIComposer: View, Equatable {
                             in: RoundedRectangle(cornerRadius: 11))
                 .padding(.horizontal, 16)
                 .accessibilityIdentifier("ai-music-mini-player")
+            }
+            if screenCapture.isSharing {
+                HStack(spacing: 10) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .foregroundStyle(RemoteIMStyle.blue)
+                    Text("正在共享整台设备屏幕")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer(minLength: 4)
+                    Button("截屏") { captureSharedScreen() }
+                        .font(.system(size: 12, weight: .semibold))
+                    Button("停止共享") {
+                        Task { await screenCapture.stop() }
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 14).frame(height: 40)
+                .background(RemoteIMStyle.blueSoft,
+                            in: RoundedRectangle(cornerRadius: 11))
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("ai-screen-share-status")
             }
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
@@ -3161,6 +3199,8 @@ private struct AIComposer: View, Equatable {
                         musicPickerAgentRequestID = nil
                         showingMusicSource = true
                     },
+                    openScreenShare: screenShareAction,
+                    screenShareTitle: screenCapture.isSharing ? "停止共享" : "共享屏幕",
                     showsVoiceInput: false
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -3413,6 +3453,46 @@ private struct AIComposer: View, Equatable {
             .onChange(of: snapshot.attachments) { files in
                 if !files.isEmpty { isVoiceMode = false }
             }
+    }
+
+    private var screenShareAction: (() -> Void)? {
+        guard aiSupportsWholeDeviceScreenCapture() else { return nil }
+        return {
+            isAttachmentPanelPresented = false
+            Task { @MainActor in
+                do {
+                    if screenCapture.isSharing { await screenCapture.stop() }
+                    else { try await screenCapture.start() }
+                } catch {
+                    model.showTransientError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func captureSharedScreen() {
+        guard !snapshot.workspacePath.isEmpty else {
+            model.showTransientError("创作中心尚未准备好")
+            return
+        }
+        guard snapshot.attachments.count < 10 else {
+            model.showTransientError("每条消息最多添加 10 项附件")
+            return
+        }
+        let target = model.importTarget()
+        let directory = URL(fileURLWithPath: snapshot.workspacePath, isDirectory: true)
+            .appendingPathComponent("screenshots", isDirectory: true)
+        let name = "mobile_screen_\(UUID().uuidString).png"
+        let file = directory.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            _ = try screenCapture.saveLatestFrame(to: file)
+            let attachment = AIImportedFile(relativePath: "screenshots/\(name)",
+                                            mimeType: "image/png", isImage: true)
+            model.addAttachments([attachment], to: target)
+        } catch {
+            model.showTransientError(error.localizedDescription)
+        }
     }
 
     private func openPhotoPicker() async {

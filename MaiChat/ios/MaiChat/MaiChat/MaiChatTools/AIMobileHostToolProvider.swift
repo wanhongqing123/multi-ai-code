@@ -45,6 +45,8 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "mobile_start_screen_share", "mobile_stop_screen_share", "mobile_capture_screen":
+            return await executeScreenCapture(name: name, arguments: arguments)
         case "mobile_browser":
             return await AIMobileBrowserTools.shared.execute(arguments)
         case "mobile_export_diagnostics": return await exportDiagnostics()
@@ -667,6 +669,61 @@ final class AIMobileHostToolProvider {
               var view = window.rootViewController else { return nil }
         while let presented = view.presentedViewController { view = presented }
         return view
+    }
+
+    private func executeScreenCapture(name: String,
+                                      arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        let capture = AIMobileScreenCapture.shared
+        if name == "mobile_start_screen_share" {
+            guard arguments.isEmpty else {
+                return .failure(code: "invalid_input", message: "screen share start expects no arguments")
+            }
+            do {
+                try await capture.start()
+                return Self.jsonSuccess([
+                    "sharing": true,
+                    "next_step": "Switch to the target app, then return to MaiChat and ask me to capture its screen."
+                ])
+            } catch let error as AIMobileScreenCaptureError {
+                return .failure(code: error.code, message: error.localizedDescription)
+            } catch {
+                return .failure(code: "internal", message: error.localizedDescription)
+            }
+        }
+        if name == "mobile_stop_screen_share" {
+            guard arguments.isEmpty else {
+                return .failure(code: "invalid_input", message: "screen share stop expects no arguments")
+            }
+            await capture.stop()
+            return Self.jsonSuccess(["sharing": false])
+        }
+        guard arguments.count == 1,
+              let outputPath = arguments["output_path"] as? String,
+              (outputPath as NSString).isAbsolutePath,
+              !AIAssistantModel.shared.workspacePath.isEmpty else {
+            return .failure(code: "invalid_input", message: "a screen capture output path is required")
+        }
+        let root = URL(fileURLWithPath: AIAssistantModel.shared.workspacePath,
+                       isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let directory = root.appendingPathComponent("screenshots", isDirectory: true)
+        let output = URL(fileURLWithPath: outputPath).standardizedFileURL
+        guard directory.resolvingSymlinksInPath().path == directory.path,
+              output.deletingLastPathComponent().resolvingSymlinksInPath().path == directory.path,
+              output.pathExtension.lowercased() == "png",
+              output.lastPathComponent.hasPrefix("mobile_screen_"),
+              !FileManager.default.fileExists(atPath: output.path) else {
+            return .failure(code: "invalid_input", message: "screen capture must use a new Agent screenshot path")
+        }
+        do {
+            let age = try capture.saveLatestFrame(to: output)
+            return Self.jsonSuccess(["captured": true, "age_ms": age,
+                                     "note": "Captured the latest screen-sharing frame from another app."])
+        } catch let error as AIMobileScreenCaptureError {
+            return .failure(code: error.code, message: error.localizedDescription)
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
     }
 
     private func exportDiagnostics() async -> AIMaiChatHostToolExecution {

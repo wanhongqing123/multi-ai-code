@@ -516,10 +516,13 @@ QWidget* makeWelcomeView(QWidget* parent) {
     const QList<QPair<QString, QString>> features = {
         {QStringLiteral("AI 问答"), QStringLiteral("AI")},      {QStringLiteral("图片创作"), QStringLiteral("图")},
         {QStringLiteral("视频创作"), QStringLiteral("视")},     {QStringLiteral("文件处理"), QStringLiteral("文")},
+        {QStringLiteral("桌面截屏"), QStringLiteral("屏")},     {QStringLiteral("浏览器操作"), QStringLiteral("网")},
+        {QStringLiteral("终端与进程"), QStringLiteral("终")},   {QStringLiteral("电脑操作"), QStringLiteral("控")},
+        {QStringLiteral("会话定时任务"), QStringLiteral("时")}, {QStringLiteral("日历导入"), QStringLiteral("历")},
+        {QStringLiteral("二维码生成"), QStringLiteral("码")},   {QStringLiteral("本地媒体处理"), QStringLiteral("媒")},
         {QStringLiteral("拍照"), QStringLiteral("拍")},         {QStringLiteral("音乐播放"), QStringLiteral("音")},
-        {QStringLiteral("截屏"), QStringLiteral("屏")},         {QStringLiteral("我的云盘"), QStringLiteral("云")},
-        {QStringLiteral("MaiChat 消息"), QStringLiteral("聊")}, {QStringLiteral("联系人"), QStringLiteral("人")},
-        {QStringLiteral("浏览器操作"), QStringLiteral("网")},   {QStringLiteral("跨设备会话"), QStringLiteral("跨")},
+        {QStringLiteral("我的云盘"), QStringLiteral("云")},     {QStringLiteral("MaiChat 消息"), QStringLiteral("聊")},
+        {QStringLiteral("联系人"), QStringLiteral("人")},     {QStringLiteral("跨设备会话"), QStringLiteral("跨")},
     };
     for (int index = 0; index < features.size(); ++index) {
         auto* card = new QFrame(content);

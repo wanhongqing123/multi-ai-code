@@ -1117,6 +1117,7 @@ actor AIAssistantBackend {
             "scheduleDeviceName": UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone",
             "wire": config.effectiveWire,
             "model": config.model, "policy": config.policy, "appRoot": appRootPath,
+            "supportsScreenCapture": aiSupportsWholeDeviceScreenCapture(),
             "reasoningEffort": config.effectiveReasoningEffort,
             "caBundle": caBundle.path,
             "temporaryDirectory": FileManager.default.temporaryDirectory.path,

@@ -567,6 +567,7 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     bool desktopCreateOffersDirectory = false;
     bool foundSeedance = false;
     bool foundSeedream = false;
+    bool foundArkAssets = false;
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
     bool foundSceneDetect = false;
     bool foundMotionDetect = false;
@@ -591,6 +592,7 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
         if (tool.name == "maichat_probe") foundHost = true;
         if (tool.name == "seedance_video") foundSeedance = true;
         if (tool.name == "seedream_image") foundSeedream = true;
+        if (tool.name == "ark_assets") foundArkAssets = true;
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
         if (tool.name == "cv_scene_detect") foundSceneDetect = true;
         if (tool.name == "cv_motion_detect") foundMotionDetect = true;
@@ -606,6 +608,11 @@ void AgentControllerTest::registers_host_tools_after_builtin_tools() {
     QVERIFY(desktopCreateOffersDirectory);
     QVERIFY(!foundSeedance);
     QVERIFY(!foundSeedream);
+    QVERIFY(!foundArkAssets);
+    const std::string& instructions = scripted->lastRequest().baseInstructions;
+    QVERIFY(instructions.find("Seedance") == std::string::npos);
+    QVERIFY(instructions.find("Seedream") == std::string::npos);
+    QVERIFY(instructions.find("ark_assets") == std::string::npos);
 #if defined(MAICHAT_TEST_CV_VIDEO_ANALYSIS)
     QVERIFY(foundSceneDetect);
     QVERIFY(foundMotionDetect);

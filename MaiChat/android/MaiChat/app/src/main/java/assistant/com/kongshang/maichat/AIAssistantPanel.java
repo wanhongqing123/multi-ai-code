@@ -2098,12 +2098,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                     LayoutParams headingParams = matchWrap();
                     headingParams.setMargins(0, dp(14), 0, 0);
                     welcome.addView(heading, headingParams);
-                    TextView detail = text("问答、拍照、图片视频、文件、音乐、云盘与跨设备会话。", 16,
+                    TextView detail = text("问答、图片视频、文件、拍照、相册、音乐、云盘与 MaiChat 消息。", 16,
                         MaiChatTheme.SECONDARY);
                     detail.setGravity(Gravity.CENTER);
                     LayoutParams detailParams = matchWrap();
                     detailParams.setMargins(0, dp(12), 0, 0);
                     welcome.addView(detail, detailParams);
+                    TextView mobileTools = text(
+                        "整屏截屏、浏览器操作、会话定时任务、系统日历、二维码生成、当前位置、系统联系人、"
+                            + "电话短信（依系统权限）与跨设备会话。",
+                        14, MaiChatTheme.SECONDARY);
+                    mobileTools.setGravity(Gravity.CENTER);
+                    LayoutParams mobileToolParams = matchWrap();
+                    mobileToolParams.setMargins(0, dp(8), 0, 0);
+                    welcome.addView(mobileTools, mobileToolParams);
                     if (state != null && !state.data.optBoolean("configured")) {
                         TextView accountHint = text("登录后会自动连接主聊天模型", 13,
                             MaiChatTheme.SECONDARY);

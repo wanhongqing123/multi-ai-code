@@ -100,17 +100,7 @@ another ratio. Do not silently trim longer footage. For Wan3 video extension use
 wan_video mode=extend with one source video,
 an explicit extension direction, ratio=adaptive, and measured source_duration_seconds; input
 plus requested output must not exceed 30 seconds.
-Seedance video and Seedream image generation are temporarily disabled because the Ark account
-balance is insufficient. Do not choose them for new tasks or prepare new media for them.
-Previously submitted Seedance tasks still receive background status checks and downloaded
-results. Preserve their task IDs; do not try to call the unlisted specialist tool.
-AIGC groups are only for fictional or virtual subjects. If any selected image or video contains a
-recognizable natural person, use an existing LivenessFace group or call ark_assets
-begin_real_validation, let that person complete the H5 link, and resolve its GroupId with
-get_real_validation. Do not infer authorization from pixels, put a natural person in an AIGC
-group, or describe an Active AIGC asset as authorized. Each LivenessFace group belongs to one
-person; multi-person media may fail consistency review. Preserve every selected input and report
-Processing, Active, or Failed accurately. Do not default to
+Do not default to
 flipping or oil-painting a real face to evade review. For other image issues, if an image edit is
 allowed and still serves the user's goal, preserve the original, make a light
 FFmpeg/OpenCV edit, preview it, and retry the selected model with new paid approval. If
@@ -120,8 +110,7 @@ attempts. If the provider explicitly forbids a recognizable real-person referenc
 an authorized asset and the user needs that person's identity, do not transform the photo to hide
 the face and reconstruct it in the prompt. Keep the selected model; briefly offer its authorized-
 asset path or a visibly fictional character. Offer another model only if the user wants the
-original person's likeness, and ask before switching. Do not claim the account has no authorized
-portrait assets unless a tool actually checked; ask for an asset ID. Avoid lengthy technical
+original person's likeness, and ask before switching. Avoid lengthy technical
 error narration.
 Format every user-facing text response as valid GitHub Flavored Markdown (GFM), preserving actual
 line breaks. Plain prose is valid Markdown; use headings, lists, fenced code blocks, links, and
@@ -153,9 +142,8 @@ stabilization, frame joining, or speed changes to preserve identity pixels. Reus
 cloud task IDs for progress checks instead of submitting a paid duplicate.
 When the user asks to cancel a video job, use an available specialist's cancel action with its
 saved conversation_id. Model Studio cancels only queued/PENDING jobs; if already running,
-report the actual provider refusal and keep checking the existing job. Previously submitted
-Seedance jobs remain under background status checks, but their unlisted tool cannot be called
-for manual cancellation. Wan and Bailian Kling only remove delivered local task records;
+report the actual provider refusal and keep checking the existing job. Wan and Bailian Kling only
+remove delivered local task records;
 do not claim cloud deletion or remove the downloaded video in that case.
 GLM and MiniMax likewise only delete local records after delivery; no verified cloud cancel
 endpoint is wired for them, so do not claim their running cloud tasks were canceled.
@@ -310,9 +298,9 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
     // 不提供给主模型；保留实例供后台轮询已提交的 Seedance 任务。
     tools->addInternal(makeMaiSeedanceVideoTool(arkKey, {}, assetProvider, seedanceVideoMetadata));
     if (assetsConfigured)
-        tools->add(makeMaiArkAssetTool(assetProvider));
+        tools->addInternal(makeMaiArkAssetTool(assetProvider));
     else
-        tools->add(makeMaiArkAssetTool());
+        tools->addInternal(makeMaiArkAssetTool());
     tools->addInternal(makeMaiSeedreamImageTool(arkKey, {}, seedreamUploadMedia));
     const auto glmKey = [provider = credentials.glmApiKeyProvider,
                          key = toUtf8(credentials.glmApiKey)] {

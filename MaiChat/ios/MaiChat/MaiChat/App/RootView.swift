@@ -387,6 +387,7 @@ struct RootView: View {
         }
         .onChange(of: appState.maiChatAccountID) { _ in
             clearSelectedChatForAccountChange()
+            Task { await AIMobileScreenCapture.shared.stop() }
         }
         .onChange(of: appState.groups.map(\.groupID)) { joinedGroupIDs in
             if let activeChatGroup,

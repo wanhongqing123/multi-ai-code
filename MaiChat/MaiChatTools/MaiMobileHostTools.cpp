@@ -83,6 +83,7 @@ public:
                 if (code == "invalid_input") errorCode = MaiErrorCode::InvalidInput;
                 else if (code == "not_found") errorCode = MaiErrorCode::NotFound;
                 else if (code == "not_configured") errorCode = MaiErrorCode::NotConfigured;
+                else if (code == "not_supported") errorCode = MaiErrorCode::NotSupported;
                 else if (code == "canceled") errorCode = MaiErrorCode::Canceled;
                 else if (code == "network") errorCode = MaiErrorCode::Network;
                 else if (code == "protocol") errorCode = MaiErrorCode::Protocol;
@@ -661,7 +662,8 @@ void registerMobileScreenCaptureTools(
     addMaiMobileHostTool(
         tools, "mobile_start_screen_share",
         "Ask the user to start a system-approved whole-device screen-sharing session. "
-        "In the Android system picker, choose Share entire screen. "
+        "On iOS this requires iOS 27 or later and the ScreenCaptureKit system picker. "
+        "On Android choose Share entire screen in the system picker. "
         "The user can then switch to another app and return before requesting a frame.",
         R"({"type":"object","properties":{},"additionalProperties":false})",
         dispatcher, false);

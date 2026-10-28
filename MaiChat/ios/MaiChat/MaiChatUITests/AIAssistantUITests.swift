@@ -4,6 +4,133 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testWelcomeMobileCapabilitiesRemainScrollAccessible() throws {
+        #if targetEnvironment(simulator)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--ai-welcome-ui-test"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["从这里开始创作"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["会话定时任务"].exists)
+        XCTAssertTrue(app.staticTexts["二维码生成"].exists)
+        XCTAssertFalse(app.staticTexts["整屏截屏"].exists)
+        let first = XCTAttachment(screenshot: app.screenshot())
+        first.name = "ios-welcome-mobile-tools-top"
+        first.lifetime = .keepAlways
+        add(first)
+        app.swipeUp()
+        XCTAssertTrue(app.staticTexts["跨设备会话"].waitForExistence(timeout: 5))
+        let last = XCTAttachment(screenshot: app.screenshot())
+        last.name = "ios-welcome-mobile-tools-bottom"
+        last.lifetime = .keepAlways
+        add(last)
+        #else
+        throw XCTSkip("欢迎页测试使用隔离模拟器数据")
+        #endif
+    }
+
+    @MainActor func testIOS27WelcomeShowsDeviceCapabilities() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("整屏截屏卡片仅在 iOS 27 真机出现")
+        #else
+        guard #available(iOS 27.0, *) else { throw XCTSkip("需要 iOS 27 真机") }
+        let app = XCUIApplication()
+        app.launch()
+        guard app.buttons["创作中心"].waitForExistence(timeout: 20) else {
+            throw XCTSkip("需要已登录的测试账号")
+        }
+        app.buttons["创作中心"].tap()
+        if !app.staticTexts["从这里开始创作"].exists {
+            app.buttons["对话列表"].tap()
+            let empty = app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", "ai-conversation-")
+            ).allElementsBoundByIndex.first(where: { $0.label == "新对话" })
+            guard let empty else { throw XCTSkip("当前账号没有可复用的空对话") }
+            empty.tap()
+        }
+        XCTAssertTrue(app.staticTexts["从这里开始创作"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.staticTexts["整屏截屏"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["会话定时任务"].exists)
+        let first = XCTAttachment(screenshot: app.screenshot())
+        first.name = "ios27-welcome-platform-features-top"
+        first.lifetime = .keepAlways
+        add(first)
+        app.swipeUp()
+        XCTAssertTrue(app.staticTexts["拨号与发短信"].waitForExistence(timeout: 5))
+        let last = XCTAttachment(screenshot: app.screenshot())
+        last.name = "ios27-welcome-platform-features-bottom"
+        last.lifetime = .keepAlways
+        add(last)
+        #endif
+    }
+
+    @MainActor func testScreenShareEntryOnIOS27Device() throws {
+        #if MAICHAT_IOS_SCREEN_CAPTURE_TEST
+        #if targetEnvironment(simulator)
+        throw XCTSkip("模拟器 SDK 不提供 iOS ScreenCaptureKit")
+        #else
+        guard #available(iOS 27.0, *) else {
+            throw XCTSkip("整屏共享从 iOS 27 开始提供")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        guard app.buttons["创作中心"].waitForExistence(timeout: 20) else {
+            throw XCTSkip("需要已登录的测试账号")
+        }
+        app.buttons["创作中心"].tap()
+        let more = app.buttons["展开更多功能"]
+        XCTAssertTrue(more.waitForExistence(timeout: 25))
+        more.tap()
+        XCTAssertTrue(app.buttons["共享屏幕"].waitForExistence(timeout: 8))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "ios27-screen-share-entry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["共享屏幕"].tap()
+        sleep(2)
+        let systemPicker = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        systemPicker.name = "ios27-system-screen-picker"
+        systemPicker.lifetime = .keepAlways
+        add(systemPicker)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let fullDisplay = springboard.buttons["共享整个屏幕"]
+        XCTAssertTrue(fullDisplay.waitForExistence(timeout: 8))
+        fullDisplay.tap()
+        XCTAssertTrue(app.staticTexts["正在共享整台设备屏幕"]
+            .waitForExistence(timeout: 15))
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.activate()
+        sleep(3)
+        app.activate()
+        let capture = app.buttons["截屏"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 12))
+        capture.tap()
+        XCTAssertTrue(app.staticTexts["待发送附件"]
+            .waitForExistence(timeout: 8))
+        let attached = XCTAttachment(screenshot: app.screenshot())
+        attached.name = "ios27-captured-other-app-frame"
+        attached.lifetime = .keepAlways
+        add(attached)
+        let remove = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "移除附件 mobile_screen_")
+        ).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 8))
+        remove.tap()
+        app.buttons["停止共享"].tap()
+        let stopped = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.staticTexts["正在共享整台设备屏幕"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 8), .completed)
+        let finished = XCTAttachment(screenshot: app.screenshot())
+        finished.name = "ios27-screen-share-stopped"
+        finished.lifetime = .keepAlways
+        add(finished)
+        #endif
+        #else
+        throw XCTSkip("真机整屏测试需显式开启 MAICHAT_IOS_SCREEN_CAPTURE_TEST 编译条件")
+        #endif
+    }
+
     @MainActor func testSystemCalendarEventCreatesOnIsolatedSimulator() throws {
         guard ProcessInfo.processInfo.environment["MAICHAT_ISOLATED_CALENDAR_TEST"] == "1" else {
             throw XCTSkip("只在可删除的隔离模拟器上写入系统日历")
@@ -2814,6 +2941,7 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertTrue(app.buttons["文件"].isHittable)
         XCTAssertTrue(app.buttons["音乐"].isHittable)
         XCTAssertFalse(app.buttons["语音输入"].exists)
+        XCTAssertFalse(app.buttons["共享屏幕"].exists)
         let musicEntry = XCTAttachment(screenshot: app.screenshot())
         musicEntry.name = "creative-center-local-music-entry"
         musicEntry.lifetime = .keepAlways

@@ -154,26 +154,6 @@ constexpr auto kMarkdownBaseInstructions =
     "extension direction in the message, ratio=adaptive, and measured "
     "source_duration_seconds. Input plus requested output must be at most 30 "
     "seconds. "
-    // 方舟账号余额不足时暂停 Seedance 和 Seedream 新生成，历史任务仍可查询取回。
-    "Seedance video and Seedream image generation are temporarily disabled "
-    "because the Ark account balance is insufficient. Do not choose them for "
-    "new tasks or prepare new media for them. Previously submitted Seedance "
-    "tasks still receive background status checks and downloaded results. "
-    "Preserve their task IDs; do not call the unlisted specialist tool. "
-    // AIGC 组只用于虚拟素材；可识别真人必须先由本人完成 H5 授权。
-    "AIGC groups are only for fictional or virtual subjects. If any selected "
-    "photo or video contains a recognizable natural person, use an existing "
-    "LivenessFace group or call ark_assets begin_real_validation, give the H5 "
-    "link to that person, and resolve its GroupId with get_real_validation. "
-    "Do not infer authorization from pixels, put a real person in an AIGC group, "
-    "or call an Active AIGC asset authorized. Each LivenessFace group belongs to "
-    "one person; multi-person media can fail consistency review. Preserve every "
-    "selected input and report Processing, Active, or Failed accurately. "
-    // 资产服务故障是传输问题；保留原方案并重试，不能误判成内容审核失败。
-    "Do not treat an ark_assets transport error as an image moderation "
-    "decision. "
-    "For an existing Seedance task, keep its task ID and original references "
-    "if the asset service is temporarily unreachable; do not submit a duplicate. "
     // 仅在允许的前提下处理图像：轻度处理优先，油画化是兜底；记录损失并补偿描述。
     "Do not default to "
     "flipping or oil-painting a real face to evade review. For other image "
@@ -191,9 +171,7 @@ constexpr auto kMarkdownBaseInstructions =
     "briefly offer its authorized-asset path or a visibly fictional character. "
     "Offer another model only if the user wants the original person's "
     "likeness, "
-    "and ask before switching. Do not claim the account has no authorized "
-    "portrait assets unless a tool actually checked; ask for an asset ID. "
-    "Avoid lengthy technical error narration. "
+    "and ask before switching. Avoid lengthy technical error narration. "
     // 排障日志只在用户要求时导出到工作区，工具返回文件卡片；不把日志正文
     // 粘进会话，也不代替用户发送给联系人。
     "When the user asks to export troubleshooting logs, call "
@@ -270,9 +248,7 @@ constexpr auto kMarkdownBaseInstructions =
     "When the user asks to cancel a video job, call an available specialist's "
     "cancel action with its saved conversation_id. Model Studio can cancel only "
     "queued/PENDING jobs; if the provider says it has started, preserve the task "
-    "and continue polling. Previously submitted Seedance jobs still receive "
-    "background checks, but their unlisted tool cannot be called for manual "
-    "cancellation. Wan and Bailian Kling delete only the delivered local task "
+    "and continue polling. Wan and Bailian Kling delete only the delivered local task "
     "record, leaving cloud results and downloaded videos intact. GLM and "
     "MiniMax also allow local-record deletion after delivery, but no verified "
     "provider cancel API is wired for them; never claim a local stop canceled "
@@ -582,10 +558,10 @@ struct MaiMobileAgent {
             // 对主模型隐藏，后台仍按工具名轮询已提交的 Seedance 任务。
             tools->addInternal(
                 makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, assetProvider, seedanceVideoMetadata));
-            tools->add(makeMaiArkAssetTool(assetProvider));
+            tools->addInternal(makeMaiArkAssetTool(assetProvider));
         } else {
             tools->addInternal(makeMaiSeedanceVideoTool(arkKey, config.caBundlePath, {}, seedanceVideoMetadata));
-            tools->add(makeMaiArkAssetTool());
+            tools->addInternal(makeMaiArkAssetTool());
         }
         tools->addInternal(makeMaiSeedreamImageTool(arkKey, config.caBundlePath, seedreamUploadMedia));
         const auto glmKey = [dispatcher = hostTools]() -> std::string {
@@ -668,6 +644,9 @@ struct MaiMobileAgent {
         registerMobileBrowserTools(*tools, hostTools);
 #if defined(__ANDROID__)
         registerMobileScreenCaptureTools(*tools, hostTools);
+#elif defined(MAICHAT_MOBILE_IOS)
+        if (request.value("supportsScreenCapture", false))
+            registerMobileScreenCaptureTools(*tools, hostTools);
 #endif
         registerMobilePhotoTools(*tools, hostTools);
         MaiAgent::Options options;

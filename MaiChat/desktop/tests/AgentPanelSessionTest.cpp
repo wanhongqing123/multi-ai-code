@@ -370,7 +370,14 @@ void AgentPanelSessionTest::emptySessionShowsWelcomeAndFirstMessageHidesIt() {
     auto* editor = harness.panel->findChild<QTextEdit*>(QStringLiteral("agentPromptEditor"));
     QVERIFY(welcome != nullptr && heading != nullptr && editor != nullptr);
     QCOMPARE(heading->text(), QStringLiteral("从这里开始创作"));
-    QCOMPARE(harness.panel->findChildren<QFrame*>(QStringLiteral("agentWelcomeFeature")).size(), 12);
+    const auto welcomeCards = harness.panel->findChildren<QFrame*>(QStringLiteral("agentWelcomeFeature"));
+    QCOMPARE(welcomeCards.size(), 18);
+    QList<QString> titles;
+    for (const QFrame* card : welcomeCards) titles.append(card->accessibleName());
+    QVERIFY(titles.contains(QStringLiteral("终端与进程")));
+    QVERIFY(titles.contains(QStringLiteral("电脑操作")));
+    QVERIFY(titles.contains(QStringLiteral("日历导入")));
+    QVERIFY(!titles.contains(QStringLiteral("当前位置")));
     QVERIFY(welcome->isVisibleTo(harness.panel.get()));
     QVERIFY(harness.view()->isEmpty());
     QCOMPARE(welcome->property("welcomeColumns").toInt(), 4);

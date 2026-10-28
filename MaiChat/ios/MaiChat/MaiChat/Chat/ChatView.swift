@@ -6581,6 +6581,8 @@ struct ComposerAttachmentPanel: View {
     let openVoiceInput: () -> Void
     let suggestReply: (() -> Void)?
     var openMusic: (() -> Void)? = nil
+    var openScreenShare: (() -> Void)? = nil
+    var screenShareTitle = "共享屏幕"
     var showsVoiceInput = true
 
     private var columns: [GridItem] {
@@ -6616,6 +6618,14 @@ struct ComposerAttachmentPanel: View {
                     systemImage: "music.note",
                     enabled: true,
                     action: openMusic
+                )
+            }
+            if let openScreenShare {
+                actionButton(
+                    title: screenShareTitle,
+                    systemImage: "rectangle.on.rectangle",
+                    enabled: true,
+                    action: openScreenShare
                 )
             }
             if showsVoiceInput {

@@ -818,6 +818,15 @@ public class AIAssistantInstrumentedTest {
         try (ActivityScenario<AIAssistantTestActivity> scenario =
                  ActivityScenario.launch(AIAssistantTestActivity.class)) {
             await(scenario, panel -> panel.controller.state.ready);
+            assertNotNull(awaitSystemText("二维码生成", 5_000));
+            Bitmap welcome = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation().takeScreenshot();
+            assertNotNull(welcome);
+            File welcomeFile = new File(InstrumentationRegistry.getInstrumentation()
+                .getTargetContext().getFilesDir(), "agent-welcome-android.png");
+            try (FileOutputStream stream = new FileOutputStream(welcomeFile)) {
+                assertTrue(welcome.compress(Bitmap.CompressFormat.PNG, 100, stream));
+            } finally { welcome.recycle(); }
             scenario.onActivity(activity -> {
                 AIAssistantPanel panel = activity.panel;
                 assertNotNull(findDescription(panel, "对话列表"));

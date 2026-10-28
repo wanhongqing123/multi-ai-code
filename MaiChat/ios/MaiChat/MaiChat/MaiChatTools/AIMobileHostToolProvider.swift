@@ -748,7 +748,7 @@ final class AIMobileHostToolProvider {
                 try await capture.start()
                 return Self.jsonSuccess([
                     "sharing": true,
-                    "next_step": "Switch to the target app, then return to MaiChat and ask me to capture its screen."
+                    "next_step": "共享已开始。点系统面板外的灰色空白处收起面板，不要点‘停止共享’。再切到目标 App 停留片刻，返回 MaiChat 截屏。截 MaiChat 自己的页面可直接使用 mobile_capture_screen 的 target=current_app，无需开启共享。"
                 ])
             } catch let error as AIMobileScreenCaptureError {
                 return .failure(code: error.code, message: error.localizedDescription)
@@ -763,30 +763,42 @@ final class AIMobileHostToolProvider {
             await capture.stop()
             return Self.jsonSuccess(["sharing": false])
         }
-        guard arguments.count == 1,
+        guard Set(arguments.keys).isSubset(of: ["output_path", "target", "delay_ms"]),
               let outputPath = arguments["output_path"] as? String,
               (outputPath as NSString).isAbsolutePath,
               !AIAssistantModel.shared.workspacePath.isEmpty else {
             return .failure(code: "invalid_input", message: "a screen capture output path is required")
         }
+        let target: AIMobileScreenCaptureTarget
+        if let raw = arguments["target"] {
+            guard let name = raw as? String, let selected = AIMobileScreenCaptureTarget(rawValue: name)
+            else { return .failure(code: "invalid_input", message: "target must be current_app or last_external") }
+            target = selected
+        } else { target = .lastExternal }
+        let delay: Int
+        if let raw = arguments["delay_ms"] {
+            guard let number = raw as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.rounded(.towardZero) == number.doubleValue,
+                  (0...30_000).contains(number.doubleValue) else {
+                return .failure(code: "invalid_input", message: "delay_ms must be an integer between 0 and 30000")
+            }
+            delay = number.intValue
+        } else { delay = 0 }
         let root = URL(fileURLWithPath: AIAssistantModel.shared.workspacePath,
                        isDirectory: true)
-            .standardizedFileURL.resolvingSymlinksInPath()
-        let directory = root.appendingPathComponent("screenshots", isDirectory: true)
-        let output = URL(fileURLWithPath: outputPath).standardizedFileURL
-        guard directory.resolvingSymlinksInPath().path == directory.path,
-              output.deletingLastPathComponent().resolvingSymlinksInPath().path == directory.path,
-              output.pathExtension.lowercased() == "png",
-              output.lastPathComponent.hasPrefix("mobile_screen_"),
-              !FileManager.default.fileExists(atPath: output.path) else {
-            return .failure(code: "invalid_input", message: "screen capture must use a new Agent screenshot path")
-        }
         do {
-            let age = try capture.saveLatestFrame(to: output)
-            return Self.jsonSuccess(["captured": true, "age_ms": age,
-                                     "note": "Captured the latest screen-sharing frame from another app."])
+            let frame = try await capture.capture(to: URL(fileURLWithPath: outputPath),
+                workspace: root, target: target, delayMilliseconds: delay)
+            return Self.jsonSuccess(["captured": true, "age_ms": frame.ageMilliseconds,
+                "source": frame.source.rawValue, "whole_device": frame.source == .lastExternal,
+                "note": frame.source == .currentApp
+                    ? "Captured only MaiChat's current visible window, not the whole device or another app."
+                    : "Captured the most recent whole-device frame from another app while MaiChat was in the background."])
         } catch let error as AIMobileScreenCaptureError {
             return .failure(code: error.code, message: error.localizedDescription)
+        } catch is CancellationError {
+            return .failure(code: "canceled", message: "截图已取消")
         } catch {
             return .failure(code: "internal", message: error.localizedDescription)
         }

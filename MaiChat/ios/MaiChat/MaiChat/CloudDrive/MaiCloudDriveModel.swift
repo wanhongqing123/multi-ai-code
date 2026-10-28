@@ -29,6 +29,9 @@ struct MaiCloudDriveUploadProgress: Sendable {
     @Published private(set) var availability: Availability = .unknown
 
     @Published private(set) var videos: [MaiCloudDriveVideo] = []
+    @Published private(set) var folders: [MaiCloudDriveFolder] = []
+    @Published private(set) var currentFolderID: String?
+    @Published private(set) var folderPath: [MaiCloudDriveFolder] = []
     @Published private(set) var quota = MaiCloudDriveQuota(
         usedBytes: 0, reservedBytes: 0, limitBytes: 10_000_000_000)
     @Published private(set) var localTasks: [MaiCloudDriveLocalTask] = []
@@ -44,6 +47,8 @@ struct MaiCloudDriveUploadProgress: Sendable {
     private var transfers: [String: MaiCloudDriveCancelToken] = [:]
     private var aborting = Set<String>()
     private var generation = 0
+    private var browseGeneration = 0
+    private var visitedCursors = Set<String>()
     private var probingGeneration: Int?
     private let photoImportCleanupCutoff = Date()
 
@@ -55,9 +60,17 @@ struct MaiCloudDriveUploadProgress: Sendable {
         transfers.removeAll()
         MaiCloudDriveClient.discardStalePreviews()
         generation &+= 1
+        browseGeneration &+= 1
         accountID = newID
         availability = .unknown
         videos = []
+        folders = []
+        currentFolderID = nil
+        folderPath = []
+        loading = false
+        loadingMore = false
+        probingGeneration = nil
+        visitedCursors = []
         quota = MaiCloudDriveQuota(usedBytes: 0, reservedBytes: 0,
                                    limitBytes: 10_000_000_000)
         progress = [:]
@@ -73,41 +86,68 @@ struct MaiCloudDriveUploadProgress: Sendable {
         guard !accountID.isEmpty, probingGeneration != generation else { return }
         if availability == .available { return }
         let expected = generation
+        let browse = browseGeneration
+        let folder = currentFolderID
         probingGeneration = expected
         defer { if probingGeneration == expected { probingGeneration = nil } }
         do {
-            let page = try await MaiCloudDriveClient.shared.list()
-            guard expected == generation else { return }
+            let page = try await MaiCloudDriveClient.shared.list(folderID: folder ?? "")
+            guard expected == generation, browse == browseGeneration, !Task.isCancelled else { return }
             availability = .available
-            videos = page.videos
+            videos = page.videos.filter { $0.folderId == folder }
             quota = page.quota
             nextCursor = page.nextCursor
         } catch let error as MaiCloudDriveError
             where error.httpStatus == 404 || error.httpStatus == 503 {
-            if expected == generation { availability = .disabled }
+            if expected == generation && browse == browseGeneration && !Task.isCancelled {
+                if folder == nil { availability = .disabled }
+            }
         } catch {
-            if expected == generation { availability = .unknown }
+            if expected == generation && browse == browseGeneration && !Task.isCancelled {
+                availability = .unknown
+            }
         }
     }
 
     func reload() async {
         guard !accountID.isEmpty, !loading else { return }
+        browseGeneration &+= 1
         let expected = generation
+        let browse = browseGeneration
+        let folder = currentFolderID
         loading = true
+        loadingMore = false
+        visitedCursors = []
         listError = ""
-        defer { if expected == generation { loading = false } }
+        defer { if expected == generation && browse == browseGeneration { loading = false } }
         do {
-            let page = try await MaiCloudDriveClient.shared.list()
-            guard expected == generation else { return }
-            videos = page.videos
+            async let folderRequest = MaiCloudDriveClient.shared.listFolders()
+            async let mediaRequest = MaiCloudDriveClient.shared.list(folderID: folder ?? "")
+            let (allFolders, page) = try await (folderRequest, mediaRequest)
+            guard expected == generation, browse == browseGeneration, !Task.isCancelled else { return }
+            folders = allFolders
+            if let folder, !allFolders.contains(where: { $0.id == folder }) {
+                videos = []
+                nextCursor = nil
+                availability = .available
+                listError = "文件夹已不存在，请返回上级或根目录"
+                return
+            }
+            folderPath = path(to: folder, in: allFolders)
+            videos = page.videos.filter { $0.folderId == folder }
             availability = .available
             quota = page.quota
             nextCursor = page.nextCursor
         } catch {
-            if expected == generation {
-                listError = error.localizedDescription
+            if expected == generation && browse == browseGeneration && !Task.isCancelled {
+                if folder != nil, let mediaError = error as? MaiCloudDriveError,
+                   mediaError.httpStatus == 404 {
+                    videos = []
+                    nextCursor = nil
+                    listError = "文件夹已不存在，请返回上级或根目录"
+                } else { listError = error.localizedDescription }
                 if let error = error as? MaiCloudDriveError,
-                   error.httpStatus == 404 || error.httpStatus == 503 {
+                   folder == nil && (error.httpStatus == 404 || error.httpStatus == 503) {
                     availability = .disabled
                 }
             }
@@ -115,17 +155,69 @@ struct MaiCloudDriveUploadProgress: Sendable {
     }
 
     func loadMore() async {
-        guard let cursor = nextCursor, !loadingMore else { return }
+        guard let cursor = nextCursor, !loading, !loadingMore else { return }
         let expected = generation
+        let browse = browseGeneration
+        let folder = currentFolderID
         loadingMore = true
-        defer { if expected == generation { loadingMore = false } }
+        defer { if expected == generation && browse == browseGeneration { loadingMore = false } }
         do {
-            let page = try await MaiCloudDriveClient.shared.list(before: cursor)
-            guard expected == generation else { return }
-            videos += page.videos.filter { item in !videos.contains { $0.id == item.id } }
+            let page = try await MaiCloudDriveClient.shared.list(before: cursor, folderID: folder ?? "")
+            guard expected == generation, browse == browseGeneration, !Task.isCancelled else { return }
+            videos += page.videos.filter { item in
+                item.folderId == folder && !videos.contains { $0.id == item.id }
+            }
+            if let next = page.nextCursor, next == cursor || visitedCursors.contains(next) {
+                listError = "云盘分页未前进，请重试"
+                return
+            }
+            visitedCursors.insert(cursor)
             nextCursor = page.nextCursor
             quota = page.quota
-        } catch { if expected == generation { listError = error.localizedDescription } }
+        } catch {
+            if expected == generation && browse == browseGeneration && !Task.isCancelled {
+                listError = error.localizedDescription
+            }
+        }
+    }
+
+    var childFolders: [MaiCloudDriveFolder] { folders.filter { $0.parentId == currentFolderID } }
+
+    func browse(folderID: String?) async {
+        guard folderID == nil || folders.contains(where: { $0.id == folderID }) else {
+            listError = "文件夹已不存在，请刷新云盘"
+            return
+        }
+        if currentFolderID != folderID {
+            browseGeneration &+= 1
+            currentFolderID = folderID
+            folderPath = path(to: folderID, in: folders)
+            videos = []
+            nextCursor = nil
+            visitedCursors = []
+            loading = false
+            loadingMore = false
+            listError = ""
+            notice = ""
+        }
+        await reload()
+    }
+
+    func browseParent() async {
+        let parent = folderPath.last?.parentId
+        await browse(folderID: folders.contains(where: { $0.id == parent }) ? parent : nil)
+    }
+
+    private func path(to folderID: String?, in folders: [MaiCloudDriveFolder]) -> [MaiCloudDriveFolder] {
+        var result: [MaiCloudDriveFolder] = []
+        var cursor = folderID
+        var seen = Set<String>()
+        while let id = cursor, seen.insert(id).inserted,
+              let folder = folders.first(where: { $0.id == id }) {
+            result.insert(folder, at: 0)
+            cursor = folder.parentId
+        }
+        return result
     }
 
     func addFile(_ file: URL, expectedAccountID: String) async {
@@ -276,7 +368,8 @@ struct MaiCloudDriveUploadProgress: Sendable {
                     errors[local.id] = "文件已上传，本地缓存尚未清理；重新打开云盘会继续清理"
                 } else {
                     localTasks.removeAll { $0.id == local.id }
-                    notice = "已保存到我的云盘"
+                    notice = currentFolderID == nil ? "已保存到我的云盘" :
+                        "已上传到根目录，可以让 AI 移入当前文件夹"
                 }
                 await reload()
             } catch {

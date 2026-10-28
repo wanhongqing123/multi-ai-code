@@ -3,6 +3,7 @@
 #include "MaiMobileHostTools.h"
 
 #include <cstdlib>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -10,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
@@ -325,26 +327,76 @@ public:
 
     std::string name() const override { return "mobile_capture_screen"; }
     std::string description() const override {
+#if defined(MAICHAT_MOBILE_IOS)
+        return "Capture MaiChat's current visible window with target=current_app; it does not "
+               "include other apps or require starting system screen sharing. Use delay_ms "
+               "(0 to 30000) only when the user needs time to switch to the desired MaiChat page. "
+               "For another app, omit target or use last_external to read the recent whole-device "
+               "frame from a screen-sharing session the user started and visited that app in. "
+               "Returning to MaiChat does not overwrite that external frame. If no frame is ready, "
+               "let the user visit the target app; do not repeatedly restart sharing.";
+#else
         return "Read the most recent whole-device screen frame from a screen-sharing session "
                "that the user started with mobile_start_screen_share. This can include other "
                "apps. If sharing is not active or there is no recent frame, ask the user to "
                "start sharing and visit the target app first.";
+#endif
     }
     std::string parametersSchema() const override {
+#if defined(MAICHAT_MOBILE_IOS)
+        return R"({"type":"object","properties":{"target":{"type":"string","enum":["current_app","last_external"]},)"
+               R"("delay_ms":{"type":"integer","minimum":0,"maximum":30000}},"additionalProperties":false})";
+#else
         return R"({"type":"object","properties":{},"additionalProperties":false})";
+#endif
     }
     bool requiresApproval(const std::string&) const override { return false; }
     MaiToolResult execute(const std::string& argumentsJson,
                           const MaiToolContext& context) override {
         const Json arguments = Json::parse(argumentsJson, nullptr, false);
+#if defined(MAICHAT_MOBILE_IOS)
+        if (!arguments.is_object())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "mobile_capture_screen expects an object");
+        for (auto field = arguments.begin(); field != arguments.end(); ++field) {
+            if (field.key() == "target") {
+                if (!field.value().is_string() ||
+                    (field.value() != "current_app" && field.value() != "last_external"))
+                    return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                                  "target must be current_app or last_external");
+            } else if (field.key() == "delay_ms") {
+                if (!field.value().is_number_integer() || field.value() < 0 || field.value() > 30000)
+                    return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                                  "delay_ms must be an integer between 0 and 30000");
+            } else {
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                              "unknown screen capture argument");
+            }
+        }
+#else
         if (!arguments.is_object() || !arguments.empty())
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "mobile_capture_screen expects an empty object");
+#endif
         if (context.isCanceled())
             return MaiToolResult::failure(MaiErrorCode::Canceled, "screen capture was canceled");
         if (context.root.empty())
             return MaiToolResult::failure(MaiErrorCode::NotConfigured,
                                           "the Agent workspace is not configured");
+#if defined(MAICHAT_MOBILE_IOS)
+        // The host callback is synchronous and cannot observe this turn's
+        // cancellation flag. Wait here so stopping a delayed capture never
+        // reaches UIKit, while ordinary Swift callers retain their async delay.
+        const auto captureAt = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(arguments.value("delay_ms", 0));
+        while (std::chrono::steady_clock::now() < captureAt) {
+            if (context.isCanceled())
+                return MaiToolResult::failure(MaiErrorCode::Canceled, "screen capture was canceled");
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        if (context.isCanceled())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "screen capture was canceled");
+#endif
         MaiFilePath directory = MaiFilePath::fromUtf8(context.root);
 #if defined(__ANDROID__)
         // Android's host accepts only files excluded from OS backup. The Agent
@@ -357,8 +409,16 @@ public:
             return MaiToolResult::failure(directoryError.code(), directoryError.message());
         const MaiFilePath path = directory.append(MaiFilePath::fromUtf8(
             MaiIdGenerator::generate("mobile_screen_") + ".png"));
-        const MaiToolResult response = callMaiMobileHostTool(
-            mDispatcher, name(), Json{{"output_path", path.toUtf8()}}.dump());
+        Json payload = arguments;
+#if defined(MAICHAT_MOBILE_IOS)
+        payload["delay_ms"] = 0;
+#endif
+        payload["output_path"] = path.toUtf8();
+        const MaiToolResult response = callMaiMobileHostTool(mDispatcher, name(), payload.dump());
+        if (context.isCanceled()) {
+            MaiFileSystem::removeFile(path);
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "screen capture was canceled");
+        }
         if (response.hasError()) return response;
         if (!MaiFileSystem::exists(path))
             return MaiToolResult::failure(MaiErrorCode::Internal,
@@ -662,8 +722,14 @@ void registerMobileScreenCaptureTools(
     addMaiMobileHostTool(
         tools, "mobile_start_screen_share",
         "Ask the user to start a system-approved whole-device screen-sharing session. "
+#if defined(MAICHAT_MOBILE_IOS)
         "On iOS this requires iOS 27 or later and the ScreenCaptureKit system picker. "
+        "Before opening it, tell the user to choose Share Entire Screen, then tap the gray area "
+        "outside the system panel after sharing starts to close the panel without stopping sharing. "
+        "Do not ask the user to stop or repeatedly restart sharing to close that panel. "
+#else
         "On Android choose Share entire screen in the system picker. "
+#endif
         "The user can then switch to another app and return before requesting a frame.",
         R"({"type":"object","properties":{},"additionalProperties":false})",
         dispatcher, false);

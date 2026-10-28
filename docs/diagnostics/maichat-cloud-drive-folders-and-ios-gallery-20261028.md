@@ -36,3 +36,10 @@
 - 专用测试账号通过正式 HTTPS 创建三个测试目录、列出、改名、移动、拒绝循环和非空删除，随后三个目录清零并退出登录，原 active session 集合恢复。root 独立读生产目录总数为零、原媒体摘要不变；health=200，无凭据 auth/me 与 folders 为预期 401。候选使用现有线上 server/service；未部署之前尚未开放的 Session 附件路由，其路径仍 404。
 - 执行命令只请求重启 maichat-auth；现有 maichat-session-sync.service 的 Requires=maichat-auth.service 造成同秒联动重启。Auth/Session Sync 当前健康且近期错误日志为零；media 和 nginx 启动时间保持原值。回滚只需移除本轮 30 drop-in 并重启 auth，默认保留追加 schema；禁止自动恢复整库导致丢失上线后的登录或媒体元数据。
 - iPhone 14 Pro Max（iOS 27.2）最新 Debug App 已编译、签名核验并由 Xcode 安装，版本 2.2.4 (131)，MaiChat.debug.dylib SHA-256 `6c9d29ba2c71e7fcf1f13bebbb030c1174e46069f05014003cc3fb1fc48c399f`。首次真实图片只读 UI 测试在初始化前被系统“为 XCTest 输入 iPhone 密码 / Enable UI Automation”阻挡而超时，未执行产品断言；已通知用户在设备自行确认，未索要密码。系统确认页面关闭后继续验收，真实云盘 22 张图片中走通右滑仅露删除、收回操作、点击第一张原图、左滑第二张、右滑回第一张、首端不循环和关闭回原列表。初轮截图只有第二张加载态，故加强用例等待实际下载/解码和保存按钮可用，再跑最终用例 1/1、零跳过（`/private/tmp/maichat-cloud-gallery-device-decoded.xcresult`，45.27 秒），root 已亲看第二张完整 HEIC 画面。真实文件没有被移动、删除或上传；删除确认/取消/执行在隔离模拟器素材上验收。真机录屏命令返回设备不支持 devicectl Screen Recording，连续过渡录像证据采用模拟器的同一 pager 代码，真机保留右滑和解码完成截图。
+
+## iOS 文件夹浏览补齐（2026-10-29）
+
+- 用户随后指出 iOS 看不到已建目录。直接原因是 `MaiCloudDriveModel` 的列表请求一直省略 `folder_id`，页面也只渲染媒体，目录工具和服务端元数据已有但尚未接入浏览界面。现根目录显式用空字符串筛选，列出子目录和直属媒体；可点目录、面包屑和返回上级，只增加浏览，不增加目录管理菜单。子目录上传入口、说明及完成提示明确上传到根目录，可由 Agent 移入目标目录。
+- 列表请求用独立 `browseGeneration` 隔离目录切换，账号切换复位加载状态并隔离旧响应，不改变上传任务的账号 generation。预览捕获当前目录并据此继续分页。选中目录的 HTTP 404 清除旧列表并提示“文件夹已不存在，请返回上级或根目录”，保留路径返回控件。导航使用稳定 ScrollView 的 `ScrollViewReader` 定位目录锚点，不通过重建 ScrollView 复位。
+- 最终 `CloudDriveFolderBrowseUITests` 在 iOS 26.5 隔离模拟器完整 2/2 通过、零跳过（33.10 秒、44.07 秒，整轮 79.28 秒），结果 `/private/tmp/maichat-ios-cloud-folder-browse-complete.xcresult`。样本含 15 个根兄弟目录和 15 个子兄弟目录，验证长目录进入后路径可见、当前目录视频实际首帧、空目录、刷新、远端真 404 后返回根目录、目录切换不混入旧文件，以及账号切换时加载状态恢复且无旧目录。初轮两例在同一按钮定位失败：外层 VStack 的 accessibilityIdentifier 覆盖了“返回上级”按钮 ID；移除无用途容器 ID 后同例通过。
+- 已亲看导出的子目录与切号根目录截图，并检查 `/private/tmp/maichat-ios-folder-browse-complete.mp4` 及末段逐帧图：路径、文件、空态和错误均可见，目录切换保持同一滚动容器。以上测试只操作固定 localhost 服务及模拟器专用样本；用户要求停止反复手机测试后，本次补齐未再操作真实 iPhone。集中安装、真机验收与最终提交由 root 后续统一记录。

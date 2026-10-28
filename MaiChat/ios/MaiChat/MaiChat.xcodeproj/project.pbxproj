@@ -48,6 +48,7 @@
 		6602E48DB6C9BA2E18F73866 /* MessageBubbleLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5A4C74E12DC407146E1EBF /* MessageBubbleLayout.swift */; };
 		678592B693D2A02D2B12A4BC /* remote-diagnostics-report.json in Resources */ = {isa = PBXBuildFile; fileRef = 8C57A0E06309C4F110DA1CBF /* remote-diagnostics-report.json */; };
 		6F8A66D5F8344B2C0A738BE6 /* CloudDriveDeviceReadOnlySmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FFB5E24161F8E400C19FB64 /* CloudDriveDeviceReadOnlySmokeUITests.swift */; };
+		6FA2296AE72440AA993F7C12 /* CloudDriveFolderBrowseUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FA2296AE72440AA993F7C13 /* CloudDriveFolderBrowseUITests.swift */; };
 		70CBD7973F5A4E17FD5955DD /* MaiChatAttachmentDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1D43CB045C50EED65F90E94 /* MaiChatAttachmentDownloader.swift */; };
 		7CA7F5C3C26143C75F69AC61 /* DiagnosticLogFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A066546C97129E56C379365 /* DiagnosticLogFileStore.swift */; };
 		80014E0AD21DD45ABC9E3E35 /* MaiChatIMTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C12D574F08359081230E0D3A /* MaiChatIMTools.swift */; };
@@ -183,6 +184,7 @@
 		5897033F54602274C5F58A4A /* RemoteDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiagnosticsView.swift; sourceTree = "<group>"; };
 		59C1F4DABEBD721F3CB32385 /* LocalChatHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatHistoryStoreTests.swift; sourceTree = "<group>"; };
 		5FFB5E24161F8E400C19FB64 /* CloudDriveDeviceReadOnlySmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDriveDeviceReadOnlySmokeUITests.swift; sourceTree = "<group>"; };
+		6FA2296AE72440AA993F7C13 /* CloudDriveFolderBrowseUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDriveFolderBrowseUITests.swift; sourceTree = "<group>"; };
 		642E16B2EF5CA26E0EC53657 /* RemoteInputPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInputPacketTests.swift; sourceTree = "<group>"; };
 		66BE3D0F16E24A4DF136E427 /* MaiFfplayIosBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MaiFfplayIosBridge.h; sourceTree = "<group>"; };
 		6FF39890C4F255D9CCC67B03 /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
@@ -294,6 +296,7 @@
 			children = (
 				89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */,
 				5FFB5E24161F8E400C19FB64 /* CloudDriveDeviceReadOnlySmokeUITests.swift */,
+				6FA2296AE72440AA993F7C13 /* CloudDriveFolderBrowseUITests.swift */,
 				4844275C1326313FC09CA83F /* CloudDriveProductionCanaryUITests.swift */,
 				8F3E7E371D631DE55D3D718C /* DesktopLoginUITests.swift */,
 				DAB7CB3554291BE63987EC07 /* SocialLoginUITests.swift */,
@@ -911,6 +914,7 @@
 			files = (
 				194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */,
 				6F8A66D5F8344B2C0A738BE6 /* CloudDriveDeviceReadOnlySmokeUITests.swift in Sources */,
+				6FA2296AE72440AA993F7C12 /* CloudDriveFolderBrowseUITests.swift in Sources */,
 				A4FE70D1E7F52FD7C3E93B6C /* CloudDriveProductionCanaryUITests.swift in Sources */,
 				E614ECA45B50A47575FB9B82 /* DesktopLoginUITests.swift in Sources */,
 				9EF853C23CC0121860279D06 /* SocialLoginUITests.swift in Sources */,

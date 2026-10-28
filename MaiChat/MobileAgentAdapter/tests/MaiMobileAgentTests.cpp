@@ -14,8 +14,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <httplib.h>
 #include <json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -91,9 +93,183 @@ static std::string frame(const Json& delta, const char* finish = nullptr) {
         {"delta", delta}, {"index", 0}, {"finish_reason", finish ? Json(finish) : Json(nullptr)}};
     return "data: " + Json{{"choices", Json::array({choice})}}.dump() + "\n\n";
 }
+
+struct ScreenCaptureProbe {
+    std::atomic<int> calls{0};
+    std::atomic<bool> released{false};
+    std::atomic<bool>* cancel = nullptr;
+    bool cancelOnReturn = false;
+    Json arguments;
+};
+
+static const char* captureHostHandler(void* context, const char* tool, const char* arguments) {
+    auto* probe = static_cast<ScreenCaptureProbe*>(context);
+    CHECK(tool && std::strcmp(tool, "mobile_capture_screen") == 0);
+    probe->arguments = Json::parse(arguments);
+    ++probe->calls;
+    const std::string output = probe->arguments.at("output_path").get<std::string>();
+    CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output),
+                                    std::string("\x89PNG\r\n\x1a\n", 8)).hasError());
+    if (probe->cancelOnReturn && probe->cancel) probe->cancel->store(true);
+    const std::string response = Json{{"ok", true}, {"output", {{"captured", true}}}}.dump();
+    auto* owned = static_cast<char*>(std::malloc(response.size() + 1));
+    CHECK(owned != nullptr);
+    std::memcpy(owned, response.c_str(), response.size() + 1);
+    return owned;
+}
+
+static void releaseCaptureContext(void* context) {
+    static_cast<ScreenCaptureProbe*>(context)->released = true;
+}
+
+static void captureContract() {
+    struct Workspace {
+        MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
+            MaiFilePath::fromUtf8("mai-mobile-capture-test-" + MaiIdGenerator::newEventId()));
+        ~Workspace() { MaiFileSystem::removeRecursively(path); }
+    } workspace;
+    CHECK(!MaiFileSystem::createDirectories(workspace.path).hasError());
+    ScreenCaptureProbe probe;
+    auto dispatcher = makeMaiMobileHostDispatcher();
+    CHECK(setMaiMobileHostToolHandler(dispatcher, &probe, captureHostHandler,
+                                     freeHostToolResponse, releaseCaptureContext));
+    MaiToolRegistry registry;
+    registerMobileScreenCaptureTools(registry, dispatcher);
+    MaiTool* capture = registry.findForModel("mobile_capture_screen");
+    CHECK(capture != nullptr);
+    const Json schema = Json::parse(capture->parametersSchema());
+    CHECK(schema["additionalProperties"] == false);
+    std::atomic<bool> cancel{false};
+    probe.cancel = &cancel;
+    MaiToolContext context;
+    context.root = workspace.path.toUtf8();
+    context.cancel = &cancel;
+
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    CHECK(schema["properties"]["target"]["enum"] ==
+          Json::array({"current_app", "last_external"}));
+    CHECK(schema["properties"]["delay_ms"]["type"] == "integer");
+    CHECK(schema["properties"]["delay_ms"]["minimum"] == 0);
+    CHECK(schema["properties"]["delay_ms"]["maximum"] == 30000);
+
+    // Cancel the actual C++ tool while it is waiting, before any host callback.
+    std::optional<MaiToolResult> pending;
+    std::exception_ptr workerError;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> finished{false};
+    std::thread worker([&] {
+        entered.store(true);
+        try {
+            pending.emplace(capture->execute(
+                R"({"target":"current_app","delay_ms":5000})", context));
+        } catch (...) { workerError = std::current_exception(); }
+        finished.store(true);
+    });
+    while (!entered.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const bool waited = !finished.load();
+    const auto canceledAt = std::chrono::steady_clock::now();
+    cancel.store(true);
+    worker.join();
+    if (workerError) std::rethrow_exception(workerError);
+    CHECK(waited && pending.has_value() && pending->hasError());
+    CHECK(pending->error().code() == MaiErrorCode::Canceled);
+    CHECK(pending->images().empty());
+    CHECK(std::chrono::steady_clock::now() - canceledAt < std::chrono::seconds(2));
+    CHECK(probe.calls.load() == 0);
+    int files = 0;
+    MaiFileSystem::walk(workspace.path, [&](const MaiFileEntry& entry) {
+        if (!entry.isDirectory) ++files;
+        return MaiWalkAction::Continue;
+    });
+    CHECK(files == 0);
+    cancel.store(false);
+
+    const auto started = std::chrono::steady_clock::now();
+    auto delayed = capture->execute(R"({"target":"current_app","delay_ms":75})", context);
+    CHECK(!delayed.hasError() && delayed.images().size() == 1);
+    CHECK(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(50));
+    CHECK(probe.calls.load() == 1);
+    CHECK(probe.arguments["target"] == "current_app" && probe.arguments["delay_ms"] == 0);
+    CHECK(probe.arguments.size() == 3);
+    CHECK(delayed.images()[0].path == probe.arguments["output_path"]);
+    CHECK(!MaiFileSystem::removeFile(MaiFilePath::fromUtf8(delayed.images()[0].path)).hasError());
+    auto external = capture->execute(R"({"target":"last_external"})", context);
+    CHECK(!external.hasError());
+    CHECK(probe.arguments["target"] == "last_external" && probe.arguments["delay_ms"] == 0);
+    CHECK(!MaiFileSystem::removeFile(MaiFilePath::fromUtf8(external.images()[0].path)).hasError());
+    const int validCalls = probe.calls.load();
+    for (const char* invalid : {R"({"target":"entire_device"})", R"({"target":false})",
+                               R"({"delay_ms":-1})", R"({"delay_ms":30001})",
+                               R"({"delay_ms":0.5})", R"({"delay_ms":true})",
+                               R"({"delay_ms":"25"})", R"({"output_path":"outside.png"})"}) {
+        auto rejected = capture->execute(invalid, context);
+        CHECK(rejected.hasError() && rejected.error().code() == MaiErrorCode::InvalidInput);
+    }
+    CHECK(probe.calls.load() == validCalls);
+#else
+    CHECK(schema["properties"].empty());
+    for (const char* invalid : {R"({"target":"current_app"})", R"({"target":"last_external"})",
+                               R"({"delay_ms":0})", R"({"delay_ms":75})"}) {
+        auto rejected = capture->execute(invalid, context);
+        CHECK(rejected.hasError() && rejected.error().code() == MaiErrorCode::InvalidInput);
+    }
+    CHECK(probe.calls.load() == 0);
+#endif
+
+    auto normal = capture->execute("{}", context);
+    CHECK(!normal.hasError() && normal.images().size() == 1);
+    CHECK(!probe.arguments.contains("target"));
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    CHECK(probe.arguments["delay_ms"] == 0);
+#else
+    CHECK(!probe.arguments.contains("delay_ms"));
+    CHECK(probe.arguments.size() == 1);
+#endif
+    const auto output = MaiFilePath::fromUtf8(normal.images()[0].path);
+    CHECK(normal.images()[0].mimeType == "image/png");
+#if defined(__ANDROID__)
+    CHECK(output.dirName() == workspace.path.append(MaiFilePath::fromUtf8("no_backup/screenshots")));
+#else
+    CHECK(output.dirName() == workspace.path.append(MaiFilePath::fromUtf8("screenshots")));
+#endif
+    CHECK(MaiFileSystem::exists(output));
+    CHECK(!MaiFileSystem::removeFile(output).hasError());
+
+    // A late cancellation must remove only this call's newly written PNG.
+    const auto retained = output.dirName().append(MaiFilePath::fromUtf8("mobile_screen_retained.png"));
+    CHECK(!MaiFileSystem::writeFile(retained, "retained").hasError());
+    probe.cancelOnReturn = true;
+    const int callsBeforeCancel = probe.calls.load();
+    auto canceled = capture->execute("{}", context);
+    CHECK(canceled.hasError() && canceled.error().code() == MaiErrorCode::Canceled);
+    CHECK(canceled.images().empty());
+    CHECK(probe.calls.load() == callsBeforeCancel + 1);
+    CHECK(!MaiFileSystem::exists(MaiFilePath::fromUtf8(
+        probe.arguments["output_path"].get<std::string>())));
+    std::string retainedBytes;
+    CHECK(!MaiFileSystem::readFile(retained, retainedBytes).hasError() && retainedBytes == "retained");
+    auto alreadyCanceled = capture->execute("{}", context);
+    CHECK(alreadyCanceled.hasError() && alreadyCanceled.error().code() == MaiErrorCode::Canceled);
+    CHECK(probe.calls.load() == callsBeforeCancel + 1);
+    clearMaiMobileHostToolHandler(dispatcher);
+    CHECK(probe.released.load());
+    std::puts("PASS: screen capture schema, dispatch, delay cancellation and owned PNG cleanup");
+}
 // 作用：按测试场景构造移动 Agent、调用公开接口并核对结果。
 // 按真实调用顺序检查输入和可观察结果，失败时保留定位所需的上下文。
-int main() {
+int main(int argc, char** argv) {
+    const bool captureOnly = argc == 2 && std::strcmp(argv[1], "--capture-contract-only") == 0;
+    if (argc != 1 && !captureOnly) {
+        std::fputs("usage: MaiMobileAgentTests [--capture-contract-only]\n", stderr);
+        return 2;
+    }
+    try { captureContract(); }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: screen capture contract: %s\n", error.what());
+        return 1;
+    }
+    if (captureOnly) return 0;
     MaiToolRegistry hostRegistry;
     registerMaiChatHostTools(hostRegistry, makeMaiMobileHostDispatcher());
     MaiTool* remoteList = hostRegistry.find("maichat_remote_session_list");

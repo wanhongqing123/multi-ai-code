@@ -48,6 +48,12 @@ class IOSCloudHandler(CloudHandler):
                             and account == "author" else 0)
                 used = self.server.size if ready else 0
                 query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                folder_id = query.get("folder_id", [""])[0]
+                if folder_id:
+                    folder = self.server.folders.get(folder_id)
+                    if not folder or folder["owner"] != account:
+                        self.reply(404, {"error": "Folder not found"})
+                        return
                 if "folder_id" in query and (query["folder_id"][0] or None) != self.server.folder_id:
                     ready = False
             self.reply(200, {"videos": [video] if ready else [],

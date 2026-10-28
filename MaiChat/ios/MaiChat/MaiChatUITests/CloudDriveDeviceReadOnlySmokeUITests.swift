@@ -1,6 +1,53 @@
 import XCTest
 
 final class CloudDriveDeviceReadOnlySmokeUITests: XCTestCase {
+    @MainActor func testInstalledCloudFolderReadOnlyRoundTrip() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("此单次只读验收仅用于已连接真机")
+        #else
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["MAICHAT_RUN_CLOUD_FOLDER_READONLY"] == "YES"
+        else { throw XCTSkip("需要显式开启约定的真机只读窗口") }
+        continueAfterFailure = false
+        let configuredName = environment["MAICHAT_CLOUD_FOLDER_NAME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let folderName = configuredName.isEmpty ? "桂山岛之旅" : configuredName
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_CURRENT_APP_CAPTURE_SMOKE"] = "YES"
+        app.launch()
+        XCTAssertTrue(app.buttons["云盘"].waitForExistence(timeout: 30))
+        app.buttons["云盘"].tap()
+        let folder = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label == %@",
+            "cloud-drive-folder-", folderName)).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 45), "根目录应显示约定文件夹：\(folderName)")
+        let root = XCTAttachment(screenshot: app.screenshot())
+        root.name = "device-cloud-folder-root-readonly"
+        root.lifetime = .keepAlways
+        add(root)
+        folder.tap()
+        let first = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "cloud-drive-play-")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 45), "文件夹内应显示真实文件")
+        let contents = XCTAttachment(screenshot: app.screenshot())
+        contents.name = "device-cloud-folder-contents-readonly"
+        contents.lifetime = .keepAlways
+        add(contents)
+        first.tap()
+        let counter = app.staticTexts["cloud-drive-image-counter"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 20))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(
+            format: "value IN %@", ["图片已加载", "视频已播放"]), object: counter)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 60), .completed,
+                       "应等到图片解码或视频实际首帧完成")
+        app.buttons["cloud-drive-image-close"].tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 15))
+        app.buttons["cloud-drive-folder-root"].tap()
+        XCTAssertTrue(folder.waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["cloud-drive-folder-up"].exists)
+        #endif
+    }
+
     @MainActor func testInstalledCloudImagesSwipeWithoutChangingFiles() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("此用例验收已连接真机上的真实云盘")

@@ -3484,14 +3484,16 @@ private struct AIComposer: View, Equatable {
             .appendingPathComponent("screenshots", isDirectory: true)
         let name = "mobile_screen_\(UUID().uuidString).png"
         let file = directory.appendingPathComponent(name)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            _ = try screenCapture.saveLatestFrame(to: file)
-            let attachment = AIImportedFile(relativePath: "screenshots/\(name)",
-                                            mimeType: "image/png", isImage: true)
-            model.addAttachments([attachment], to: target)
-        } catch {
-            model.showTransientError(error.localizedDescription)
+        Task { @MainActor in
+            do {
+                _ = try await screenCapture.capture(to: file,
+                    workspace: URL(fileURLWithPath: snapshot.workspacePath, isDirectory: true))
+                let attachment = AIImportedFile(relativePath: "screenshots/\(name)",
+                                                mimeType: "image/png", isImage: true)
+                model.addAttachments([attachment], to: target)
+            } catch {
+                model.showTransientError(error.localizedDescription)
+            }
         }
     }
 

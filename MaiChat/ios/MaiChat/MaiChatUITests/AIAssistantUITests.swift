@@ -4,6 +4,28 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testCurrentAppScreenshotUsesWindowWithoutScreenSharing() throws {
+#if targetEnvironment(simulator)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--current-app-screen-capture-test"]
+        app.launchEnvironment["MAICHAT_CURRENT_APP_CAPTURE_SMOKE"] = "YES"
+        app.launch()
+        XCTAssertTrue(app.buttons["current-app-capture-run"].waitForExistence(timeout: 15))
+        app.buttons["current-app-capture-run"].tap()
+        let status = app.staticTexts["current-app-capture-result"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate(
+            format: "label BEGINSWITH %@", "PASS source=current_app sharing=false"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 15), .completed, status.label)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "current-app-capture-ordinary-and-host-contract"
+        shot.lifetime = .keepAlways
+        add(shot)
+#else
+        throw XCTSkip("隔离当前窗口截图验证仅使用模拟器")
+#endif
+    }
+
     @MainActor func testWelcomeMobileCapabilitiesRemainScrollAccessible() throws {
         #if targetEnvironment(simulator)
         let app = XCUIApplication()

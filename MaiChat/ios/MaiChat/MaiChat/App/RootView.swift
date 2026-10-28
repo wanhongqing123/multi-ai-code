@@ -244,6 +244,9 @@ struct RootView: View {
             }
         }
         .onChange(of: selectedTab) { tab in
+#if DEBUG
+            if tab == .cloudDrive { AIMobileScreenCapture.shared.captureCloudPageSmokeIfRequested() }
+#endif
             if tab != .assistant { assistantOpenGeneration += 1 }
             if tab == .assistant { hasOpenedAssistant = true }
             #if DEBUG && targetEnvironment(simulator)

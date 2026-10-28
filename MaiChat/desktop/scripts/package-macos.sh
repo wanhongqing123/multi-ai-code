@@ -59,6 +59,9 @@ repo_root="$(git -C "$project_root" rev-parse --show-toplevel)"
 build_path="$project_root/$build_dir"
 app_name="MaiChat.app"
 source_app="$build_path/bin/$app_name"
+if [[ ! -d "$source_app" && -d "$build_path/$app_name" ]]; then
+  source_app="$build_path/$app_name"
+fi
 
 if [[ ! -d "$source_app" ]]; then
   cat >&2 <<EOF

@@ -341,11 +341,13 @@ test('old video schema migrates active uploads and tombstones without changing I
   assert.equal(row.upload_id,'old_upload_1');
   assert.equal(row.cleanup_revision,7);
   assert.equal(row.status,'uploading');
+  assert.equal(row.folder_id,null);
   const tombstone = migrated.prepare(`SELECT * FROM cloud_drive_videos
     WHERE status='deleted'`).get();
   assert.equal(tombstone.cleanup_pending,1);
   assert.equal(tombstone.cleanup_hold_until,1000);
   assert.equal(tombstone.cleanup_revision,8);
+  assert.equal(tombstone.folder_id,null);
   assert.equal(migrated.pragma('foreign_key_check').length,0);
   migrated.prepare(`INSERT INTO cloud_drive_videos
     (id,owner_user_id,name,object_key,size_bytes,content_type,status,

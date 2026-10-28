@@ -18,6 +18,11 @@ typedef enum MaiCloudDriveAction {
     MAI_CLOUD_DRIVE_ABORT_UPLOAD = 4,
     MAI_CLOUD_DRIVE_THUMBNAIL_LINK = 5,
     MAI_SESSION_ATTACHMENT_CLEANUP_ROOM = 6,
+    MAI_CLOUD_DRIVE_LIST_FOLDERS = 7,
+    MAI_CLOUD_DRIVE_CREATE_FOLDER = 8,
+    MAI_CLOUD_DRIVE_UPDATE_FOLDER = 9,
+    MAI_CLOUD_DRIVE_DELETE_FOLDER = 10,
+    MAI_CLOUD_DRIVE_MOVE_MEDIA = 11,
     // The account API retains its /videos transport path and video_id field.
     // These names also cover images without changing existing callers.
     MAI_CLOUD_DRIVE_LIST_MEDIA = MAI_CLOUD_DRIVE_LIST_VIDEOS,
@@ -37,6 +42,10 @@ typedef struct MaiCloudDriveMediaInfo {
 // This common mapping avoids separate format tables in the platform hosts.
 int mai_cloud_drive_media_info(const char* display_name_utf8,
                                MaiCloudDriveMediaInfo* output);
+// Validates UTF-8, controls, leading/trailing Unicode whitespace and portable
+// name restrictions for a logical folder (not an on-disk path). The account
+// service performs NFC normalization and checks the normalized byte length.
+int mai_cloud_drive_folder_name_valid(const char* name_utf8);
 // Session attachments use the same multipart core but a separate API, quota
 // and OSS object prefix. Files with a safe extension use octet-stream.
 int mai_session_attachment_media_info(const char* display_name_utf8,
@@ -129,7 +138,14 @@ void mai_cloud_drive_cancel_request(MaiCloudDriveCancel* cancel);
 // Destroy only after every call using the handle has returned.
 void mai_cloud_drive_cancel_destroy(MaiCloudDriveCancel* cancel);
 
-// LIST_MEDIA accepts optional {"before":"cursor"}; the other actions need
+// LIST_MEDIA accepts optional {"before":"cursor","folder_id":"uuid"}.
+// Omit folder_id for all media; an empty folder_id selects the root directory.
+// LIST_FOLDERS returns the account's entire folder tree. CREATE_FOLDER accepts
+// {"name":...,"parent_id":...}; UPDATE_FOLDER accepts folder_id and name and/or
+// parent_id. Empty parent_id means root. DELETE_FOLDER accepts folder_id and
+// refuses nonempty folders. MOVE_MEDIA accepts {"media_id":...,"folder_id":...}
+// (empty folder_id moves to root). Folder actions never alter OSS object keys.
+// The remaining media actions need
 // {"video_id":"uuid"}. THUMBNAIL_LINK returns a short-lived signed HTTPS
 // thumbnail_url. ABORT_UPLOAD discards an unfinished upload session;
 // canceling upload_resumable instead keeps its checkpoint for a later resume.

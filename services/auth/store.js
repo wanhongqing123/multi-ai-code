@@ -368,6 +368,35 @@ function openStore(filename) {
         ON cloud_drive_videos(cleanup_pending,cleanup_after);`);
     })();
   }
+  // Directory metadata is independent of OSS object keys and Session attachments.
+  // Run after the legacy media-table rebuild so existing uploads and tombstones
+  // acquire a root placement without changing their storage identity.
+  db.transaction(() => {
+    db.exec(`CREATE TABLE IF NOT EXISTS cloud_drive_folders (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      parent_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(id,owner_user_id),
+      FOREIGN KEY(parent_id,owner_user_id)
+        REFERENCES cloud_drive_folders(id,owner_user_id),
+      CHECK(parent_id IS NULL OR parent_id<>id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS cloud_drive_folders_root_name
+      ON cloud_drive_folders(owner_user_id,name) WHERE parent_id IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS cloud_drive_folders_child_name
+      ON cloud_drive_folders(owner_user_id,parent_id,name) WHERE parent_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS cloud_drive_folders_owner_parent
+      ON cloud_drive_folders(owner_user_id,parent_id);`);
+    if (!db.pragma('table_info(cloud_drive_videos)')
+      .some(column => column.name === 'folder_id'))
+      db.exec(`ALTER TABLE cloud_drive_videos ADD COLUMN folder_id TEXT
+        REFERENCES cloud_drive_folders(id) ON DELETE SET NULL`);
+    db.exec(`CREATE INDEX IF NOT EXISTS cloud_drive_videos_folder
+      ON cloud_drive_videos(owner_user_id,folder_id,status,created_at DESC,id DESC)`);
+  })();
   const phoneColumn = db.prepare('PRAGMA table_info(users)').all()
     .find(column => column.name === 'phone_e164');
   if (phoneColumn?.notnull) {

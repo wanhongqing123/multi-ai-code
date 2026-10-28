@@ -7,6 +7,7 @@
 #include "MaiImageDecode.h"
 #endif
 #include "ui/AppMessageDialog.h"
+#include "ui/AppTextInputDialog.h"
 #include "ui/ImagePreviewDialog.h"
 #include "ui/DesktopCloudVod.h"
 
@@ -14,12 +15,15 @@
 #include <QColorSpace>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
 #include <QFutureWatcher>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QImage>
 #include <QImageReader>
 #include <QJsonDocument>
@@ -31,10 +35,13 @@
 #include <QResource>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QStandardPaths>
+#include <QStyle>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QUuid>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -59,6 +66,8 @@ QString errorText(int status, long http) {
     if (http == 413) return QStringLiteral("文件超出大小限制或 10 GB 账号空间已满。");
     if (http == 429) return QStringLiteral("未完成的上传太多，请稍后重试或放弃旧任务。");
     if (http == 410) return QStringLiteral("上传会话已过期，请重新上传。");
+    if (http == 409) return QStringLiteral("操作未完成：可能存在同名文件夹，或文件夹还包含文件。请刷新后重试。");
+    if (http == 400) return QStringLiteral("文件夹名称或目标位置无效，请检查后重试。");
     if (status == MAI_CLOUD_DRIVE_CHECKPOINT_MISMATCH)
         return QStringLiteral("所选文件与原上传任务不一致，请选择原文件。");
     if (status == MAI_CLOUD_DRIVE_PART_MISMATCH)
@@ -184,6 +193,8 @@ struct CloudDriveDialog::Reply {
     long http = 0;
     QJsonObject body;
     QString error;
+    QString notice;
+    bool uploadedInRoot = false;
     DesktopCloudVod vod;
     bool ok() const { return status == MAI_CLOUD_DRIVE_OK && http >= 200 && http < 300; }
 };
@@ -254,6 +265,10 @@ CloudDriveDialog::CloudDriveDialog(AccessProvider access, AccountIdProvider acco
     heading->setStyleSheet(QStringLiteral("font-size:21px;font-weight:700;"));
     header->addWidget(heading);
     header->addStretch();
+    newFolderButton_ = new QPushButton(QStringLiteral("新建文件夹"), this);
+    newFolderButton_->setObjectName(QStringLiteral("cloudDriveNewFolder"));
+    connect(newFolderButton_, &QPushButton::clicked, this, &CloudDriveDialog::createFolder);
+    header->addWidget(newFolderButton_);
     uploadButton_ = new QPushButton(QStringLiteral("上传图片或视频"), this);
     uploadButton_->setObjectName(QStringLiteral("cloudDriveUpload"));
     connect(uploadButton_, &QPushButton::clicked, this, [this] {
@@ -303,9 +318,38 @@ CloudDriveDialog::CloudDriveDialog(AccessProvider access, AccountIdProvider acco
     uploadScroll_ = makeScroll(&uploadRows_, this);
     uploadScroll_->setFixedHeight(54);
     root->addWidget(uploadScroll_);
-    auto* videosTitle = new QLabel(QStringLiteral("我的图片和视频"), this);
+    auto* videosTitle = new QLabel(QStringLiteral("文件夹与文件"), this);
     videosTitle->setStyleSheet(QStringLiteral("font-weight:650;"));
     root->addWidget(videosTitle);
+    auto* navigation = new QHBoxLayout;
+    navigation->setSpacing(6);
+    rootFolderButton_ = new QPushButton(QStringLiteral("根目录"), this);
+    rootFolderButton_->setObjectName(QStringLiteral("cloudDriveRootFolder"));
+    connect(rootFolderButton_, &QPushButton::clicked, this, [this] { navigateToFolder({}); });
+    navigation->addWidget(rootFolderButton_);
+    parentFolderButton_ = new QPushButton(QStringLiteral("上一级"), this);
+    parentFolderButton_->setObjectName(QStringLiteral("cloudDriveParentFolder"));
+    connect(parentFolderButton_, &QPushButton::clicked, this, [this] {
+        for (const auto& value : folders_) {
+            const QJsonObject folder = value.toObject();
+            if (folder.value(QStringLiteral("id")).toString() == currentFolderId_) {
+                navigateToFolder(folder.value(QStringLiteral("parent_id")).toString());
+                return;
+            }
+        }
+        navigateToFolder({});
+    });
+    navigation->addWidget(parentFolderButton_);
+    folderPath_ = new QLabel(QStringLiteral("我的云盘"), this);
+    folderPath_->setObjectName(QStringLiteral("cloudDriveFolderPath"));
+    folderPath_->setWordWrap(true);
+    folderPath_->setMinimumWidth(0);
+    navigation->addWidget(folderPath_, 1);
+    refreshButton_ = new QPushButton(QStringLiteral("刷新"), this);
+    refreshButton_->setObjectName(QStringLiteral("cloudDriveRefresh"));
+    connect(refreshButton_, &QPushButton::clicked, this, [this] { refresh(); });
+    navigation->addWidget(refreshButton_);
+    root->addLayout(navigation);
     root->addWidget(makeScroll(&videoRows_, this), 1);
     moreButton_ = new QPushButton(QStringLiteral("加载更多"), this);
     moreButton_->setObjectName(QStringLiteral("cloudDriveMore"));
@@ -350,6 +394,10 @@ void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
         vodCancel_.reset();
         openedAccountId_.clear();
         nextCursor_.clear();
+        currentFolderId_.clear();
+        folders_ = {};
+        refreshNotice_.clear();
+        updateFolderNavigation();
         clearRows(videoRows_);
         clearRows(uploadRows_);
         setBusy(false);
@@ -368,6 +416,10 @@ void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
         setBusy(false);
         openedAccountId_ = currentAccount;
         nextCursor_.clear();
+        currentFolderId_.clear();
+        folders_ = {};
+        refreshNotice_.clear();
+        updateFolderNavigation();
         quota_->setText(QStringLiteral("正在读取空间…"));
         quotaBar_->setValue(0);
         clearRows(videoRows_);
@@ -421,12 +473,21 @@ void CloudDriveDialog::setStatus(const QString& message, bool error) {
 void CloudDriveDialog::setBusy(bool busy, const QString& message) {
     busy_ = busy;
     uploadButton_->setEnabled(!busy);
+    newFolderButton_->setEnabled(!busy && sameAccount());
+    refreshButton_->setEnabled(!busy && sameAccount());
+    rootFolderButton_->setEnabled(!busy && !currentFolderId_.isEmpty());
+    parentFolderButton_->setEnabled(!busy && !currentFolderId_.isEmpty());
     moreButton_->setEnabled(!busy && !nextCursor_.isEmpty());
     for (const QString& name : {QStringLiteral("cloudDriveResume"),
                                 QStringLiteral("cloudDriveDiscard"),
                                 QStringLiteral("cloudDrivePlay"),
                                 QStringLiteral("cloudDriveViewImage"),
-                                QStringLiteral("cloudDriveDelete")}) {
+                                QStringLiteral("cloudDriveDelete"),
+                                QStringLiteral("cloudDriveMoveMedia"),
+                                QStringLiteral("cloudDriveFolderOpen"),
+                                QStringLiteral("cloudDriveFolderRename"),
+                                QStringLiteral("cloudDriveFolderMove"),
+                                QStringLiteral("cloudDriveFolderDelete")}) {
         for (QPushButton* action : findChildren<QPushButton*>(name))
             action->setEnabled(!busy);
     }
@@ -504,6 +565,7 @@ void CloudDriveDialog::refresh(bool append) {
     if (!append) resetThumbnails();
     const QString account = openedAccountId_;
     const QString cursor = append ? nextCursor_ : QString();
+    const QString folderId = currentFolderId_;
     const DesktopVideoCircleAccess access = accessProvider_();
     const auto cancel = std::shared_ptr<MaiCloudDriveCancel>(
         mai_cloud_drive_cancel_create(), mai_cloud_drive_cancel_destroy);
@@ -520,6 +582,11 @@ void CloudDriveDialog::refresh(bool append) {
         setBusy(false);
         if (!sameAccount() || openedAccountId_ != account) return;
         if (!reply.ok()) { setStatus(reply.error, true); return; }
+        if (!append) {
+            folders_ = reply.body.value(QStringLiteral("folders")).toArray();
+            currentFolderId_ = reply.body.value(QStringLiteral("listed_folder_id")).toString();
+            updateFolderNavigation();
+        }
         const QJsonObject quota = reply.body.value(QStringLiteral("quota")).toObject();
         const quint64 used = quint64(quota.value(QStringLiteral("used_bytes")).toDouble());
         const quint64 reserved = quint64(quota.value(QStringLiteral("reserved_bytes")).toDouble());
@@ -536,13 +603,224 @@ void CloudDriveDialog::refresh(bool append) {
         renderVideos(reply.body.value(QStringLiteral("videos")).toArray(), append);
         moreButton_->setVisible(!nextCursor_.isEmpty());
         moreButton_->setEnabled(!nextCursor_.isEmpty());
-        setStatus(QString());
+        setStatus(refreshNotice_, !refreshNotice_.isEmpty());
+        refreshNotice_.clear();
     });
-    watcher->setFuture(QtConcurrent::run([access, cursor, cancel] {
-        return request(access, MAI_CLOUD_DRIVE_LIST_VIDEOS,
-            cursor.isEmpty() ? QJsonObject{} : QJsonObject{{QStringLiteral("before"), cursor}},
-            cancel.get());
+    watcher->setFuture(QtConcurrent::run([access, cursor, folderId, append, cancel] {
+        QJsonArray folders;
+        QString listedFolder = folderId;
+        if (!append) {
+            const Reply tree = request(access, MAI_CLOUD_DRIVE_LIST_FOLDERS, {}, cancel.get());
+            if (!tree.ok()) return tree;
+            folders = tree.body.value(QStringLiteral("folders")).toArray();
+            bool exists = listedFolder.isEmpty();
+            for (const auto& value : folders)
+                exists |= value.toObject().value(QStringLiteral("id")).toString() == listedFolder;
+            if (!exists) listedFolder.clear();
+        }
+        QJsonObject payload{{QStringLiteral("folder_id"), listedFolder}};
+        if (!cursor.isEmpty()) payload.insert(QStringLiteral("before"), cursor);
+        Reply reply = request(access, MAI_CLOUD_DRIVE_LIST_VIDEOS, payload, cancel.get());
+        reply.body.insert(QStringLiteral("folders"), folders);
+        reply.body.insert(QStringLiteral("listed_folder_id"), listedFolder);
+        return reply;
     }));
+}
+
+QString CloudDriveDialog::folderPath(const QString& folderId) const {
+    QStringList names;
+    QString current = folderId;
+    QSet<QString> visited;
+    while (!current.isEmpty() && !visited.contains(current)) {
+        visited.insert(current);
+        QJsonObject match;
+        for (const auto& value : folders_) {
+            const QJsonObject folder = value.toObject();
+            if (folder.value(QStringLiteral("id")).toString() == current) {
+                match = folder;
+                break;
+            }
+        }
+        if (match.isEmpty()) break;
+        names.prepend(match.value(QStringLiteral("name")).toString());
+        current = match.value(QStringLiteral("parent_id")).toString();
+    }
+    names.prepend(QStringLiteral("我的云盘"));
+    return names.join(QStringLiteral(" / "));
+}
+
+void CloudDriveDialog::updateFolderNavigation() {
+    folderPath_->setText(folderPath(currentFolderId_));
+    folderPath_->setToolTip(folderPath_->text());
+    rootFolderButton_->setEnabled(!busy_ && !currentFolderId_.isEmpty());
+    parentFolderButton_->setEnabled(!busy_ && !currentFolderId_.isEmpty());
+}
+
+void CloudDriveDialog::navigateToFolder(const QString& folderId) {
+    if (busy_ || !sameAccount()) return;
+    currentFolderId_ = folderId;
+    refreshNotice_.clear();
+    nextCursor_.clear();
+    clearRows(videoRows_);
+    updateFolderNavigation();
+    refresh();
+}
+
+void CloudDriveDialog::createFolder() {
+    if (busy_ || !sameAccount()) return;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("新建文件夹");
+    options.description = QStringLiteral("创建位置：%1").arg(folderPath(currentFolderId_));
+    options.placeholder = QStringLiteral("文件夹名称");
+    options.confirmText = QStringLiteral("创建");
+    bool accepted = false;
+    const QString name = AppTextInputDialog::getText(this, options, &accepted).trimmed();
+    if (!accepted) return;
+    if (name.isEmpty()) { setStatus(QStringLiteral("请输入文件夹名称。"), true); return; }
+    mutateFolder(MAI_CLOUD_DRIVE_CREATE_FOLDER,
+        {{QStringLiteral("name"), name}, {QStringLiteral("parent_id"), currentFolderId_}});
+}
+
+void CloudDriveDialog::renameFolder(const QString& folderId, const QString& name) {
+    if (busy_ || !sameAccount()) return;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("重命名文件夹");
+    options.initialText = name;
+    options.placeholder = QStringLiteral("文件夹名称");
+    bool accepted = false;
+    const QString renamed = AppTextInputDialog::getText(this, options, &accepted).trimmed();
+    if (!accepted || renamed == name) return;
+    if (renamed.isEmpty()) { setStatus(QStringLiteral("请输入文件夹名称。"), true); return; }
+    mutateFolder(MAI_CLOUD_DRIVE_UPDATE_FOLDER,
+        {{QStringLiteral("folder_id"), folderId}, {QStringLiteral("name"), renamed}});
+}
+
+void CloudDriveDialog::deleteFolder(const QString& folderId, const QString& name) {
+    if (busy_ || !sameAccount()) return;
+    if (!AppMessageDialog::confirm(this, QStringLiteral("删除文件夹"),
+        QStringLiteral("删除“%1”？只能删除空文件夹，其中的文件不会被删除。")
+            .arg(name), QStringLiteral("删除"), true)) return;
+    mutateFolder(MAI_CLOUD_DRIVE_DELETE_FOLDER, {{QStringLiteral("folder_id"), folderId}});
+}
+
+void CloudDriveDialog::moveItem(const QString& itemId, const QString& name, bool folder) {
+    if (busy_ || !sameAccount()) return;
+    QDialog selection(this);
+    selection.setObjectName(QStringLiteral("cloudDriveMoveDialog"));
+    selection.setWindowTitle(QStringLiteral("移动到文件夹"));
+    selection.resize(470, 430);
+    auto* layout = new QVBoxLayout(&selection);
+    auto* prompt = new QLabel(QStringLiteral("将“%1”移动到：").arg(name), &selection);
+    prompt->setWordWrap(true);
+    layout->addWidget(prompt);
+    auto* tree = new QTreeWidget(&selection);
+    tree->setObjectName(QStringLiteral("cloudDriveMoveTree"));
+    tree->setHeaderHidden(true);
+    auto* root = new QTreeWidgetItem(tree, {QStringLiteral("我的云盘")});
+    root->setData(0, Qt::UserRole, QString());
+    root->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+    QHash<QString, QTreeWidgetItem*> items;
+    items.insert(QString(), root);
+    QJsonArray remaining = folders_;
+    while (!remaining.isEmpty()) {
+        QJsonArray next;
+        bool added = false;
+        for (const auto& value : remaining) {
+            const QJsonObject entry = value.toObject();
+            const QString id = entry.value(QStringLiteral("id")).toString();
+            const QString parentId = entry.value(QStringLiteral("parent_id")).toString();
+            if (folder && id == itemId) continue;
+            if (!items.contains(parentId)) { next.append(value); continue; }
+            auto* item = new QTreeWidgetItem(items.value(parentId),
+                {entry.value(QStringLiteral("name")).toString()});
+            item->setData(0, Qt::UserRole, id);
+            item->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+            items.insert(id, item);
+            added = true;
+        }
+        if (!added) break; // Excludes descendants of the folder being moved.
+        remaining = next;
+    }
+    tree->expandAll();
+    tree->setCurrentItem(items.value(currentFolderId_, root));
+    layout->addWidget(tree, 1);
+    auto* buttons = new QDialogButtonBox(&selection);
+    auto* cancel = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    cancel->setObjectName(QStringLiteral("cloudDriveMoveCancel"));
+    auto* move = buttons->addButton(QStringLiteral("移动"), QDialogButtonBox::AcceptRole);
+    move->setObjectName(QStringLiteral("cloudDriveMoveConfirm"));
+    connect(buttons, &QDialogButtonBox::accepted, &selection, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &selection, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (selection.exec() != QDialog::Accepted || !tree->currentItem()) return;
+    const QString destination = tree->currentItem()->data(0, Qt::UserRole).toString();
+    if (destination == currentFolderId_) return;
+    mutateFolder(folder ? MAI_CLOUD_DRIVE_UPDATE_FOLDER : MAI_CLOUD_DRIVE_MOVE_MEDIA,
+        {{folder ? QStringLiteral("folder_id") : QStringLiteral("media_id"), itemId},
+         {folder ? QStringLiteral("parent_id") : QStringLiteral("folder_id"), destination}});
+}
+
+void CloudDriveDialog::mutateFolder(int action, const QJsonObject& payload) {
+    if (busy_ || !sameAccount()) return;
+    const DesktopVideoCircleAccess access = accessProvider_();
+    const auto cancel = std::shared_ptr<MaiCloudDriveCancel>(
+        mai_cloud_drive_cancel_create(), mai_cloud_drive_cancel_destroy);
+    requestCancel_ = cancel;
+    const unsigned generation = ++generation_;
+    setBusy(true, QStringLiteral("正在更新云盘…"));
+    auto* watcher = new QFutureWatcher<Reply>(this);
+    connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation] {
+        const Reply reply = watcher->result();
+        watcher->deleteLater();
+        if (generation != generation_) return;
+        requestCancel_.reset();
+        setBusy(false);
+        if (!sameAccount()) return;
+        if (!reply.ok()) { setStatus(reply.error, true); return; }
+        refresh();
+    });
+    watcher->setFuture(QtConcurrent::run([access, action, payload, cancel] {
+        return request(access, action, payload, cancel.get());
+    }));
+}
+
+void CloudDriveDialog::renderFolders() {
+    for (const auto& value : folders_) {
+        const QJsonObject folder = value.toObject();
+        if (folder.value(QStringLiteral("parent_id")).toString() != currentFolderId_) continue;
+        const QString id = folder.value(QStringLiteral("id")).toString();
+        const QString name = folder.value(QStringLiteral("name")).toString();
+        auto* row = new QFrame(this);
+        row->setObjectName(QStringLiteral("cloudDriveFolderRow"));
+        row->setProperty("folderId", id);
+        row->setMinimumHeight(64);
+        row->setMaximumHeight(72);
+        row->setStyleSheet(QStringLiteral("QFrame{background:#f7fbfe;border:1px solid #e6ebf1;"
+            "border-radius:9px;}QPushButton{border:0;}"));
+        auto* layout = new QHBoxLayout(row);
+        auto* open = new QPushButton(name, row);
+        open->setObjectName(QStringLiteral("cloudDriveFolderOpen"));
+        open->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
+        open->setToolTip(name);
+        open->setMinimumWidth(0);
+        open->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        open->setStyleSheet(QStringLiteral("text-align:left;font-weight:600;background:transparent;"));
+        connect(open, &QPushButton::clicked, this, [this, id] { navigateToFolder(id); });
+        layout->addWidget(open, 1);
+        auto* rename = new QPushButton(QStringLiteral("改名"), row);
+        rename->setObjectName(QStringLiteral("cloudDriveFolderRename"));
+        connect(rename, &QPushButton::clicked, this, [this, id, name] { renameFolder(id, name); });
+        layout->addWidget(rename);
+        auto* move = new QPushButton(QStringLiteral("移动"), row);
+        move->setObjectName(QStringLiteral("cloudDriveFolderMove"));
+        connect(move, &QPushButton::clicked, this, [this, id, name] { moveItem(id, name, true); });
+        layout->addWidget(move);
+        auto* remove = new QPushButton(QStringLiteral("删除"), row);
+        remove->setObjectName(QStringLiteral("cloudDriveFolderDelete"));
+        connect(remove, &QPushButton::clicked, this, [this, id, name] { deleteFolder(id, name); });
+        layout->addWidget(remove);
+        videoRows_->addWidget(row);
+    }
 }
 
 void CloudDriveDialog::resetThumbnails() {
@@ -605,8 +883,11 @@ void CloudDriveDialog::loadThumbnail(const QString& mediaId, QLabel* target) {
 }
 
 void CloudDriveDialog::renderVideos(const QJsonArray& videos, bool append) {
-    if (!append) clearRows(videoRows_);
-    if (videos.isEmpty() && !append) {
+    if (!append) {
+        clearRows(videoRows_);
+        renderFolders();
+    }
+    if (videos.isEmpty() && !append && videoRows_->count() == 0) {
         auto* empty = new QFrame(this);
         empty->setObjectName(QStringLiteral("cloudDriveEmptyState"));
         empty->setMinimumHeight(220);
@@ -624,7 +905,8 @@ void CloudDriveDialog::renderVideos(const QJsonArray& videos, bool append) {
         icon->setStyleSheet(QStringLiteral(
             "background:#e6f4fc;color:#1686c8;border-radius:18px;font-size:24px;"));
         layout->addWidget(icon, 0, Qt::AlignHCenter);
-        auto* title = new QLabel(QStringLiteral("云盘里还没有图片或视频"), empty);
+        auto* title = new QLabel(currentFolderId_.isEmpty() ?
+            QStringLiteral("云盘里还没有图片或视频") : QStringLiteral("此文件夹为空"), empty);
         title->setAlignment(Qt::AlignCenter);
         title->setStyleSheet(QStringLiteral("color:#172033;font-size:17px;font-weight:650;"));
         layout->addWidget(title);
@@ -659,6 +941,8 @@ void CloudDriveDialog::renderVideos(const QJsonArray& videos, bool append) {
         auto* labels = new QVBoxLayout;
         auto* title = new QLabel(name, row);
         title->setToolTip(name);
+        title->setMinimumWidth(0);
+        title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         title->setStyleSheet(QStringLiteral("font-weight:600;"));
         labels->addWidget(title);
         auto* size = new QLabel((image ? QStringLiteral("图片 · ") :
@@ -682,6 +966,11 @@ void CloudDriveDialog::renderVideos(const QJsonArray& videos, bool append) {
                     [this, id, name] { saveVideo(id, name); });
             layout->addWidget(save);
         }
+        auto* move = new QPushButton(QStringLiteral("移动"), row);
+        move->setObjectName(QStringLiteral("cloudDriveMoveMedia"));
+        connect(move, &QPushButton::clicked, this,
+                [this, id, name] { moveItem(id, name, false); });
+        layout->addWidget(move);
         auto* remove = new QPushButton(QStringLiteral("删除"), row);
         remove->setObjectName(QStringLiteral("cloudDriveDelete"));
         connect(remove, &QPushButton::clicked, this,
@@ -723,6 +1012,7 @@ void CloudDriveDialog::startUpload(const QString& sourcePath,
         return;
     }
     const DesktopVideoCircleAccess access = accessProvider_();
+    const QString uploadFolderId = currentFolderId_;
     const auto cancel = std::shared_ptr<MaiCloudDriveCancel>(
         mai_cloud_drive_cancel_create(), mai_cloud_drive_cancel_destroy);
     const auto progressState = std::make_shared<ProgressState>();
@@ -758,10 +1048,17 @@ void CloudDriveDialog::startUpload(const QString& sourcePath,
         if (!sameAccount()) return;
         refreshCheckpoints();
         setStatus(reply.ok() ? QStringLiteral("文件已保存到云盘。") : reply.error, !reply.ok());
-        if (reply.ok()) refresh();
+        if (reply.ok()) {
+            if (reply.uploadedInRoot) {
+                currentFolderId_.clear();
+                refreshNotice_ = reply.notice;
+            }
+            refresh();
+        }
     });
     const QByteArray contentType(media.content_type_utf8);
     watcher->setFuture(QtConcurrent::run([access, sourcePath, checkpoint, name, contentType,
+                                         uploadFolderId,
                                          cancel, progressState] {
         Reply reply;
         const QByteArray base = access.authBaseUrl.toUtf8();
@@ -790,6 +1087,17 @@ void CloudDriveDialog::startUpload(const QString& sourcePath,
                 int(result.response_bytes))).object();
         if (!reply.ok()) reply.error = errorText(reply.status, reply.http);
         mai_cloud_drive_result_free(&result);
+        if (reply.ok() && !uploadFolderId.isEmpty()) {
+            const QString mediaId = reply.body.value(QStringLiteral("video_id")).toString();
+            const Reply moved = request(access, MAI_CLOUD_DRIVE_MOVE_MEDIA,
+                {{QStringLiteral("media_id"), mediaId},
+                 {QStringLiteral("folder_id"), uploadFolderId}}, cancel.get());
+            if (!moved.ok()) {
+                reply.uploadedInRoot = true;
+                reply.notice = QStringLiteral("文件已上传到根目录，但未能移入原文件夹。%1")
+                    .arg(moved.error);
+            }
+        }
         return reply;
     }));
 }

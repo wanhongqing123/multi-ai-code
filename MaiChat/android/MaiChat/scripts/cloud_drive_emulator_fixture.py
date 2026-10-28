@@ -142,6 +142,8 @@ class Control(http.server.BaseHTTPRequestHandler):
             fixture.name = ""
             fixture.content_type = ""
             fixture.size = 0
+            fixture.folders.clear()
+            fixture.folder_id = None
         self.send_response(204)
         self.send_header("Content-Length", "0")
         self.end_headers()

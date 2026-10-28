@@ -115,6 +115,12 @@ public final class MaiCloudDriveAgentTools {
         switch (tool) {
         case "maichat_cloud_drive_list_media":
             return list(activity, client, account, arguments);
+        case "maichat_cloud_drive_list_folders":
+        case "maichat_cloud_drive_create_folder":
+        case "maichat_cloud_drive_update_folder":
+        case "maichat_cloud_drive_delete_folder":
+        case "maichat_cloud_drive_move_media":
+            return folders(activity, client, account, tool, arguments);
         case "maichat_cloud_drive_list_pending_uploads":
             return pending(activity, client, account);
         case "maichat_cloud_drive_upload_media":
@@ -182,6 +188,10 @@ public final class MaiCloudDriveAgentTools {
             return new Failure("not_found", "cloud media or upload was not found");
         if (result.httpStatus == 413)
             return new Failure("invalid_input", "media exceeds its per-file limit or account quota is full");
+        if (result.httpStatus == 400 || result.status == 1)
+            return new Failure("invalid_input", "cloud drive arguments are invalid");
+        if (result.httpStatus == 409)
+            return new Failure("conflict", "folder is not empty, its name is already used, or its parent would create a cycle");
         if (result.status == MaiCloudDrive.CANCELED)
             return new Failure("canceled", "cloud drive operation was canceled");
         return new Failure("network", "cloud drive operation failed");
@@ -201,19 +211,92 @@ public final class MaiCloudDriveAgentTools {
             if (item == null || item.optString("id", "").isEmpty())
                 throw new Failure("protocol", "cloud media list contains an invalid ID");
             try {
-                item.put("media_id", item.optString("id"));
-                item.remove("id");
-                if (!item.has("media_type")) item.put("media_type",
-                    item.optString("content_type", "").startsWith("image/") ? "image" : "video");
-                media.put(item);
+                JSONObject visible = new JSONObject()
+                    .put("media_id", item.getString("id"))
+                    .put("name", item.optString("name", ""))
+                    .put("size_bytes", item.optLong("size_bytes"))
+                    .put("content_type", item.optString("content_type", ""))
+                    .put("media_type", item.optString("media_type",
+                        item.optString("content_type", "").startsWith("image/") ? "image" : "video"))
+                    .put("created_at", item.opt("created_at"))
+                    .put("folder_id", item.isNull("folder_id") ? JSONObject.NULL : item.getString("folder_id"));
+                media.put(visible);
             } catch (Exception invalid) {
                 throw new Failure("protocol", "cloud media list is invalid");
             }
         }
-        body.remove("videos");
-        try { body.put("media", media); }
+        try {
+            JSONObject quota = body.optJSONObject("quota");
+            return new JSONObject().put("media", media)
+                .put("next_cursor", body.isNull("next_cursor") ? JSONObject.NULL : body.getString("next_cursor"))
+                .put("quota", new JSONObject()
+                    .put("used_bytes", quota == null ? 0 : quota.optLong("used_bytes"))
+                    .put("reserved_bytes", quota == null ? 0 : quota.optLong("reserved_bytes"))
+                    .put("limit_bytes", quota == null ? 0 : quota.optLong("limit_bytes")));
+        }
         catch (Exception impossible) { throw new Failure("internal", "could not encode cloud media list"); }
-        return body;
+    }
+
+    private static JSONObject folderJSON(JSONObject folder) throws Exception {
+        if (folder == null || folder.optString("id", "").isEmpty())
+            throw new Failure("protocol", "cloud folder contains an invalid ID");
+        return new JSONObject().put("id", folder.getString("id"))
+            .put("name", folder.getString("name"))
+            .put("parent_id", folder.isNull("parent_id") ? JSONObject.NULL : folder.getString("parent_id"))
+            .put("created_at", folder.getLong("created_at"))
+            .put("updated_at", folder.getLong("updated_at"));
+    }
+
+    private static JSONObject folders(MainActivity activity, MaiCloudDrive client,
+                                       String account, String tool, JSONObject arguments)
+        throws Exception {
+        for (String key : new String[]{"folder_id", "parent_id", "name", "media_id"})
+            if (arguments.has(key) && !(arguments.opt(key) instanceof String))
+                throw new Failure("invalid_input", key + " must be a string");
+        StartRequest operation;
+        switch (tool) {
+        case "maichat_cloud_drive_list_folders": operation = client::listFolders; break;
+        case "maichat_cloud_drive_create_folder":
+            operation = callback -> client.createFolder(arguments.optString("name", ""),
+                arguments.has("parent_id") ? arguments.optString("parent_id", "") : null, callback);
+            break;
+        case "maichat_cloud_drive_update_folder":
+            operation = callback -> client.updateFolder(arguments.optString("folder_id", ""),
+                arguments.has("name") ? arguments.optString("name", "") : null,
+                arguments.has("parent_id") ? arguments.optString("parent_id", "") : null, callback);
+            break;
+        case "maichat_cloud_drive_delete_folder":
+            operation = callback -> client.deleteFolder(arguments.optString("folder_id", ""), callback);
+            break;
+        case "maichat_cloud_drive_move_media":
+            if (!(arguments.opt("folder_id") instanceof String))
+                throw new Failure("invalid_input", "folder_id must be a string");
+            operation = callback -> client.moveMedia(arguments.optString("media_id", ""),
+                arguments.optString("folder_id", ""), callback);
+            break;
+        default: throw new Failure("invalid_input", "unknown cloud folder operation");
+        }
+        MaiCloudDrive.Result result = awaitClient(activity, client, account, operation);
+        if (!result.ok()) throw error(result, false);
+        JSONObject body = result.json();
+        switch (tool) {
+        case "maichat_cloud_drive_list_folders":
+            JSONArray visible = new JSONArray();
+            JSONArray folders = body.getJSONArray("folders");
+            for (int i = 0; i < folders.length(); ++i)
+                visible.put(folderJSON(folders.getJSONObject(i)));
+            return new JSONObject().put("folders", visible);
+        case "maichat_cloud_drive_create_folder":
+        case "maichat_cloud_drive_update_folder": return folderJSON(body);
+        case "maichat_cloud_drive_delete_folder":
+            return new JSONObject().put("deleted", true)
+                .put("folder_id", arguments.getString("folder_id"));
+        default:
+            String folder = arguments.getString("folder_id");
+            return new JSONObject().put("moved", true)
+                .put("media_id", arguments.getString("media_id"))
+                .put("folder_id", folder.isEmpty() ? JSONObject.NULL : folder);
+        }
     }
 
     private static MaiCloudDrive.Result awaitClient(MainActivity activity,

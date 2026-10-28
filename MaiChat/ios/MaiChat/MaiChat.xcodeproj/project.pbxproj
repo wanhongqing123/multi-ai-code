@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		751C9C7EC4D79C407AB8992A /* MaiCloudDriveImagePager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */; };
 		0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */; };
 		F2D771B8A5334D159C238C01 /* AIMobileBrowserTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2D771B8A5334D159C238C02 /* AIMobileBrowserTools.swift */; };
 		80A93D25352CFB7F9675EB89 /* AIMobileScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7090E768648CE5F2D55AD135 /* AIMobileScreenCapture.swift */; };
@@ -148,6 +149,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiCloudDriveImagePager.swift; sourceTree = "<group>"; };
 		0075BCCB2188B8EB8E6F11FA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		0194E7C7F438293A088E45E0 /* MarkdownPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentationTests.swift; sourceTree = "<group>"; };
 		0EFBEB437244CED3D8DC9B4D /* MaiCloudDriveProductionCanaryCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiCloudDriveProductionCanaryCredential.swift; sourceTree = "<group>"; };
@@ -443,6 +445,7 @@
 				41EEBD50557FEDE54CCA64F9 /* MaiCloudDriveModel.swift */,
 				0EFBEB437244CED3D8DC9B4D /* MaiCloudDriveProductionCanaryCredential.swift */,
 				A47856A6735559D9160BB50C /* MaiCloudDriveView.swift */,
+				751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */,
 			);
 			path = CloudDrive;
 			sourceTree = "<group>";
@@ -875,6 +878,7 @@
 				9032311C79468BE8D517F4ED /* MaiCloudDriveModel.swift in Sources */,
 				BBD727996B6D9BF10BBB15FC /* MaiCloudDriveProductionCanaryCredential.swift in Sources */,
 				0F2174634726BE7BB940C868 /* MaiCloudDriveView.swift in Sources */,
+				751C9C7EC4D79C407AB8992A /* MaiCloudDriveImagePager.swift in Sources */,
 				6247CB164955518ADFF0D16A /* MaiFfplayIosBridge.cpp in Sources */,
 				C0AE3CB8A0041B5827EB9C52 /* MaiFfplayVideoView.swift in Sources */,
 				6526F8020603CE866D68BC78 /* MaiVideoCircleClient.swift in Sources */,

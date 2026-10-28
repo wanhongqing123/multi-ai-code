@@ -49,6 +49,15 @@ private:
     void refresh(bool append = false);
     void refreshCheckpoints();
     void renderVideos(const QJsonArray& videos, bool append);
+    void renderFolders();
+    void updateFolderNavigation();
+    void navigateToFolder(const QString& folderId);
+    QString folderPath(const QString& folderId) const;
+    void createFolder();
+    void renameFolder(const QString& folderId, const QString& name);
+    void deleteFolder(const QString& folderId, const QString& name);
+    void moveItem(const QString& itemId, const QString& name, bool folder);
+    void mutateFolder(int action, const QJsonObject& payload);
     void renderCheckpoints(const QJsonArray& uploads);
     void loadThumbnail(const QString& mediaId, QLabel* target);
     void resetThumbnails();
@@ -72,6 +81,9 @@ private:
     RelocateSelector relocate_;
     QString openedAccountId_;
     QString nextCursor_;
+    QString currentFolderId_;
+    QJsonArray folders_;
+    QString refreshNotice_;
     unsigned generation_ = 0;
     unsigned thumbnailGeneration_ = 0;
     bool busy_ = false;
@@ -82,6 +94,11 @@ private:
     QLabel* status_ = nullptr;
     QProgressBar* progress_ = nullptr;
     QPushButton* uploadButton_ = nullptr;
+    QPushButton* newFolderButton_ = nullptr;
+    QPushButton* parentFolderButton_ = nullptr;
+    QPushButton* rootFolderButton_ = nullptr;
+    QPushButton* refreshButton_ = nullptr;
+    QLabel* folderPath_ = nullptr;
     QPushButton* pauseButton_ = nullptr;
     QPushButton* moreButton_ = nullptr;
     QVBoxLayout* uploadRows_ = nullptr;

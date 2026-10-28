@@ -70,6 +70,9 @@ test('cloud drive canary permits the logged-in account and hides all routes from
       }
       const owner = await login('cloud_owner');
       const viewer = await login('cloud_viewer');
+      assert.equal((await call('/v1/cloud-drive/folders',viewer)).status,404);
+      assert.equal((await call('/v1/cloud-drive/folders',viewer,'POST',
+        { name:'Hidden' })).status,404);
       assert.equal((await call('/v1/cloud-drive/videos',viewer)).status,404);
       assert.equal((await call('/v1/cloud-drive/videos/uploads',viewer,'POST',
         { name:'private.mp4',size_bytes:1000,content_type:'video/mp4' })).status,404);
@@ -196,6 +199,42 @@ test('authenticated two-account private media upload uses OSS multipart control'
     assert.equal(videos.videos[0].id,id);
     assert.deepEqual(videos.quota,{ used_bytes:1000,reserved_bytes:0,
       limit_bytes:10_000_000_000 });
+    const folderRequest = (route,method = 'GET',body,token = owner) =>
+      fetch(`${base}${route}`,{ method,headers:{ Authorization:`Bearer ${token}`,
+        ...(body ? { 'Content-Type':'application/json' } : {}) },
+        ...(body ? { body:JSON.stringify(body) } : {}) });
+    assert.equal((await fetch(`${base}/v1/cloud-drive/folders`)).status,401);
+    const folderCreated = await folderRequest('/v1/cloud-drive/folders','POST',
+      { name:'旅行' });
+    assert.equal(folderCreated.status,201);
+    const folder = await folderCreated.json();
+    assert.equal(folder.name,'旅行');
+    assert.equal(folder.parent_id,null);
+    const rename = await folderRequest(`/v1/cloud-drive/folders/${folder.id}`,
+      'PATCH',{ name:'Holiday' });
+    assert.equal(rename.status,200);
+    assert.equal((await rename.json()).name,'Holiday');
+    const moved = await folderRequest(`/v1/cloud-drive/videos/${id}`,
+      'PATCH',{ folder_id:folder.id });
+    assert.equal(moved.status,200);
+    assert.equal((await moved.json()).folder_id,folder.id);
+    const filtered = await folderRequest(`/v1/cloud-drive/videos?folder_id=${folder.id}`);
+    assert.equal((await filtered.json()).videos[0].id,id);
+    const rootOnly = await folderRequest('/v1/cloud-drive/videos?folder_id=');
+    assert.deepEqual((await rootOnly.json()).videos,[]);
+    assert.deepEqual((await (await folderRequest('/v1/cloud-drive/folders','GET',
+      undefined,viewer)).json()).folders,[]);
+    assert.equal((await folderRequest(`/v1/cloud-drive/folders/${folder.id}`,
+      'DELETE',undefined,viewer)).status,404);
+    assert.equal((await folderRequest(`/v1/cloud-drive/folders/${folder.id}`,
+      'DELETE')).status,409);
+    assert.equal((await folderRequest(`/v1/cloud-drive/videos/${id}`,
+      'PATCH',{ folder_id:'' })).status,200);
+    const folderDeleted = await folderRequest(`/v1/cloud-drive/folders/${folder.id}`,
+      'DELETE');
+    assert.equal(folderDeleted.status,200);
+    assert.deepEqual(await folderDeleted.json(),{ folder_id:folder.id,status:'deleted' });
+    assert.equal(objects.get(key).size,1000);
     assert.equal((await fetch(`${base}/v1/cloud-drive/videos/${id}/play-link`,{
       headers:{ Authorization:`Bearer ${viewer}` } })).status,404);
     const played = await fetch(`${base}/v1/cloud-drive/videos/${id}/play-link`,{

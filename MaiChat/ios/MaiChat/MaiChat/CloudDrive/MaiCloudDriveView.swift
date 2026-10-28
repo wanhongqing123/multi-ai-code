@@ -110,6 +110,11 @@ private struct MaiCloudDrivePreview: Identifiable {
     let url: URL
     let isImage: Bool
     let vod: MaiCloudVodSession?
+    var images: [MaiCloudDriveVideo] = []
+    var initialIndex: Int = 0
+    var accountID: String = ""
+    var nextCursor: String?
+    var visitedCursors = Set<String>()
     var id: String { url.path }
 }
 
@@ -195,6 +200,121 @@ private struct MaiCloudThumbnail: View {
     }
 }
 
+// ScrollView does not host native swipeActions. Keep the existing card alive
+// while revealing its leading action, and let vertical drags scroll normally.
+private struct MaiCloudDriveHorizontalPan: UIViewRepresentable {
+    let enabled: Bool
+    let changed: (CGFloat) -> Void
+    let ended: () -> Void
+
+    func makeUIView(context: Context) -> PanView { PanView() }
+    func updateUIView(_ view: PanView, context: Context) {
+        view.pan.isEnabled = enabled
+        view.changed = changed
+        view.ended = ended
+    }
+
+    static func dismantleUIView(_ view: PanView, coordinator: ()) {
+        view.pan.view?.removeGestureRecognizer(view.pan)
+    }
+
+    final class PanView: UIView, UIGestureRecognizerDelegate {
+        var changed: (CGFloat) -> Void = { _ in }
+        var ended: () -> Void = {}
+        lazy var pan: UIPanGestureRecognizer = {
+            let value = UIPanGestureRecognizer(target: self, action: #selector(dragged))
+            value.delegate = self
+            value.maximumNumberOfTouches = 1
+            return value
+        }()
+
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            pan.view?.removeGestureRecognizer(pan)
+            window?.addGestureRecognizer(pan)
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldReceive touch: UITouch) -> Bool {
+            guard bounds.contains(touch.location(in: self)), window != nil else { return false }
+            var ancestor: UIView? = self
+            while let current = ancestor {
+                if current.isHidden || current.alpha < 0.01 { return false }
+                if current.clipsToBounds && !current.bounds.contains(touch.location(in: current)) {
+                    return false
+                }
+                ancestor = current.superview
+            }
+            return true
+        }
+
+        override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            let velocity = pan.velocity(in: self)
+            return abs(velocity.x) > abs(velocity.y) * 1.2
+        }
+
+        @objc private func dragged() {
+            switch pan.state {
+            case .began, .changed: changed(pan.translation(in: self).x)
+            case .ended, .cancelled, .failed: ended()
+            default: break
+            }
+        }
+    }
+}
+
+private struct MaiCloudDriveSwipeRow<Content: View>: View {
+    let id: String
+    let enabled: Bool
+    @Binding var revealedID: String?
+    let delete: () -> Void
+    @ViewBuilder let content: () -> Content
+    @State private var dragOffset: CGFloat?
+    @State private var visible = true
+    private let actionWidth: CGFloat = 84
+
+    private var offset: CGFloat { dragOffset ?? (revealedID == id ? actionWidth : 0) }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if offset > 0 {
+                Button(role: .destructive, action: delete) {
+                    Label("删除", systemImage: "trash")
+                        .labelStyle(.titleAndIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: actionWidth - 8)
+                        .frame(maxHeight: .infinity)
+                        .background(.red, in: RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("cloud-drive-delete-\(id)")
+            }
+            content()
+                .offset(x: offset)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(Rectangle())
+        .background(MaiCloudDriveHorizontalPan(enabled: enabled && visible,
+            changed: { translation in
+                let start = revealedID == id ? actionWidth : 0
+                dragOffset = min(max(start + translation, 0), actionWidth)
+            }, ended: {
+                let shouldReveal = offset > actionWidth / 2
+                withAnimation(.easeOut(duration: 0.2)) {
+                    revealedID = shouldReveal ? id : nil
+                    dragOffset = nil
+                }
+            }))
+        .onAppear { visible = true }
+        .onDisappear { visible = false }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "删除") { delete() }
+        .accessibilityIdentifier("cloud-drive-row-\(id)")
+    }
+}
+
 struct MaiCloudDriveView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @ObservedObject private var model = MaiCloudDriveModel.shared
@@ -204,10 +324,13 @@ struct MaiCloudDriveView: View {
     @State private var photoSelectionAccountID = ""
     @State private var photoItem: PhotosPickerItem?
     @State private var deletingID: String?
+    @State private var revealedMediaID: String?
     @State private var discardingTaskID: String?
     @State private var preview: MaiCloudDrivePreview?
     @State private var openingID: String?
     @State private var playbackTask: Task<Void, Never>?
+    @State private var previewPageTask: Task<Void, Never>?
+    @State private var previewPageRequestID: UUID?
     @State private var savingID: String?
     @State private var saveTask: Task<Void, Never>?
     @State private var loadedThumbnailIDs = Set<String>()
@@ -263,7 +386,15 @@ struct MaiCloudDriveView: View {
                         .frame(maxWidth: .infinity, minHeight: 180)
                         .accessibilityIdentifier("cloud-drive-empty")
                     }
-                    ForEach(model.videos) { media in mediaCard(media) }
+                    ForEach(model.videos) { media in
+                        MaiCloudDriveSwipeRow(id: media.id,
+                            enabled: preview == nil && deletingID == nil &&
+                                discardingTaskID == nil && !importing && !showingPhotoPicker,
+                            revealedID: $revealedMediaID,
+                            delete: { deletingID = media.id }) {
+                            mediaCard(media)
+                        }
+                    }
                     if model.nextCursor != nil {
                         Button(model.loadingMore ? "加载中…" : "加载更多") {
                             Task { await model.loadMore() }
@@ -423,28 +554,33 @@ struct MaiCloudDriveView: View {
             closePreview()
             MaiCloudThumbnailCache.shared.clear()
             loadedThumbnailIDs.removeAll()
+            revealedMediaID = nil
         }
         .onDisappear {
             playbackTask?.cancel()
+            if preview == nil { previewPageTask?.cancel() }
             saveTask?.cancel()
         }
         .fullScreenCover(item: $preview) { item in
             if item.isImage {
-                ZStack(alignment: .topTrailing) {
-                    Color(uiColor: .systemBackground).ignoresSafeArea()
-                    RemoteIMQuickLookPreview(filePath: item.url.path)
-                        .ignoresSafeArea(edges: .bottom)
-                    Button { closePreview() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(.black.opacity(0.65), in: Circle())
-                    }
-                    .padding(20)
-                    .accessibilityLabel("关闭图片")
-                    .accessibilityIdentifier("cloud-drive-image-close")
-                }
+                MaiCloudDriveImagePager(images: item.images,
+                    initialIndex: item.initialIndex, loadImage: { media in
+                        let file: URL
+                        if media.id == item.images[item.initialIndex].id,
+                           FileManager.default.fileExists(atPath: item.url.path) {
+                            file = item.url
+                        } else {
+                            file = try await MaiCloudDriveClient.shared.downloadForPreview(media)
+                        }
+                        guard !Task.isCancelled,
+                              item.accountID == appState.maiChatAccountID else {
+                            try? FileManager.default.removeItem(at: file)
+                            throw CancellationError()
+                        }
+                        return file
+                    }, close: { closePreview() }, hasMore: item.nextCursor != nil,
+                    loadMore: { loadMorePreviewImages(item.id) })
+                    .ignoresSafeArea()
             } else {
                 MaiFfplayVideoScreen(path: item.url.path, vod: item.vod) {
                     closePreview()
@@ -459,6 +595,7 @@ struct MaiCloudDriveView: View {
             if let id = deletingID {
                 Button("删除文件", role: .destructive) {
                     deletingID = nil
+                    revealedMediaID = nil
                     Task { await model.delete(videoID: id) }
                 }
             }
@@ -576,49 +713,52 @@ struct MaiCloudDriveView: View {
     private func mediaCard(_ media: MaiCloudDriveVideo) -> some View {
         HStack(spacing: 12) {
             Button { open(media) } label: {
-                ZStack {
-                    MaiCloudThumbnail(accountID: appState.maiChatAccountID,
-                                      media: media,
-                                      loaded: Binding(
-                                        get: { loadedThumbnailIDs.contains(media.id) },
-                                        set: { ready in
-                                            if ready { loadedThumbnailIDs.insert(media.id) }
-                                            else { loadedThumbnailIDs.remove(media.id) }
-                                        }))
-                    if openingID == media.id || savingID == media.id {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(.black.opacity(0.45))
-                        ProgressView().tint(.white)
+                HStack(spacing: 12) {
+                    ZStack {
+                        MaiCloudThumbnail(accountID: appState.maiChatAccountID,
+                                          media: media,
+                                          loaded: Binding(
+                                            get: { loadedThumbnailIDs.contains(media.id) },
+                                            set: { ready in
+                                                if ready { loadedThumbnailIDs.insert(media.id) }
+                                                else { loadedThumbnailIDs.remove(media.id) }
+                                            }))
+                        if openingID == media.id || savingID == media.id {
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.black.opacity(0.45))
+                            ProgressView().tint(.white)
+                        }
                     }
+                    .frame(width: 72, height: 72)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(media.name).font(.subheadline.weight(.semibold))
+                            .lineLimit(1).truncationMode(.middle)
+                        Text(formatBytes(media.sizeBytes))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 72, height: 72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .disabled(openingID != nil)
             .accessibilityLabel(media.isImage ? "查看图片" : "播放视频")
             .accessibilityValue(loadedThumbnailIDs.contains(media.id)
                 ? "封面已加载" : "封面待加载")
             .accessibilityIdentifier("cloud-drive-play-\(media.id)")
-            VStack(alignment: .leading, spacing: 5) {
-                Text(media.name).font(.subheadline.weight(.semibold))
-                    .lineLimit(1).truncationMode(.middle)
-                Text(formatBytes(media.sizeBytes))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Menu {
-                Button(media.isImage ? "查看图片" : "播放视频") { open(media) }
-                if !media.isImage {
+            if !media.isImage {
+                Menu {
                     Button("保存到相册", systemImage: "square.and.arrow.down") {
                         saveVideo(media)
                     }
                     .disabled(savingID != nil)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 44, height: 44)
                 }
-                Button("删除", role: .destructive) { deletingID = media.id }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 44, height: 44)
+                .accessibilityIdentifier("cloud-drive-video-menu-\(media.id)")
             }
-            .accessibilityIdentifier("cloud-drive-video-menu-\(media.id)")
         }
         .padding(12)
         .background(Color(uiColor: .secondarySystemGroupedBackground),
@@ -626,6 +766,10 @@ struct MaiCloudDriveView: View {
     }
 
     private func open(_ media: MaiCloudDriveVideo) {
+        if revealedMediaID == media.id {
+            withAnimation(.easeOut(duration: 0.2)) { revealedMediaID = nil }
+            return
+        }
         guard openingID == nil else { return }
         let expectedAccount = appState.maiChatAccountID
         openingID = media.id
@@ -638,7 +782,15 @@ struct MaiCloudDriveView: View {
                         try? FileManager.default.removeItem(at: url)
                         return
                     }
-                    preview = MaiCloudDrivePreview(url: url, isImage: true, vod: nil)
+                    let images = model.videos.filter(\.isImage)
+                    guard let index = images.firstIndex(where: { $0.id == media.id }) else {
+                        try? FileManager.default.removeItem(at: url)
+                        return
+                    }
+                    preview = MaiCloudDrivePreview(url: url, isImage: true, vod: nil,
+                        images: images, initialIndex: index, accountID: expectedAccount,
+                        nextCursor: model.nextCursor)
+                    loadMorePreviewImages(url.path)
                 } else {
                     let vod = try await MaiCloudDriveClient.shared.openVod(
                         videoID: media.id,
@@ -657,11 +809,56 @@ struct MaiCloudDriveView: View {
     }
 
     private func closePreview() {
+        previewPageTask?.cancel()
+        previewPageTask = nil
+        previewPageRequestID = nil
         preview?.vod?.cancel()
         if let preview, preview.isImage {
             try? FileManager.default.removeItem(at: preview.url)
         }
         preview = nil
+    }
+
+    private func loadMorePreviewImages(_ id: String) {
+        guard previewPageTask == nil, let initial = preview,
+              initial.id == id, initial.isImage, initial.nextCursor != nil else { return }
+        let requestID = UUID()
+        previewPageRequestID = requestID
+        previewPageTask = Task { @MainActor in
+            defer {
+                if previewPageRequestID == requestID {
+                    previewPageTask = nil
+                    previewPageRequestID = nil
+                }
+            }
+            // Render the first image immediately. Append metadata in bounded
+            // batches; approaching the loaded end can request another batch.
+            for _ in 0..<50 {
+                guard !Task.isCancelled, let current = preview,
+                      current.id == id, current.accountID == appState.maiChatAccountID,
+                      let cursor = current.nextCursor else { return }
+                do {
+                    let page = try await MaiCloudDriveClient.shared.list(before: cursor)
+                    guard !Task.isCancelled, var updated = preview, updated.id == id,
+                          updated.accountID == appState.maiChatAccountID else { return }
+                    var known = Set(updated.images.map(\.id))
+                    updated.images.append(contentsOf: page.videos.filter {
+                        $0.isImage && known.insert($0.id).inserted
+                    })
+                    if let next = page.nextCursor,
+                       next == cursor || updated.visitedCursors.contains(next) {
+                        // Keep the last request cursor retryable. A repeating
+                        // server cursor is neither an end marker nor progress.
+                        preview = updated
+                        return
+                    }
+                    updated.visitedCursors.insert(cursor)
+                    updated.nextCursor = page.nextCursor
+                    preview = updated
+                    if page.nextCursor == nil { return }
+                } catch { return }
+            }
+        }
     }
 
     private func saveVideo(_ media: MaiCloudDriveVideo) {
@@ -710,6 +907,12 @@ struct MaiCloudDriveUITestRoot: View {
                 if !loginError.isEmpty { Text(loginError).foregroundStyle(.red) }
                 if canaryLoginReady { Text("云盘灰度账号已登录") }
                 if canaryLoginReady { Text(appState.maiChatAccountID) }
+                if ProcessInfo.processInfo.arguments.contains("--cloud-drive-folder-tool-test") {
+                    Button("测试云盘分组工具") {
+                        Task { await runFolderToolsTest() }
+                    }
+                    .accessibilityIdentifier("cloud-drive-folder-tools-test")
+                }
                 Button("模拟切号时相册导入") {
                     Task {
                         let originalAccount = appState.maiChatAccountID
@@ -1239,6 +1442,64 @@ struct MaiCloudDriveUITestRoot: View {
                 AIMobileHostToolProvider.shared.appState = appState
             } catch { loginError = error.localizedDescription }
         }
+    }
+
+    private func runFolderToolsTest() async {
+        let host = AIMobileHostToolProvider.shared
+        func call(_ name: String, _ arguments: [String: String] = [:]) async throws
+            -> [String: Any] {
+            let json = try JSONSerialization.data(withJSONObject: arguments)
+            let result = await host.execute(name: "maichat_cloud_drive_" + name,
+                argumentsJSON: String(decoding: json, as: UTF8.self))
+            guard let output = result.output, result.errorCode == nil,
+                  let body = try JSONSerialization.jsonObject(
+                    with: Data(output.utf8)) as? [String: Any],
+                  !output.contains("token"), !output.contains("read_url") else {
+                throw NSError(domain: "CloudFolderTest", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: name + ":" +
+                                (result.errorCode ?? "invalid_output")])
+            }
+            return body
+        }
+        func check(_ condition: Bool, _ step: String) throws {
+            if !condition {
+                throw NSError(domain: "CloudFolderTest", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: step])
+            }
+        }
+        do {
+            let list = try await call("list_media")
+            guard let id = (list["media"] as? [[String: Any]])?.first?["media_id"] as? String
+            else { throw NSError(domain: "CloudFolderTest", code: 3) }
+            let parent = try await call("create_folder", ["name": "工作资料"])
+            let parentID = parent["id"] as? String ?? ""
+            let child = try await call("create_folder", ["name": "项目一", "parent_id": parentID])
+            let childID = child["id"] as? String ?? ""
+            let renamed = try await call("update_folder", ["folder_id": childID, "name": "项目二"])
+            try check(renamed["name"] as? String == "项目二", "rename")
+            let normal = try await MaiCloudDriveClient.shared.listFolders()
+            try check(normal.count == 2 && normal.contains(where: {
+                $0.id == childID && $0.parentId == parentID
+            }), "normal_client_tree")
+            _ = try await call("move_media", ["media_id": id, "folder_id": childID])
+            let grouped = try await call("list_media", ["folder_id": childID])
+            let items = grouped["media"] as? [[String: Any]] ?? []
+            try check(items.count == 1 && items.first?["folder_id"] as? String == childID,
+                      "folder_filter")
+            let root = try await call("list_media", ["folder_id": ""])
+            try check((root["media"] as? [[String: Any]])?.isEmpty == true, "root_filter")
+            let nonempty = await host.execute(name: "maichat_cloud_drive_delete_folder",
+                argumentsJSON: "{\"folder_id\":\"\(childID)\"}")
+            try check(nonempty.errorCode == "conflict", "nonempty_folder")
+            let listed = try await call("list_folders")
+            try check((listed["folders"] as? [[String: Any]])?.count == 2, "list_tree")
+            _ = try await call("move_media", ["media_id": id, "folder_id": ""])
+            _ = try await call("delete_folder", ["folder_id": childID])
+            _ = try await call("delete_folder", ["folder_id": parentID])
+            let after = try await call("list_folders")
+            try check((after["folders"] as? [[String: Any]])?.isEmpty == true, "cleanup")
+            toolResult = "云盘分组工具全链路通过"
+        } catch { toolResult = "云盘分组工具失败：" + error.localizedDescription }
     }
 
     private func runProductionCanaryTools() async {

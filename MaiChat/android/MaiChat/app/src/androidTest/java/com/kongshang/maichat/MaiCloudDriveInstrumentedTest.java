@@ -931,6 +931,92 @@ public final class MaiCloudDriveInstrumentedTest {
         }
     }
 
+    @Test public void agentFoldersReuseNormalClientAndFilterMedia() throws Exception {
+        requireFixture();
+        resetFixture();
+        Context context = ApplicationProvider.getApplicationContext();
+        MaiChatAuthClient auth = MaiChatAuthClient.shared(context);
+        auth.loginWithPassword("sync-ui-test", PASSWORD, true);
+        MaiCloudDrive client = new MaiCloudDrive(context);
+        File source = new File(context.getCacheDir(), "folder-tool-video.mp4");
+        try (InputStream input = InstrumentationRegistry.getInstrumentation()
+                 .getContext().getAssets().open("gallery-sample.mp4");
+             FileOutputStream output = new FileOutputStream(source)) {
+            byte[] bytes = new byte[8192];
+            int count;
+            while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count);
+        }
+        MaiCloudDrive.Result uploaded = upload(client, client.inspect(source), client.newCheckpoint());
+        assertTrue("upload status=" + uploaded.status + " http=" + uploaded.httpStatus,
+                   uploaded.ok());
+        String mediaId = request(client, MaiCloudDrive.LIST, new JSONObject())
+            .json().getJSONArray("videos").getJSONObject(0).getString("id");
+        try (ActivityScenario<MainActivity> screen = ActivityScenario.launch(MainActivity.class)) {
+            AtomicReference<AIAssistantController> owner = new AtomicReference<>();
+            screen.onActivity(activity -> owner.set(AIAssistantController.shared(activity)));
+            JSONObject created = host(owner.get(), "maichat_cloud_drive_create_folder",
+                new JSONObject().put("name", "工作资料"));
+            assertTrue(created.toString(), created.getBoolean("ok"));
+            JSONObject parent = created.getJSONObject("output");
+            String parentId = parent.getString("id");
+            assertTrue(parent.isNull("parent_id"));
+            JSONObject nested = host(owner.get(), "maichat_cloud_drive_create_folder",
+                new JSONObject().put("name", "项目一").put("parent_id", parentId));
+            assertTrue(nested.toString(), nested.getBoolean("ok"));
+            String childId = nested.getJSONObject("output").getString("id");
+            JSONObject renamed = host(owner.get(), "maichat_cloud_drive_update_folder",
+                new JSONObject().put("folder_id", childId).put("name", "项目二"));
+            assertTrue(renamed.toString(), renamed.getBoolean("ok"));
+            assertEquals("项目二", renamed.getJSONObject("output").getString("name"));
+            JSONObject moved = host(owner.get(), "maichat_cloud_drive_move_media",
+                new JSONObject().put("media_id", mediaId).put("folder_id", childId));
+            assertTrue(moved.toString(), moved.getBoolean("ok"));
+            JSONObject filtered = host(owner.get(), "maichat_cloud_drive_list_media",
+                new JSONObject().put("folder_id", childId));
+            assertTrue(filtered.toString(), filtered.getBoolean("ok"));
+            JSONArray media = filtered.getJSONObject("output").getJSONArray("media");
+            assertEquals(1, media.length());
+            assertEquals(childId, media.getJSONObject(0).getString("folder_id"));
+            assertFalse(filtered.getJSONObject("output").toString().contains("read_url"));
+            assertFalse(filtered.getJSONObject("output").toString().contains("token"));
+            JSONObject root = host(owner.get(), "maichat_cloud_drive_list_media",
+                new JSONObject().put("folder_id", ""));
+            assertEquals(0, root.getJSONObject("output").getJSONArray("media").length());
+            JSONObject blocked = host(owner.get(), "maichat_cloud_drive_delete_folder",
+                new JSONObject().put("folder_id", childId));
+            assertFalse(blocked.toString(), blocked.getBoolean("ok"));
+            assertEquals("conflict", blocked.getString("errorCode"));
+            CountDownLatch done = new CountDownLatch(1);
+            AtomicReference<MaiCloudDrive.Result> normal = new AtomicReference<>();
+            client.listFolders(value -> { normal.set(value); done.countDown(); });
+            assertTrue(done.await(30, TimeUnit.SECONDS));
+            assertTrue(normal.get().body, normal.get().ok());
+            assertEquals(2, normal.get().json().getJSONArray("folders").length());
+            JSONObject listed = host(owner.get(), "maichat_cloud_drive_list_folders", new JSONObject());
+            assertTrue(listed.toString(), listed.getBoolean("ok"));
+            assertFalse(listed.getJSONObject("output").toString().contains("token"));
+            assertFalse(listed.getJSONObject("output").toString().contains("url"));
+            assertEquals(2, listed.getJSONObject("output").getJSONArray("folders").length());
+            JSONObject ungrouped = host(owner.get(), "maichat_cloud_drive_move_media",
+                new JSONObject().put("media_id", mediaId).put("folder_id", ""));
+            assertTrue(ungrouped.toString(), ungrouped.getBoolean("ok"));
+            for (String folder : new String[]{childId, parentId}) {
+                JSONObject deleted = host(owner.get(), "maichat_cloud_drive_delete_folder",
+                    new JSONObject().put("folder_id", folder));
+                assertTrue(deleted.toString(), deleted.getBoolean("ok"));
+            }
+            assertTrue(request(client, MaiCloudDrive.DELETE,
+                new JSONObject().put("video_id", mediaId)).ok());
+            screen.onActivity(activity -> {
+                View cloud = byDescription(activity.getWindow().getDecorView(), "云盘");
+                assertNotNull(cloud);
+                cloud.performClick();
+            });
+            Thread.sleep(1_000);
+            screenshot(context, "cloud-drive-folders-agent-only.png");
+        } finally { source.delete(); }
+    }
+
     @Test public void agentCloudDisabledMapsToNotConfigured() throws Exception {
         assertTrue(BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
             BuildConfig.APPLICATION_ID.endsWith(".isolated"));

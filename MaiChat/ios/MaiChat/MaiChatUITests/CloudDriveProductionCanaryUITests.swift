@@ -82,10 +82,10 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
         let close = app.buttons["ffplay-close"]
         XCTAssertTrue(close.waitForExistence(timeout: 60), "真实视频未进入播放器")
         close.tap()
-        let menu = app.buttons["cloud-drive-video-menu-\(videoID)"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        menu.tap()
-        app.buttons["删除"].tap()
+        let row = app.otherElements["cloud-drive-row-\(videoID)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.swipeRight()
+        app.buttons["cloud-drive-delete-\(videoID)"].tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30),
                       "删除后云盘仍显示测试视频")
@@ -165,10 +165,10 @@ final class CloudDriveProductionCanaryUITests: XCTestCase {
         preview.lifetime = .keepAlways
         add(preview)
         close.tap()
-        let menu = app.buttons["cloud-drive-video-menu-\(id)"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        menu.tap()
-        app.buttons["删除"].tap()
+        let row = app.otherElements["cloud-drive-row-\(id)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.swipeRight()
+        app.buttons["cloud-drive-delete-\(id)"].tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["0 B / 10 GB"].waitForExistence(timeout: 10))

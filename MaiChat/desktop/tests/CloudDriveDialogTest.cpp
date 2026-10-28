@@ -12,10 +12,13 @@
 #include <QFutureWatcher>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
+#include <QFrame>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
+#include <QTreeWidget>
 
 #include <cstdlib>
 #include <iostream>
@@ -93,6 +96,76 @@ ImagePreviewDialog* waitForImagePreview(QWidget& parent, int timeoutMs = 15000) 
     return nullptr;
 }
 
+QFrame* folderRow(QWidget& parent, const QString& name) {
+    for (QFrame* row : parent.findChildren<QFrame*>(QStringLiteral("cloudDriveFolderRow"))) {
+        QPushButton* open = row->findChild<QPushButton*>(QStringLiteral("cloudDriveFolderOpen"));
+        if (row->isVisible() && open && open->isEnabled() && open->text() == name) return row;
+    }
+    return nullptr;
+}
+
+bool waitForFolder(QWidget& parent, const QString& name) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < 15000) {
+        QApplication::processEvents();
+        if (folderRow(parent, name)) return true;
+        QThread::msleep(20);
+    }
+    return false;
+}
+
+void nameFolder(QWidget& parent, QPushButton* action, const QString& name) {
+    require(action != nullptr, "folder name action is unavailable");
+    QTimer fill;
+    fill.setInterval(20);
+    QObject::connect(&fill, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (!modal) return;
+        auto* input = modal->findChild<QLineEdit*>(QStringLiteral("appTextInput"));
+        auto* confirm = modal->findChild<QPushButton*>(QStringLiteral("appTextInputConfirm"));
+        if (!input || !confirm) return;
+        fill.stop();
+        input->setText(name);
+        confirm->click();
+    });
+    fill.start();
+    action->click();
+    if (!waitForFolder(parent, name)) {
+        auto* state = parent.findChild<QLabel*>(QStringLiteral("cloudDriveStatus"));
+        std::cerr << "folder '" << name.toStdString() << "' status: "
+                  << (state ? state->text().toStdString() : "missing") << '\n';
+        require(false, "created/renamed folder was not listed");
+    }
+}
+
+void moveTo(QWidget& parent, QPushButton* action, const QString& name,
+            const QString& excluded = {}, const QString& screenshot = {}) {
+    require(action != nullptr, "move action is unavailable");
+    QTimer select;
+    select.setInterval(20);
+    QObject::connect(&select, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (!modal) return;
+        auto* tree = modal->findChild<QTreeWidget*>(QStringLiteral("cloudDriveMoveTree"));
+        auto* confirm = modal->findChild<QPushButton*>(QStringLiteral("cloudDriveMoveConfirm"));
+        if (!tree || !confirm) return;
+        if (!excluded.isEmpty())
+            require(tree->findItems(excluded, Qt::MatchExactly | Qt::MatchRecursive).isEmpty(),
+                    "moving a folder offered its own subtree as destination");
+        const auto items = tree->findItems(name, Qt::MatchExactly | Qt::MatchRecursive);
+        require(items.size() == 1, "move destination was missing or ambiguous");
+        select.stop();
+        tree->setCurrentItem(items.first());
+        if (!screenshot.isEmpty())
+            require(modal->grab().save(screenshot), "could not save folder selection screenshot");
+        confirm->click();
+    });
+    select.start();
+    action->click();
+    require(waitForButton(parent, QStringLiteral("cloudDriveNewFolder")), "move did not finish");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -147,6 +220,37 @@ int main(int argc, char** argv) {
     require(dialog.grab().save(screenshots + QStringLiteral("/cloud-empty.png")),
             "failed to save empty state screenshot");
 
+    nameFolder(dialog, visibleButton(dialog, QStringLiteral("cloudDriveNewFolder")),
+               QStringLiteral("工作"));
+    nameFolder(dialog, visibleButton(dialog, QStringLiteral("cloudDriveNewFolder")),
+               QStringLiteral("资料"));
+    nameFolder(dialog, folderRow(dialog, QStringLiteral("工作"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderRename")), QStringLiteral("项目"));
+    folderRow(dialog, QStringLiteral("项目"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderOpen"))->click();
+    require(waitForLabel(dialog, QStringLiteral("cloudDriveFolderPath"), QStringLiteral("项目")),
+            "folder navigation did not show the selected path");
+    require(waitForButton(dialog, QStringLiteral("cloudDriveNewFolder")), "folder list did not load");
+    nameFolder(dialog, visibleButton(dialog, QStringLiteral("cloudDriveNewFolder")),
+               QStringLiteral("文档"));
+    moveTo(dialog, folderRow(dialog, QStringLiteral("文档"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderMove")), QStringLiteral("资料"), QStringLiteral("文档"),
+        screenshots + QStringLiteral("/cloud-folder-move-dialog.png"));
+    require(!folderRow(dialog, QStringLiteral("文档")), "moved folder remained in old parent");
+    visibleButton(dialog, QStringLiteral("cloudDriveRootFolder"))->click();
+    require(waitForFolder(dialog, QStringLiteral("资料")), "root navigation lost folders");
+    require(dialog.grab().save(screenshots + QStringLiteral("/cloud-folders-root.png")),
+            "failed to save folder root screenshot");
+    folderRow(dialog, QStringLiteral("资料"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderOpen"))->click();
+    require(waitForFolder(dialog, QStringLiteral("文档")), "moved folder missing in destination");
+    folderRow(dialog, QStringLiteral("文档"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderOpen"))->click();
+    require(waitForButton(dialog, QStringLiteral("cloudDriveNewFolder")), "nested folder did not load");
+    require(waitForLabel(dialog, QStringLiteral("cloudDriveFolderPath"),
+        QStringLiteral("我的云盘 / 资料 / 文档")), "nested path was incorrect");
+    require(waitForVisibleText(dialog, QStringLiteral("此文件夹为空")), "nested empty state missing");
+
     QTimer confirmation;
     confirmation.setInterval(20);
     QObject::connect(&confirmation, &QTimer::timeout, [&] {
@@ -163,13 +267,50 @@ int main(int argc, char** argv) {
     });
     confirmation.start();
     dialog.openDrive(source);
-    require(waitForButton(dialog, QStringLiteral("cloudDrivePlay")),
-            "video did not upload and appear in the list");
+    if (!waitForButton(dialog, QStringLiteral("cloudDrivePlay"))) {
+        QLabel* state = dialog.findChild<QLabel*>(QStringLiteral("cloudDriveStatus"));
+        std::cerr << "upload status: " << (state ? state->text().toStdString() : "missing") << '\n';
+        require(false, "video did not upload and appear in the list");
+    }
+    require(waitForLabel(dialog, QStringLiteral("cloudDriveFolderPath"), QStringLiteral("文档")),
+            "upload did not remain in its selected folder");
     require(visibleButton(dialog, QStringLiteral("cloudDriveSaveVideo")),
             "explicit save action disappeared after switching playback to VOD");
     require(waitForThumbnail(dialog), "signed thumbnail did not load for video");
     require(dialog.grab().save(screenshots + QStringLiteral("/cloud-uploaded.png")),
             "failed to save uploaded screenshot");
+
+    // Deleting a nonempty folder must preserve its files and report a recoverable error.
+    visibleButton(dialog, QStringLiteral("cloudDriveParentFolder"))->click();
+    require(waitForFolder(dialog, QStringLiteral("文档")), "parent folder did not load");
+    confirmation.start();
+    folderRow(dialog, QStringLiteral("文档"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderDelete"))->click();
+    require(waitForLabel(dialog, QStringLiteral("cloudDriveStatus"), QStringLiteral("还包含文件")),
+            "nonempty folder delete did not preserve data and show an error");
+    require(folderRow(dialog, QStringLiteral("文档")), "failed delete removed the folder row");
+    folderRow(dialog, QStringLiteral("文档"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderOpen"))->click();
+    require(waitForButton(dialog, QStringLiteral("cloudDrivePlay")), "folder file disappeared");
+    moveTo(dialog, visibleButton(dialog, QStringLiteral("cloudDriveMoveMedia")),
+           QStringLiteral("我的云盘"));
+    require(!visibleButton(dialog, QStringLiteral("cloudDrivePlay")), "moved file remained in old folder");
+    visibleButton(dialog, QStringLiteral("cloudDriveParentFolder"))->click();
+    require(waitForFolder(dialog, QStringLiteral("文档")), "parent did not load after file move");
+    confirmation.start();
+    folderRow(dialog, QStringLiteral("文档"))->findChild<QPushButton*>(
+        QStringLiteral("cloudDriveFolderDelete"))->click();
+    require(waitForButton(dialog, QStringLiteral("cloudDriveNewFolder")), "empty folder delete did not finish");
+    require(!folderRow(dialog, QStringLiteral("文档")), "empty folder was not deleted");
+    visibleButton(dialog, QStringLiteral("cloudDriveRootFolder"))->click();
+    require(waitForButton(dialog, QStringLiteral("cloudDrivePlay")), "moved file missing in root");
+    require(dialog.grab().save(screenshots + QStringLiteral("/cloud-folders-with-file.png")),
+            "failed to save folder and media screenshot");
+    dialog.resize(540, 640);
+    QApplication::processEvents();
+    require(dialog.grab().save(screenshots + QStringLiteral("/cloud-folders-narrow.png")),
+            "failed to save narrow folder and media screenshot");
+    dialog.resize(740, 640);
     visibleButton(dialog, QStringLiteral("cloudDrivePlay"))->click();
     QElapsedTimer playback;
     playback.start();
@@ -181,6 +322,16 @@ int main(int argc, char** argv) {
                 quint64(QFileInfo(source).size()) && !QFileInfo(playedName).exists(),
             "cloud playback did not open a seekable stream without a local video file");
     playedVod.reset();
+
+    for (const QString& folderName : {QStringLiteral("项目"), QStringLiteral("资料")}) {
+        require(waitForFolder(dialog, folderName), "root folder disappeared before cleanup");
+        confirmation.start();
+        folderRow(dialog, folderName)->findChild<QPushButton*>(
+            QStringLiteral("cloudDriveFolderDelete"))->click();
+        require(waitForButton(dialog, QStringLiteral("cloudDriveNewFolder")),
+                "root folder cleanup did not finish");
+        require(!folderRow(dialog, folderName), "empty root folder was not deleted");
+    }
 
     confirmation.start();
     require(waitForButton(dialog, QStringLiteral("cloudDriveDelete")),
@@ -303,6 +454,6 @@ int main(int argc, char** argv) {
     require(testData.contains(QStringLiteral("CloudDriveDialogTest-")),
             "refusing to remove a non-test data directory");
     require(QDir(testData).removeRecursively(), "could not remove isolated test checkpoints");
-    std::cout << "desktop cloud video/image upload/thumbnail/preview/delete/account-switch/resume passed\n";
+    std::cout << "desktop cloud folders/nesting/rename/move/empty-only-delete and video/image lifecycle passed\n";
     return 0;
 }

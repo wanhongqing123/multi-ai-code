@@ -112,6 +112,68 @@ bool validUuid(const std::string& text) {
     return true;
 }
 
+bool nextUtf8CodePoint(const std::string& value, size_t* offset, uint32_t* output) {
+    if (*offset >= value.size()) return false;
+    const auto first = static_cast<unsigned char>(value[(*offset)++]);
+    if (first < 0x80) { *output = first; return true; }
+    unsigned remaining = 0;
+    uint32_t code = 0;
+    uint32_t minimum = 0;
+    if (first >= 0xc2 && first <= 0xdf) {
+        remaining = 1; code = first & 0x1f; minimum = 0x80;
+    } else if (first >= 0xe0 && first <= 0xef) {
+        remaining = 2; code = first & 0x0f; minimum = 0x800;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+        remaining = 3; code = first & 0x07; minimum = 0x10000;
+    } else return false;
+    if (remaining > value.size() - *offset) return false;
+    while (remaining-- > 0) {
+        const auto next = static_cast<unsigned char>(value[(*offset)++]);
+        if ((next & 0xc0) != 0x80) return false;
+        code = (code << 6) | (next & 0x3f);
+    }
+    if (code < minimum || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff))
+        return false;
+    *output = code;
+    return true;
+}
+
+bool unicodeWhitespace(uint32_t code) {
+    // Match ECMAScript String.trim() used by the account metadata service.
+    return (code >= 0x09 && code <= 0x0d) || code == 0x20 || code == 0xa0 ||
+        code == 0x1680 || (code >= 0x2000 && code <= 0x200a) || code == 0x2028 ||
+        code == 0x2029 || code == 0x202f || code == 0x205f || code == 0x3000 ||
+        code == 0xfeff;
+}
+
+bool validFolderName(const std::string& name) {
+    if (name.empty() || name.size() > 240 || name == "." || name == ".." ||
+        name.back() == '.' || name.find_first_of("<>:\"|?*/\\") != std::string::npos)
+        return false;
+    size_t offset = 0;
+    uint32_t first = 0;
+    uint32_t last = 0;
+    while (offset < name.size()) {
+        const bool atStart = offset == 0;
+        uint32_t code = 0;
+        if (!nextUtf8CodePoint(name, &offset, &code) || code < 0x20 ||
+            (code >= 0x7f && code <= 0x9f) || code == 0x2028 || code == 0x2029)
+            return false;
+        if (atStart) first = code;
+        last = code;
+    }
+    if (unicodeWhitespace(first) || unicodeWhitespace(last)) return false;
+    // NFC normalization and its final byte limit remain authoritative on the
+    // service; platform clients do not each carry a separate Unicode database.
+    std::string stem = name.substr(0, name.find('.'));
+    std::transform(stem.begin(), stem.end(), stem.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return stem != "con" && stem != "prn" && stem != "aux" && stem != "nul" &&
+        !(stem.size() == 4 && (stem.compare(0, 3, "com") == 0 ||
+                              stem.compare(0, 3, "lpt") == 0) &&
+          stem[3] >= '1' && stem[3] <= '9');
+}
+
 bool stringField(const json& value, const char* name, std::string* output) {
     if (!value.is_object() || !value.contains(name) || !value[name].is_string())
         return false;
@@ -129,6 +191,21 @@ bool uintField(const json& value, const char* name, uint64_t min, uint64_t max,
     if (number < min || number > max) return false;
     *output = number;
     return true;
+}
+
+bool validFolder(const json& value) {
+    std::string id;
+    std::string name;
+    uint64_t timestamp = 0;
+    constexpr uint64_t maxSafeJsonInteger = 9'007'199'254'740'991;
+    if (!value.is_object() || !stringField(value, "id", &id) || !validUuid(id) ||
+        !stringField(value, "name", &name) || !validFolderName(name) ||
+        !uintField(value, "created_at", 1, maxSafeJsonInteger, &timestamp) ||
+        !uintField(value, "updated_at", 1, maxSafeJsonInteger, &timestamp) ||
+        !value.contains("parent_id")) return false;
+    return value["parent_id"].is_null() ||
+        (value["parent_id"].is_string() &&
+         validUuid(value["parent_id"].get<std::string>()));
 }
 
 bool mediaInfo(const std::string& name, MaiCloudDriveMediaInfo* output,
@@ -739,11 +816,12 @@ void performHttp(const MaiCloudDriveOptions* options, const std::string& url,
         authorization = std::string("Authorization: Bearer ") + options->account_token_utf8;
         headers = curl_slist_append(headers, authorization.c_str());
         if (headers) headers = curl_slist_append(headers, "Accept: application/json");
-        if (std::strcmp(method, "POST") == 0) {
+        if (std::strcmp(method, "POST") == 0 || std::strcmp(method, "PATCH") == 0) {
             if (headers) headers = curl_slist_append(headers, "Content-Type: application/json");
             set(CURLOPT_POST, 1L);
             set(CURLOPT_POSTFIELDS, body.c_str());
             set(CURLOPT_POSTFIELDSIZE_LARGE, curl_off_t(body.size()));
+            if (std::strcmp(method, "PATCH") == 0) set(CURLOPT_CUSTOMREQUEST, "PATCH");
         } else if (std::strcmp(method, "DELETE") == 0) {
             set(CURLOPT_CUSTOMREQUEST, "DELETE");
         } else {
@@ -790,7 +868,8 @@ void requestInternal(const MaiCloudDriveOptions* options, const std::string& bas
                      MaiCloudDriveResult* result,
                      int defaultMetadataTimeoutMs = 30'000) {
     resetResult(result);
-    const std::string encoded = std::strcmp(method, "POST") == 0 ? body.dump() : "";
+    const bool hasBody = std::strcmp(method, "POST") == 0 || std::strcmp(method, "PATCH") == 0;
+    const std::string encoded = hasBody ? body.dump() : "";
     if (encoded.size() > kMaxRequestBytes) return;
     performHttp(options, base + route, method, encoded, nullptr, nullptr,
                 cancel, nullptr, nullptr, 0, 0, result,
@@ -1104,6 +1183,10 @@ extern "C" int mai_cloud_drive_media_info(const char* displayName,
     return mediaInfo(displayName, output) ? 1 : 0;
 }
 
+extern "C" int mai_cloud_drive_folder_name_valid(const char* name) {
+    return name && std::strlen(name) <= 240 && validFolderName(name) ? 1 : 0;
+}
+
 extern "C" int mai_session_attachment_media_info(const char* displayName,
                                                     MaiCloudDriveMediaInfo* output) {
     if (!displayName) return 0;
@@ -1146,6 +1229,9 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
     std::string route;
     const char* method = "GET";
     json request = json::object();
+    const bool folderAction = action >= MAI_CLOUD_DRIVE_LIST_FOLDERS &&
+        action <= MAI_CLOUD_DRIVE_MOVE_MEDIA;
+    if (folderAction && sessionMode(options)) return;
     if (action == MAI_SESSION_ATTACHMENT_CLEANUP_ROOM && sessionMode(options)) {
         route = root + "/cleanup-room";
         method = "POST";
@@ -1162,6 +1248,54 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
                     return std::isalnum(c) || c == '_' || c == '-';
                 })) return;
             route += "?before=" + cursor;
+        }
+        if (input.contains("folder_id")) {
+            std::string folder;
+            if (sessionMode(options) || !stringField(input, "folder_id", &folder) ||
+                (!folder.empty() && !validUuid(folder))) return;
+            route += std::string(route.find('?') == std::string::npos ? "?" : "&") +
+                "folder_id=" + folder;
+        }
+    } else if (folderAction) {
+        const std::string folders = "/v1/cloud-drive/folders";
+        if (action == MAI_CLOUD_DRIVE_LIST_FOLDERS) {
+            if (!input.empty()) return;
+            route = folders;
+        } else if (action == MAI_CLOUD_DRIVE_MOVE_MEDIA) {
+            std::string id;
+            std::string folder;
+            if (input.size() != 2 || !stringField(input, "media_id", &id) ||
+                !validUuid(id) || !stringField(input, "folder_id", &folder) ||
+                (!folder.empty() && !validUuid(folder))) return;
+            route = root + "/" + id;
+            method = "PATCH";
+            request["folder_id"] = folder;
+        } else {
+            const bool create = action == MAI_CLOUD_DRIVE_CREATE_FOLDER;
+            std::string id;
+            if (!create && (!stringField(input, "folder_id", &id) || !validUuid(id)))
+                return;
+            route = folders + (create ? "" : "/" + id);
+            if (action == MAI_CLOUD_DRIVE_DELETE_FOLDER) {
+                if (input.size() != 1) return;
+                method = "DELETE";
+            } else {
+                method = create ? "POST" : "PATCH";
+                if (create && !input.contains("name")) return;
+                if (!create && !input.contains("name") && !input.contains("parent_id")) return;
+                for (auto it = input.begin(); it != input.end(); ++it) {
+                    if (!create && it.key() == "folder_id") continue;
+                    if (it.key() == "name") {
+                        if (!it.value().is_string() ||
+                            !validFolderName(it.value().get<std::string>())) return;
+                    } else if (it.key() == "parent_id") {
+                        if (!it.value().is_string()) return;
+                        const std::string parent = it.value().get<std::string>();
+                        if (!parent.empty() && !validUuid(parent)) return;
+                    } else return;
+                    request[it.key()] = it.value();
+                }
+            }
         }
     } else {
         std::string id;
@@ -1187,6 +1321,42 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
             !(response["next_cursor"].is_null() ||
               response["next_cursor"].is_string()) ||
             !response.contains("quota") || !response["quota"].is_object())
+            result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+    } else if (action == MAI_CLOUD_DRIVE_LIST_FOLDERS) {
+        if (!response.is_object() || !response.contains("folders") ||
+            !response["folders"].is_array() || response["folders"].size() > 1000 ||
+            !std::all_of(response["folders"].begin(), response["folders"].end(),
+                         [](const json& folder) { return validFolder(folder); }))
+            result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+    } else if (action == MAI_CLOUD_DRIVE_CREATE_FOLDER ||
+               action == MAI_CLOUD_DRIVE_UPDATE_FOLDER) {
+        if (!validFolder(response) ||
+            (action == MAI_CLOUD_DRIVE_UPDATE_FOLDER &&
+             response["id"] != input["folder_id"]))
+            result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+    } else if (action == MAI_CLOUD_DRIVE_DELETE_FOLDER) {
+        std::string status;
+        if (!stringField(response, "folder_id", &field) || field != input["folder_id"] ||
+            !stringField(response, "status", &status) || status != "deleted")
+            result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+    } else if (action == MAI_CLOUD_DRIVE_MOVE_MEDIA) {
+        std::string status;
+        std::string name;
+        std::string contentType;
+        std::string mediaType;
+        uint64_t number = 0;
+        MaiCloudDriveMediaInfo media{};
+        if (!stringField(response, "video_id", &field) || field != input["media_id"] ||
+            !stringField(response, "status", &status) || status != "ready" ||
+            !stringField(response, "name", &name) || !mediaInfo(name, &media) ||
+            !stringField(response, "content_type", &contentType) ||
+            contentType != media.content_type_utf8 ||
+            !stringField(response, "media_type", &mediaType) || mediaType != media.media_type_utf8 ||
+            !uintField(response, "size_bytes", 1, media.max_size_bytes, &number) ||
+            !uintField(response, "created_at", 1, 9'007'199'254'740'991, &number) ||
+            !response.contains("folder_id") ||
+            (input["folder_id"] == "" ? !response["folder_id"].is_null() :
+             response["folder_id"] != input["folder_id"]))
             result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
     } else if (action == MAI_CLOUD_DRIVE_PLAY_LINK ||
                action == MAI_CLOUD_DRIVE_THUMBNAIL_LINK) {

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -18,7 +19,8 @@ namespace {
 using Json = nlohmann::json;
 
 enum class Action { List, Pending, Upload, Pause, Resume, Abort, Play, Delete,
-                    SessionOpen };
+                    SessionOpen, ListFolders, CreateFolder, UpdateFolder,
+                    DeleteFolder, MoveMedia };
 
 const char* toolName(Action action) {
     switch (action) {
@@ -31,6 +33,11 @@ const char* toolName(Action action) {
         case Action::Play: return "maichat_cloud_drive_open_media";
         case Action::Delete: return "maichat_cloud_drive_delete_media";
         case Action::SessionOpen: return "maichat_session_attachment_open";
+        case Action::ListFolders: return "maichat_cloud_drive_list_folders";
+        case Action::CreateFolder: return "maichat_cloud_drive_create_folder";
+        case Action::UpdateFolder: return "maichat_cloud_drive_update_folder";
+        case Action::DeleteFolder: return "maichat_cloud_drive_delete_folder";
+        case Action::MoveMedia: return "maichat_cloud_drive_move_media";
     }
     return "";
 }
@@ -40,7 +47,9 @@ const char* toolDescription(Action action) {
         case Action::List:
             return "Check whether this MaiChat account's private cloud drive is enabled, "
                    "then list its images, videos and quota. A not_configured result means the "
-                   "feature is disabled; do not attempt other cloud drive actions.";
+                   "feature is disabled; do not attempt other cloud drive actions. "
+                   "Omit folder_id for all files, use an empty string for root, or a folder UUID "
+                   "from maichat_cloud_drive_list_folders for that folder's direct files.";
         case Action::Pending:
             return "List this device's paused or active private cloud uploads. "
                    "The list never exposes local paths to the model. Remote resume still "
@@ -75,6 +84,25 @@ const char* toolDescription(Action action) {
             return "Open an attachment ID already shared in this MaiChat Agent Session. "
                    "Download it from the account's separate private Session space into this "
                    "device so local file tools can inspect it. The ID must belong to this Session.";
+        case Action::ListFolders:
+            return "List this account's private cloud folder tree. Each folder has id, name and "
+                   "parent_id (null at root). Use these IDs to browse or organize cloud media. "
+                   "Folder membership is account-synced across devices.";
+        case Action::CreateFolder:
+            return "Create a named folder in this account's private cloud drive. Omit parent_id "
+                   "or use an empty string for root, or supply a folder UUID for a nested folder. "
+                   "Sibling folder names must be unique.";
+        case Action::UpdateFolder:
+            return "Rename or move a private cloud folder. Supply name, parent_id, or both; "
+                   "empty parent_id moves it to root. Moving into itself or a descendant is rejected. "
+                   "The folder's files and descendants remain together.";
+        case Action::DeleteFolder:
+            return "Delete an empty private cloud folder by ID. Nonempty folders are rejected. "
+                   "Move files and child folders out first; this tool never recursively deletes files.";
+        case Action::MoveMedia:
+            return "Move one existing private cloud image or video to a folder by media_id. "
+                   "Use an empty folder_id to move it to root. The file ID, content and cloud quota "
+                   "stay unchanged; no file bytes are uploaded again.";
     }
     return "";
 }
@@ -82,8 +110,17 @@ const char* toolDescription(Action action) {
 const char* toolSchema(Action action) {
     switch (action) {
         case Action::List:
-            return R"({"type":"object","properties":{"before":{"type":"string","minLength":1,"maxLength":512}},"additionalProperties":false})";
+            return R"({"type":"object","properties":{"before":{"type":"string","minLength":1,"maxLength":256},"folder_id":{"type":"string","maxLength":36}},"additionalProperties":false})";
+        case Action::ListFolders:
         case Action::Pending: return R"({"type":"object","properties":{},"additionalProperties":false})";
+        case Action::CreateFolder:
+            return R"({"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":240},"parent_id":{"type":"string","maxLength":36}},"required":["name"],"additionalProperties":false})";
+        case Action::UpdateFolder:
+            return R"({"type":"object","properties":{"folder_id":{"type":"string","minLength":36,"maxLength":36},"name":{"type":"string","minLength":1,"maxLength":240},"parent_id":{"type":"string","maxLength":36}},"required":["folder_id"],"additionalProperties":false})";
+        case Action::DeleteFolder:
+            return R"({"type":"object","properties":{"folder_id":{"type":"string","minLength":36,"maxLength":36}},"required":["folder_id"],"additionalProperties":false})";
+        case Action::MoveMedia:
+            return R"({"type":"object","properties":{"media_id":{"type":"string","minLength":36,"maxLength":36},"folder_id":{"type":"string","maxLength":36}},"required":["media_id","folder_id"],"additionalProperties":false})";
         case Action::SessionOpen:
             return R"({"type":"object","properties":{"attachment_id":{"type":"string","minLength":36,"maxLength":36}},"required":["attachment_id"],"additionalProperties":false})";
         case Action::Upload:
@@ -120,6 +157,33 @@ bool onlyKeys(const Json& value, const char* allowed) {
     return true;
 }
 
+bool onlyKeys(const Json& value, std::initializer_list<const char*> allowed) {
+    if (!value.is_object()) return false;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        if (std::none_of(allowed.begin(), allowed.end(),
+                         [&](const char* key) { return it.key() == key; })) return false;
+    }
+    return true;
+}
+
+bool normalizeId(Json& arguments, const char* key, bool allowRoot = false) {
+    if (!arguments.contains(key) || !arguments[key].is_string()) return false;
+    std::string id = arguments[key].get<std::string>();
+    if (allowRoot && id.empty()) return true;
+    if (!validUuid(id)) return false;
+    std::transform(id.begin(), id.end(), id.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    arguments[key] = id;
+    return true;
+}
+
+bool validName(const Json& arguments) {
+    if (!arguments.contains("name") || !arguments["name"].is_string()) return false;
+    const std::string name = arguments["name"].get<std::string>();
+    return name.find('\0') == std::string::npos &&
+        mai_cloud_drive_folder_name_valid(name.c_str()) != 0;
+}
+
 MaiToolResult invalid(const std::string& message) {
     return MaiToolResult::failure(MaiErrorCode::InvalidInput, message);
 }
@@ -140,7 +204,9 @@ public:
     }
     bool requiresApproval(const std::string&) const override {
         return mAction == Action::Upload || mAction == Action::Resume ||
-               mAction == Action::Abort || mAction == Action::Delete;
+               mAction == Action::Abort || mAction == Action::Delete ||
+               mAction == Action::CreateFolder || mAction == Action::UpdateFolder ||
+               mAction == Action::DeleteFolder || mAction == Action::MoveMedia;
     }
     bool requiresPerCallApproval(const std::string& arguments) const override {
         return requiresApproval(arguments);
@@ -155,14 +221,39 @@ public:
         if (!arguments.is_object()) return invalid("arguments must be an object");
         switch (mAction) {
             case Action::List:
-                if (!onlyKeys(arguments, "before") ||
+                if (!onlyKeys(arguments, {"before", "folder_id"}) ||
                     (arguments.contains("before") &&
                      (!arguments["before"].is_string() || arguments["before"].get<std::string>().empty() ||
-                      arguments["before"].get<std::string>().size() > 512)))
+                      arguments["before"].get<std::string>().size() > 256)))
                     return invalid("before must be a nonempty cursor when supplied");
+                if (arguments.contains("folder_id") && !normalizeId(arguments, "folder_id", true))
+                    return invalid("folder_id must be a folder UUID or an empty string for root");
                 break;
+            case Action::ListFolders:
             case Action::Pending:
                 if (!arguments.empty()) return invalid("this tool accepts no arguments");
+                break;
+            case Action::CreateFolder:
+                if (!onlyKeys(arguments, {"name", "parent_id"}) || !validName(arguments) ||
+                    (arguments.contains("parent_id") && !normalizeId(arguments, "parent_id", true)))
+                    return invalid("name must be a valid folder name and parent_id a UUID or root");
+                break;
+            case Action::UpdateFolder:
+                if (!onlyKeys(arguments, {"folder_id", "name", "parent_id"}) ||
+                    !normalizeId(arguments, "folder_id") ||
+                    (!arguments.contains("name") && !arguments.contains("parent_id")) ||
+                    (arguments.contains("name") && !validName(arguments)) ||
+                    (arguments.contains("parent_id") && !normalizeId(arguments, "parent_id", true)))
+                    return invalid("supply folder_id and a valid name and/or parent_id");
+                break;
+            case Action::DeleteFolder:
+                if (!onlyKeys(arguments, "folder_id") || !normalizeId(arguments, "folder_id"))
+                    return invalid("folder_id must be a valid UUID");
+                break;
+            case Action::MoveMedia:
+                if (!onlyKeys(arguments, {"media_id", "folder_id"}) ||
+                    !normalizeId(arguments, "media_id") || !normalizeId(arguments, "folder_id", true))
+                    return invalid("supply media_id and folder_id (an empty string for root)");
                 break;
             case Action::SessionOpen: {
                 if (!onlyKeys(arguments, "attachment_id") ||
@@ -233,7 +324,8 @@ void registerMaiCloudDriveTools(MaiToolRegistry& tools, MaiCloudDriveToolHandler
     for (Action action :
          {Action::List, Action::Pending, Action::Upload, Action::Pause,
           Action::Resume, Action::Abort, Action::Play, Action::Delete,
-          Action::SessionOpen}) {
+          Action::SessionOpen, Action::ListFolders, Action::CreateFolder,
+          Action::UpdateFolder, Action::DeleteFolder, Action::MoveMedia}) {
         tools.add(std::make_unique<MaiCloudDriveTool>(action, handler));
     }
 }

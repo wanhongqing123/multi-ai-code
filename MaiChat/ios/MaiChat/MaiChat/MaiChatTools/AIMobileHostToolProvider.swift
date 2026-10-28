@@ -43,6 +43,13 @@ final class AIMobileHostToolProvider {
         guard let arguments = Self.parseArguments(argumentsJSON) else {
             return .failure(code: "invalid_input", message: "arguments must be a JSON object")
         }
+        if name.hasPrefix("maichat_cloud_drive_") {
+            for key in ["folder_id", "parent_id", "name"] where arguments[key] != nil {
+                guard arguments[key] is String else {
+                    return .failure(code: "invalid_input", message: key + " must be a string")
+                }
+            }
+        }
 
         switch name {
         case "mobile_start_screen_share", "mobile_stop_screen_share", "mobile_capture_screen":
@@ -240,7 +247,8 @@ final class AIMobileHostToolProvider {
             do {
                 let cursor = Self.string(arguments, key: "before")
                 let page = try await MaiCloudDriveClient.shared.list(
-                    before: cursor.isEmpty ? nil : cursor)
+                    before: cursor.isEmpty ? nil : cursor,
+                    folderID: arguments["folder_id"] as? String)
                 return Self.jsonSuccess([
                     "media": page.videos.map { video in
                         ["media_id": video.id, "name": video.name,
@@ -248,7 +256,8 @@ final class AIMobileHostToolProvider {
                          "content_type": video.contentType,
                          "media_type": video.mediaType ??
                              (video.isImage ? "image" : "video"),
-                         "created_at": video.createdAt] as [String: Any]
+                         "created_at": video.createdAt,
+                         "folder_id": video.folderId as Any? ?? NSNull()] as [String: Any]
                     },
                     "next_cursor": page.nextCursor as Any? ?? NSNull(),
                     "quota": ["used_bytes": page.quota.usedBytes,
@@ -258,6 +267,42 @@ final class AIMobileHostToolProvider {
             } catch {
                 return Self.cloudDriveFailure(error)
             }
+        case "maichat_cloud_drive_list_folders":
+            do {
+                let folders = try await MaiCloudDriveClient.shared.listFolders()
+                return Self.jsonSuccess(["folders": folders.map(Self.folderJSON)])
+            } catch { return Self.cloudDriveFailure(error) }
+        case "maichat_cloud_drive_create_folder":
+            do {
+                let folder = try await MaiCloudDriveClient.shared.createFolder(
+                    name: Self.string(arguments, key: "name"),
+                    parentID: arguments["parent_id"] as? String)
+                return Self.jsonSuccess(Self.folderJSON(folder))
+            } catch { return Self.cloudDriveFailure(error) }
+        case "maichat_cloud_drive_update_folder":
+            do {
+                let folder = try await MaiCloudDriveClient.shared.updateFolder(
+                    id: Self.string(arguments, key: "folder_id"),
+                    name: arguments["name"] as? String,
+                    parentID: arguments["parent_id"] as? String)
+                return Self.jsonSuccess(Self.folderJSON(folder))
+            } catch { return Self.cloudDriveFailure(error) }
+        case "maichat_cloud_drive_delete_folder":
+            do {
+                let id = Self.string(arguments, key: "folder_id")
+                try await MaiCloudDriveClient.shared.deleteFolder(id: id)
+                return Self.jsonSuccess(["deleted": true, "folder_id": id])
+            } catch { return Self.cloudDriveFailure(error) }
+        case "maichat_cloud_drive_move_media":
+            guard let folderID = arguments["folder_id"] as? String else {
+                return .failure(code: "invalid_input", message: "folder_id must be a string")
+            }
+            do {
+                let id = Self.string(arguments, key: "media_id")
+                try await MaiCloudDriveClient.shared.moveMedia(id: id, folderID: folderID)
+                return Self.jsonSuccess(["moved": true, "media_id": id,
+                                         "folder_id": folderID.isEmpty ? NSNull() as Any : folderID])
+            } catch { return Self.cloudDriveFailure(error) }
         case "maichat_cloud_drive_list_pending_uploads":
             guard !appState.maiChatAccountID.isEmpty else {
                 return .failure(code: "not_configured", message: "MaiChat account login required")
@@ -566,9 +611,16 @@ final class AIMobileHostToolProvider {
 
     private static func cloudDriveFailure(_ error: Error) -> AIMaiChatHostToolExecution {
         if let cloud = error as? MaiCloudDriveError {
+            if cloud.status == Int32(MAI_CLOUD_DRIVE_INVALID_ARGUMENT.rawValue) ||
+                cloud.httpStatus == 400 {
+                return .failure(code: "invalid_input", message: cloud.localizedDescription)
+            }
+            if cloud.httpStatus == 409 {
+                return .failure(code: "conflict", message: cloud.localizedDescription)
+            }
             if cloud.httpStatus == 404 {
                 let missingItem = cloud.detail == "Video not found" ||
-                    cloud.detail == "not_found"
+                    cloud.detail == "Folder not found" || cloud.detail == "not_found"
                 return .failure(code: missingItem ? "not_found" : "not_configured",
                                 message: cloud.localizedDescription)
             }
@@ -577,6 +629,12 @@ final class AIMobileHostToolProvider {
             }
         }
         return .failure(code: "network", message: error.localizedDescription)
+    }
+
+    private static func folderJSON(_ folder: MaiCloudDriveFolder) -> [String: Any] {
+        ["id": folder.id, "name": folder.name,
+         "parent_id": folder.parentId as Any? ?? NSNull(),
+         "created_at": folder.createdAt, "updated_at": folder.updatedAt]
     }
 
     static func boundedLimit(_ arguments: [String: Any], fallback: Int = 50) -> Int {

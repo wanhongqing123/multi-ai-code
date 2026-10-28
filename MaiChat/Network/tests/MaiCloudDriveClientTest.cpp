@@ -167,6 +167,15 @@ unsigned completeCalls(const std::string& state) {
 
 int main(int argc, char** argv) {
     require(argc == 5, "expected endpoint, certificate, unrelated certificate, directory");
+    require(mai_cloud_drive_folder_name_valid("Travel") == 1 &&
+            mai_cloud_drive_folder_name_valid("\xe6\x97\x85\xe8\xa1\x8c \xf0\x9f\x8c\x8d") == 1,
+            "folder validation rejected a valid Unicode name");
+    for (const char* invalid : {"\xc2\xa0" "Travel", "Travel\xe3\x80\x80",
+            "Travel\xef\xbb\xbf", "Trip\xc2\x85" "File", "Trip\xe2\x80\xa8" "File",
+            "Trip\xe2\x80\xa9" "File", "bad\xc0\xaf", "bad\xed\xa0\x80",
+            "bad\xf4\x90\x80\x80", "bad\xf0\x9f\x8c"})
+        require(mai_cloud_drive_folder_name_valid(invalid) == 0,
+                "folder validation accepted Unicode controls, edge spaces or invalid UTF-8");
     MaiCloudDriveMediaInfo media{};
     require(mai_cloud_drive_media_info("Holiday.MOV", &media) == 1 &&
             std::strcmp(media.content_type_utf8, "video/quicktime") == 0 &&
@@ -301,6 +310,70 @@ int main(int argc, char** argv) {
     require(request(author, MAI_CLOUD_DRIVE_PLAY_LINK, target.c_str()).body.find(
             "https://localhost:") != std::string::npos,
             "owner did not receive short-lived HTTPS play URL");
+    require(request(author, MAI_CLOUD_DRIVE_CREATE_FOLDER,
+                    R"({"name":"../bad"})").status == MAI_CLOUD_DRIVE_INVALID_ARGUMENT,
+            "unsafe folder name was sent over the network");
+    const Call folderCreated = request(author, MAI_CLOUD_DRIVE_CREATE_FOLDER,
+                                       R"({"name":"Trips"})");
+    require(folderCreated.status == MAI_CLOUD_DRIVE_OK && folderCreated.httpStatus == 201,
+            "folder creation failed");
+    const std::string folderId = nlohmann::json::parse(folderCreated.body).at("id");
+    const std::string folderTarget = nlohmann::json{{"folder_id", folderId}}.dump();
+    for (const char* fault : {"missing_created", "string_created", "negative_updated"}) {
+        getState(endpoint, argv[2], (std::string("/test/folder-response?case=") + fault).c_str());
+        require(request(author, MAI_CLOUD_DRIVE_LIST_FOLDERS).status == MAI_CLOUD_DRIVE_INVALID_RESPONSE,
+                "folder tree accepted invalid timestamp metadata");
+        const std::string update = nlohmann::json{{"folder_id", folderId}, {"name", "Trips"}}.dump();
+        require(request(author, MAI_CLOUD_DRIVE_UPDATE_FOLDER, update.c_str()).status ==
+                    MAI_CLOUD_DRIVE_INVALID_RESPONSE,
+                "folder update accepted invalid timestamp metadata");
+    }
+    getState(endpoint, argv[2], "/test/folder-response");
+    const std::string childInput = nlohmann::json{{"name", "Camera"}, {"parent_id", folderId}}.dump();
+    const Call childCreated = request(author, MAI_CLOUD_DRIVE_CREATE_FOLDER, childInput.c_str());
+    require(childCreated.status == MAI_CLOUD_DRIVE_OK, "nested folder creation failed");
+    const std::string childId = nlohmann::json::parse(childCreated.body).at("id");
+    require(nlohmann::json::parse(request(author, MAI_CLOUD_DRIVE_LIST_FOLDERS).body)["folders"].size() == 2 &&
+            nlohmann::json::parse(request(viewer, MAI_CLOUD_DRIVE_LIST_FOLDERS).body)["folders"].empty(),
+            "folder tree lost nodes or leaked another account's metadata");
+    const std::string rename = nlohmann::json{{"folder_id", folderId}, {"name", "Travel"}}.dump();
+    require(request(author, MAI_CLOUD_DRIVE_UPDATE_FOLDER, rename.c_str()).status == MAI_CLOUD_DRIVE_OK,
+            "folder rename failed");
+    require(request(viewer, MAI_CLOUD_DRIVE_DELETE_FOLDER, folderTarget.c_str()).httpStatus == 404,
+            "other account deleted private folder");
+    require(request(author, MAI_CLOUD_DRIVE_DELETE_FOLDER, folderTarget.c_str()).httpStatus == 409,
+            "folder containing a child folder was deleted");
+    const std::string move = nlohmann::json{{"media_id", id}, {"folder_id", childId}}.dump();
+    for (const char* fault : {"missing_status", "wrong_status", "missing_name", "negative_size",
+                             "wrong_content_type", "wrong_media_type", "missing_created"}) {
+        getState(endpoint, argv[2], (std::string("/test/folder-response?case=") + fault).c_str());
+        require(request(author, MAI_CLOUD_DRIVE_MOVE_MEDIA, move.c_str()).status ==
+                    MAI_CLOUD_DRIVE_INVALID_RESPONSE,
+                "media move accepted incomplete or invalid ready media metadata");
+    }
+    getState(endpoint, argv[2], "/test/folder-response");
+    require(request(author, MAI_CLOUD_DRIVE_MOVE_MEDIA, move.c_str()).status == MAI_CLOUD_DRIVE_OK,
+            "media move into folder failed");
+    const auto rootPage = nlohmann::json::parse(request(author, MAI_CLOUD_DRIVE_LIST_MEDIA,
+                                                       R"({"folder_id":""})").body);
+    const std::string childFilter = nlohmann::json{{"folder_id", childId}}.dump();
+    const auto childPage = nlohmann::json::parse(request(author, MAI_CLOUD_DRIVE_LIST_MEDIA,
+                                                        childFilter.c_str()).body);
+    require(rootPage["videos"].empty() && childPage["videos"].size() == 1 &&
+            rootPage["quota"]["used_bytes"] == contents.size() &&
+            childPage["videos"][0]["folder_id"] == childId &&
+            nlohmann::json::parse(request(author, MAI_CLOUD_DRIVE_LIST_MEDIA).body)["videos"].size() == 1,
+            "folder filter lost root distinction, total quota or unfiltered compatibility");
+    require(request(author, MAI_CLOUD_DRIVE_DELETE_FOLDER, childFilter.c_str()).httpStatus == 409,
+            "nonempty media folder was deleted");
+    const std::string moveRoot = nlohmann::json{{"media_id", id}, {"folder_id", ""}}.dump();
+    require(request(author, MAI_CLOUD_DRIVE_MOVE_MEDIA, moveRoot.c_str()).status == MAI_CLOUD_DRIVE_OK,
+            "media move to root failed");
+    const std::string reparent = nlohmann::json{{"folder_id", childId}, {"parent_id", ""}}.dump();
+    require(request(author, MAI_CLOUD_DRIVE_UPDATE_FOLDER, reparent.c_str()).status == MAI_CLOUD_DRIVE_OK &&
+            request(author, MAI_CLOUD_DRIVE_DELETE_FOLDER, childFilter.c_str()).status == MAI_CLOUD_DRIVE_OK &&
+            request(author, MAI_CLOUD_DRIVE_DELETE_FOLDER, folderTarget.c_str()).status == MAI_CLOUD_DRIVE_OK,
+            "folder reparent or empty folder deletion failed");
     require(request(viewer, MAI_CLOUD_DRIVE_DELETE_VIDEO, target.c_str()).httpStatus == 404,
             "viewer deleted another account's video");
     require(request(author, MAI_CLOUD_DRIVE_DELETE_VIDEO, target.c_str()).status ==

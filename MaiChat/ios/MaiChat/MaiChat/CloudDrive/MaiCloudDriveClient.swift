@@ -10,8 +10,21 @@ struct MaiCloudDriveVideo: Decodable, Identifiable, Sendable {
     let contentType: String
     let mediaType: String?
     let createdAt: Int64
+    let folderId: String?
 
     var isImage: Bool { mediaType == "image" || contentType.hasPrefix("image/") }
+}
+
+struct MaiCloudDriveFolder: Decodable, Sendable {
+    let id: String
+    let name: String
+    let parentId: String?
+    let createdAt: Int64
+    let updatedAt: Int64
+}
+
+private struct MaiCloudDriveFolders: Decodable {
+    let folders: [MaiCloudDriveFolder]
 }
 
 struct MaiCloudDriveQuota: Decodable, Sendable {
@@ -307,11 +320,50 @@ struct MaiCloudDriveClient: Sendable {
         return try decoder.decode(type, from: data)
     }
 
-    func list(before: String? = nil) async throws -> MaiCloudDrivePage {
-        let payload = before.map { ["before": $0] } ?? [:]
+    // A nil folder preserves the account-wide media view. An empty folder ID
+    // explicitly selects the root; a UUID selects one folder's direct media.
+    func list(before: String? = nil, folderID: String? = nil) async throws -> MaiCloudDrivePage {
+        var payload = before.map { ["before": $0] } ?? [:]
+        if let folderID { payload["folder_id"] = folderID }
         return try decode(MaiCloudDrivePage.self,
                           from: await request(action: MAI_CLOUD_DRIVE_LIST_VIDEOS,
                                               payload: payload))
+    }
+
+    func listFolders() async throws -> [MaiCloudDriveFolder] {
+        try decode(MaiCloudDriveFolders.self,
+                   from: await request(action: MAI_CLOUD_DRIVE_LIST_FOLDERS,
+                                       payload: [:])).folders
+    }
+
+    func createFolder(name: String, parentID: String? = nil)
+        async throws -> MaiCloudDriveFolder {
+        var payload = ["name": name]
+        if let parentID { payload["parent_id"] = parentID }
+        return try decode(MaiCloudDriveFolder.self,
+                          from: await request(action: MAI_CLOUD_DRIVE_CREATE_FOLDER,
+                                              payload: payload))
+    }
+
+    // nil leaves the parent unchanged; an empty string moves to the root.
+    func updateFolder(id: String, name: String? = nil, parentID: String? = nil)
+        async throws -> MaiCloudDriveFolder {
+        var payload = ["folder_id": id]
+        if let name { payload["name"] = name }
+        if let parentID { payload["parent_id"] = parentID }
+        return try decode(MaiCloudDriveFolder.self,
+                          from: await request(action: MAI_CLOUD_DRIVE_UPDATE_FOLDER,
+                                              payload: payload))
+    }
+
+    func deleteFolder(id: String) async throws {
+        _ = try await request(action: MAI_CLOUD_DRIVE_DELETE_FOLDER,
+                              payload: ["folder_id": id])
+    }
+
+    func moveMedia(id: String, folderID: String) async throws {
+        _ = try await request(action: MAI_CLOUD_DRIVE_MOVE_MEDIA,
+                              payload: ["media_id": id, "folder_id": folderID])
     }
 
     func delete(videoID: String) async throws {

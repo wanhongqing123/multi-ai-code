@@ -31,6 +31,8 @@ import org.json.JSONObject;
 
 final class MaiCloudDrive {
     static final int LIST = 1, PLAY_LINK = 2, DELETE = 3, THUMBNAIL_LINK = 5;
+    static final int LIST_FOLDERS = 7, CREATE_FOLDER = 8, UPDATE_FOLDER = 9,
+        DELETE_FOLDER = 10, MOVE_MEDIA = 11;
     static final int OK = 0, CANCELED = 6, INSUFFICIENT_SPACE = 11;
     static final long MAX_VIDEO_BYTES = 2_000_000_000L;
     static final long QUOTA_BYTES = 10_000_000_000L;
@@ -333,6 +335,44 @@ final class MaiCloudDrive {
             activeCancel = handle;
             return true;
         }
+    }
+
+    void listFolders(Consumer<Result> completion) {
+        request(LIST_FOLDERS, new JSONObject(), completion);
+    }
+
+    void createFolder(String name, String parentId, Consumer<Result> completion) {
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("name", name);
+            if (parentId != null) payload.put("parent_id", parentId);
+        } catch (org.json.JSONException impossible) { throw new IllegalArgumentException(impossible); }
+        request(CREATE_FOLDER, payload, completion);
+    }
+
+    // null keeps the parent unchanged; an empty string moves to the root.
+    void updateFolder(String id, String name, String parentId, Consumer<Result> completion) {
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("folder_id", id);
+            if (name != null) payload.put("name", name);
+            if (parentId != null) payload.put("parent_id", parentId);
+        } catch (org.json.JSONException impossible) { throw new IllegalArgumentException(impossible); }
+        request(UPDATE_FOLDER, payload, completion);
+    }
+
+    void deleteFolder(String id, Consumer<Result> completion) {
+        JSONObject payload = new JSONObject();
+        try { payload.put("folder_id", id); }
+        catch (org.json.JSONException impossible) { throw new IllegalArgumentException(impossible); }
+        request(DELETE_FOLDER, payload, completion);
+    }
+
+    void moveMedia(String id, String folderId, Consumer<Result> completion) {
+        JSONObject payload = new JSONObject();
+        try { payload.put("media_id", id); payload.put("folder_id", folderId); }
+        catch (org.json.JSONException impossible) { throw new IllegalArgumentException(impossible); }
+        request(MOVE_MEDIA, payload, completion);
     }
 
     void request(int action, JSONObject payload, Consumer<Result> completion) {

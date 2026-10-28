@@ -71,10 +71,22 @@ OSS 事实；核对成功可直接删除元数据，不重新占用用户容量�
 | `GET /v1/cloud-drive/videos/uploads/{id}/parts` | OSS 分片事实列表；已完成返回 `status:"ready"`；过期返回 410 |
 | `POST /v1/cloud-drive/videos/uploads/{id}/complete` | 空 JSON；服务端核对并组装，返回 `status:"ready"`，可重复调用 |
 | `DELETE /v1/cloud-drive/videos/uploads/{id}` | 取消上传，执行 OSS abort 与删除；失败返回 202 并重试 |
-| `GET /v1/cloud-drive/videos?before=` | 只列出本人已完成文件，50 条游标分页；每项有 `media_type: image|video`，并包含 `quota` |
+| `GET /v1/cloud-drive/videos?before=&folder_id=` | 只列出本人已完成文件，50 条游标分页；省略 `folder_id` 列出全部，空字符串只列根目录，UUID 只列该目录直属文件；每项有 `media_type: image|video`、`folder_id: null|UUID`，并包含 `quota` |
 | `GET /v1/cloud-drive/videos/{id}/play-link` | 只向所有者签发 60 秒私有原文件读取 URL，并返回 `size_bytes` / `content_type` 供客户端下载前检查空间 |
 | `GET /v1/cloud-drive/videos/{id}/thumbnail-link` | 只向所有者签发 60 秒私有 OSS 缩图或第 0 毫秒视频截帧 URL；返回 `thumbnail_url`、`thumbnail_expires_in`、`content_type: image/jpeg` |
 | `DELETE /v1/cloud-drive/videos/{id}` | 删除本人文件；失败返回 202 并重试 |
+| `PATCH /v1/cloud-drive/videos/{id}` | `{folder_id:UUID|""}` 移动本人已完成文件；空字符串表示根目录；返回含 `video_id`、`folder_id` 的文件元数据 |
+| `GET /v1/cloud-drive/folders` | 返回 `{folders:[{id,name,parent_id,created_at,updated_at}]}`；当前账号全部目录，`parent_id:null` 表示根目录下的目录 |
+| `POST /v1/cloud-drive/folders` | `{name,parent_id?:UUID|""}` 创建目录；省略或空字符串表示放在根目录；返回新目录对象，HTTP 201 |
+| `PATCH /v1/cloud-drive/folders/{id}` | `{name?,parent_id?:UUID|""}` 重命名或移动目录，至少一项；返回更新后的目录对象 |
+| `DELETE /v1/cloud-drive/folders/{id}` | 仅删除空目录；存在子目录或未删除文件返回 409，不递归删除；成功返回 `{folder_id,status:"deleted"}` |
+
+文件夹由 Agent 工具管理，现有云盘列表仍保持全部文件的扁平展示。每账号最多
+1000 个目录；名称最多 240 UTF-8 字节、按 NFC 规范化后同级区分大小写且不可重名，
+不接受路径分隔符、控制字符和跨平台非法文件名。创建与移动均验证所有权，
+目录不能移入自身或其子孙。目录只组织数据库元数据，既有 OSS 对象键、上传、
+签名读取与容量计算不变。账号最终注销会清理目录元数据；这些接口不适用于
+独立的会话附件空间。
 
 ### 创作中心会话附件
 

@@ -51,7 +51,7 @@ def main():
         worker.start()
         try:
             env = os.environ.copy()
-            env["QT_QPA_PLATFORM"] = "offscreen"
+            env["QT_QPA_PLATFORM"] = env.get("MAICHAT_CLOUD_UI_PLATFORM", "offscreen")
             screenshots = env.get("MAICHAT_CLOUD_UI_SCREENSHOTS", directory)
             os.makedirs(screenshots, exist_ok=True)
             server.thumbnail_path = os.path.join(screenshots, "cloud-test-image.jpg")

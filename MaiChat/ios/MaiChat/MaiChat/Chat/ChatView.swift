@@ -236,6 +236,19 @@ private struct RemoteIMImageLoadKey: Hashable, Sendable {
     let revision: UInt64
 }
 
+// Reuse the same bounded decoder/cache from UIKit media viewers as chat images.
+@MainActor
+enum MaiPreviewImageLoader {
+    static func image(at url: URL, maximumPixelSize: Int = 4096) async -> UIImage? {
+        guard let request = try? await RemoteIMBackgroundWork.metadata({
+            RemoteIMImageRequest(filePath: url.path,
+                                 maximumPixelSize: CGFloat(maximumPixelSize))
+        }), !Task.isCancelled else { return nil }
+        let decoded = await RemoteIMImagePipeline.shared.image(for: request)
+        return Task.isCancelled ? nil : decoded?.image
+    }
+}
+
 @MainActor
 private final class RemoteIMAsyncImageState: ObservableObject {
     @Published private(set) var image: UIImage?

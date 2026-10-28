@@ -12,6 +12,7 @@ const UPLOAD_TTL_MS = 7 * 24 * 60 * 60_000;
 const COMPLETION_HOLD_MS = 24 * 60 * 60_000;
 const CLEANUP_RETRY_MS = 60 * 60_000;
 const PAGE_SIZE = 50;
+const MAX_FOLDERS = 1000;
 
 function result(statusCode, body) { return { statusCode, body }; }
 
@@ -22,6 +23,19 @@ function validID(value) {
 
 function validUploadID(value) {
   return typeof value === 'string' && /^[A-Za-z0-9_+\/=-]{1,512}$/.test(value);
+}
+
+function validFolderName(value) {
+  return typeof value === 'string' && value === value.trim() &&
+    value.length > 0 && Buffer.byteLength(value,'utf8') <= 240 &&
+    Buffer.byteLength(value.normalize('NFC'),'utf8') <= 240 &&
+    value !== '.' && value !== '..' && !/[. ]$/u.test(value) &&
+    !/[\u0000-\u001f\u007f-\u009f\u2028\u2029<>:"|?*/\\]/u.test(value) &&
+    !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value);
+}
+
+function folderID(value) {
+  return value === '' ? null : validID(value) ? value : false;
 }
 
 function mediaType(name, mode = 'drive') {
@@ -130,7 +144,108 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         row.content_type.startsWith('audio/') ? 'audio' :
         row.content_type.startsWith('video/') ? 'video' : 'file',
       ...(mode === 'session' ? { attachment_id:row.id,room_key:row.room_key } : {}),
+      ...(mode === 'drive' ? { folder_id:row.folder_id ?? null } : {}),
       created_at:row.created_at };
+  }
+
+  const ownFolder = (id,principal) => db.prepare(`SELECT * FROM cloud_drive_folders
+    WHERE id=? AND owner_user_id=?`).get(id,principal.user_id);
+  const publicFolder = row => ({ id:row.id,name:row.name,parent_id:row.parent_id,
+    created_at:row.created_at,updated_at:row.updated_at });
+  const folderExists = (id,principal) => id === null || Boolean(ownFolder(id,principal));
+  const siblingExists = (name,parentId,principal,except = null) =>
+    Boolean(db.prepare(`SELECT 1 FROM cloud_drive_folders
+      WHERE owner_user_id=? AND parent_id IS ? AND name=? AND (? IS NULL OR id<>?)`)
+      .get(principal.user_id,parentId,name,except,except));
+
+  function listFolders(principal) {
+    const rows = db.prepare(`SELECT * FROM cloud_drive_folders
+      WHERE owner_user_id=? ORDER BY created_at,id`).all(principal.user_id);
+    return result(200,{ folders:rows.map(publicFolder) });
+  }
+
+  function createFolder(body,principal) {
+    const parent = Object.hasOwn(body,'parent_id') ? folderID(body.parent_id) : null;
+    if (!validFolderName(body.name) || parent === false)
+      return result(400,{ error:'Invalid folder name or parent' });
+    const name = body.name.normalize('NFC');
+    return db.transaction(() => {
+      if (!db.prepare('SELECT 1 FROM users WHERE id=? AND disabled_at IS NULL')
+        .get(principal.user_id))
+        return result(401,{ error:'Account is no longer active' });
+      if (!folderExists(parent,principal)) return result(404,{ error:'Folder not found' });
+      if (siblingExists(name,parent,principal))
+        return result(409,{ error:'A folder with that name already exists' });
+      const count = db.prepare(`SELECT COUNT(*) AS count FROM cloud_drive_folders
+        WHERE owner_user_id=?`).get(principal.user_id).count;
+      if (count >= MAX_FOLDERS) return result(429,{ error:'Folder limit reached' });
+      const id = newID();
+      if (!validID(id)) throw new Error('Invalid cloud folder ID');
+      const timestamp = now();
+      db.prepare(`INSERT INTO cloud_drive_folders
+        (id,owner_user_id,name,parent_id,created_at,updated_at) VALUES(?,?,?,?,?,?)`)
+        .run(id,principal.user_id,name,parent,timestamp,timestamp);
+      return result(201,publicFolder(ownFolder(id,principal)));
+    }).immediate();
+  }
+
+  function updateFolder(id,body,principal) {
+    if (!validID(id)) return result(404,{ error:'Folder not found' });
+    const rename = Object.hasOwn(body,'name');
+    const move = Object.hasOwn(body,'parent_id');
+    const parent = move ? folderID(body.parent_id) : null;
+    if ((!rename && !move) || (rename && !validFolderName(body.name)) ||
+        (move && parent === false))
+      return result(400,{ error:'Invalid folder update' });
+    return db.transaction(() => {
+      const folder = ownFolder(id,principal);
+      if (!folder) return result(404,{ error:'Folder not found' });
+      const parentId = move ? parent : folder.parent_id;
+      const name = rename ? body.name.normalize('NFC') : folder.name;
+      if (!folderExists(parentId,principal)) return result(404,{ error:'Folder not found' });
+      if (parentId !== null && db.prepare(`WITH RECURSIVE ancestors(id,parent_id) AS (
+          SELECT id,parent_id FROM cloud_drive_folders WHERE id=? AND owner_user_id=?
+          UNION SELECT f.id,f.parent_id FROM cloud_drive_folders f JOIN ancestors a
+            ON f.id=a.parent_id WHERE f.owner_user_id=?
+        ) SELECT 1 FROM ancestors WHERE id=?`)
+        .get(parentId,principal.user_id,principal.user_id,id))
+        return result(409,{ error:'A folder cannot be moved into itself or a descendant' });
+      if (siblingExists(name,parentId,principal,id))
+        return result(409,{ error:'A folder with that name already exists' });
+      db.prepare(`UPDATE cloud_drive_folders SET name=?,parent_id=?,updated_at=?
+        WHERE id=? AND owner_user_id=?`).run(name,parentId,now(),id,principal.user_id);
+      return result(200,publicFolder(ownFolder(id,principal)));
+    }).immediate();
+  }
+
+  function deleteFolder(id,principal) {
+    if (!validID(id)) return result(404,{ error:'Folder not found' });
+    return db.transaction(() => {
+      if (!ownFolder(id,principal)) return result(404,{ error:'Folder not found' });
+      const child = db.prepare(`SELECT 1 FROM cloud_drive_folders
+        WHERE owner_user_id=? AND parent_id=? LIMIT 1`).get(principal.user_id,id);
+      const media = db.prepare(`SELECT 1 FROM cloud_drive_videos
+        WHERE owner_user_id=? AND folder_id=? AND status<>'deleted' LIMIT 1`)
+        .get(principal.user_id,id);
+      if (child || media) return result(409,{ error:'Folder is not empty' });
+      db.prepare('DELETE FROM cloud_drive_folders WHERE id=? AND owner_user_id=?')
+        .run(id,principal.user_id);
+      return result(200,{ folder_id:id,status:'deleted' });
+    }).immediate();
+  }
+
+  function moveMedia(id,body,principal) {
+    if (!validID(id)) return result(404,{ error:'Video not found' });
+    const target = Object.hasOwn(body,'folder_id') ? folderID(body.folder_id) : false;
+    if (target === false) return result(400,{ error:'Invalid folder placement' });
+    return db.transaction(() => {
+      const row = own(id,principal.user_id);
+      if (!row || row.status !== 'ready') return result(404,{ error:'Video not found' });
+      if (!folderExists(target,principal)) return result(404,{ error:'Folder not found' });
+      db.prepare(`UPDATE cloud_drive_videos SET folder_id=?
+        WHERE id=? AND owner_user_id=? AND status='ready'`).run(target,id,principal.user_id);
+      return result(200,publicReady({ ...row,folder_id:target }));
+    }).immediate();
   }
 
   async function settleDeletedCompletion(row,principal) {
@@ -408,14 +523,21 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     return result(200,publicReady(row));
   }
 
-  function list(principal,before) {
+  function list(principal,before,folderFilter) {
     const cursor = decodeCursor(before);
     if (cursor === false) return result(400,{ error:'Invalid video cursor' });
-    const rows = prepare(`SELECT id,name,size_bytes,content_type,created_at${mode === 'session' ? ',room_key' : ''}
+    const filter = folderFilter === undefined ? undefined : folderID(folderFilter);
+    if (filter === false || (mode === 'session' && filter !== undefined))
+      return result(400,{ error:'Invalid folder filter' });
+    if (filter !== undefined && !folderExists(filter,principal))
+      return result(404,{ error:'Folder not found' });
+    const rows = prepare(`SELECT id,name,size_bytes,content_type,created_at${mode === 'session' ? ',room_key' : ',folder_id'}
       FROM cloud_drive_videos WHERE owner_user_id=? AND status='ready'
+      ${filter !== undefined ? 'AND folder_id IS ?' : ''}
       AND (? IS NULL OR created_at<? OR (created_at=? AND id<?))
       ORDER BY created_at DESC,id DESC LIMIT ?`)
-      .all(principal.user_id,cursor?.[0] ?? null,cursor?.[0] ?? null,
+      .all(principal.user_id,...(filter !== undefined ? [filter] : []),
+        cursor?.[0] ?? null,cursor?.[0] ?? null,
         cursor?.[0] ?? null,cursor?.[1] ?? null,PAGE_SIZE+1);
     const page = rows.slice(0,PAGE_SIZE).map(row => ({ ...row,
       media_type:row.content_type.startsWith('image/') ? 'image' :
@@ -446,7 +568,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
         row.content_type.startsWith('audio/') ? 'audio' :
         row.content_type.startsWith('video/') ? 'video' : 'file',
       ...(mode === 'session' ? { attachment_id:row.id,name:row.name,
-        room_key:row.room_key } : {}) });
+        room_key:row.room_key } : { folder_id:row.folder_id ?? null }) });
   }
 
   async function thumbnail(id,principal) {
@@ -607,12 +729,20 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     if (!principal) return result(401,{ error:'Authentication required' });
     if (allowedAccountIds && !allowedAccountIds.has(principal.account_id))
       return result(404,{ error:'Not found' });
+    if (mode === 'drive' && path === '/v1/cloud-drive/folders') {
+      if (method === 'GET') return listFolders(principal);
+      if (method === 'POST') return createFolder(body,principal);
+    }
+    const folder = mode === 'drive' && path.match(/^\/v1\/cloud-drive\/folders\/([^/]+)$/);
+    if (folder && method === 'PATCH') return updateFolder(folder[1],body,principal);
+    if (folder && method === 'DELETE') return deleteFolder(folder[1],principal);
     if (method === 'POST' && path === `${root}/uploads`)
       return begin(body,principal);
     if (method === 'POST' && path === `${root}/cleanup-room`)
       return cleanupRoom(body,principal);
     if (method === 'GET' && path === root)
-      return list(principal,query?.get('before'));
+      return list(principal,query?.get('before'),
+        query?.has('folder_id') ? query.get('folder_id') : undefined);
     const part = path.match(new RegExp(`^${root}/uploads/([^/]+)/parts/([^/]+)/sign$`));
     if (part && method === 'POST') return signOne(part[1],part[2],body,principal);
     const upload = path.match(new RegExp(`^${root}/uploads/([^/]+)(/parts|/complete)?$`));
@@ -629,6 +759,8 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
       return thumbnail(item[1],principal);
     if (item && !item[2] && method === 'DELETE')
       return remove(item[1],principal);
+    if (mode === 'drive' && item && !item[2] && method === 'PATCH')
+      return moveMedia(item[1],body,principal);
     return result(404,{ error:'Not found' });
   }
 

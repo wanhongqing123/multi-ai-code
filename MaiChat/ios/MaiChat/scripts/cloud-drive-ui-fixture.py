@@ -42,10 +42,14 @@ class IOSCloudHandler(CloudHandler):
                          "size_bytes": self.server.size,
                          "content_type": self.server.content_type,
                          "media_type": self.server.media_type(),
+                         "folder_id": self.server.folder_id,
                          "created_at": 1_761_300_000_000}
                 reserved = (self.server.size if self.server.status == "uploading"
                             and account == "author" else 0)
                 used = self.server.size if ready else 0
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                if "folder_id" in query and (query["folder_id"][0] or None) != self.server.folder_id:
+                    ready = False
             self.reply(200, {"videos": [video] if ready else [],
                 "next_cursor": None,
                 "quota": {"used_bytes": used, "reserved_bytes": reserved,

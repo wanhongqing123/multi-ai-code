@@ -33,7 +33,7 @@ int main() {
                                    lastArguments = arguments;
                                    return MaiToolResult::success("{\"ok\":true}");
                                });
-    require(tools.specs().size() == 9, "cloud tool count changed");
+    require(tools.specs().size() == 14, "cloud tool count changed");
     for (const auto& spec : tools.specs()) {
         require(nlohmann::json::parse(spec.parametersJson, nullptr, false).is_object(),
                 "cloud tool schema is invalid JSON");
@@ -42,7 +42,11 @@ int main() {
         const bool write = spec.name == "maichat_cloud_drive_upload_media" ||
                            spec.name == "maichat_cloud_drive_resume_upload" ||
                            spec.name == "maichat_cloud_drive_abort_upload" ||
-                           spec.name == "maichat_cloud_drive_delete_media";
+                           spec.name == "maichat_cloud_drive_delete_media" ||
+                           spec.name == "maichat_cloud_drive_create_folder" ||
+                           spec.name == "maichat_cloud_drive_update_folder" ||
+                           spec.name == "maichat_cloud_drive_delete_folder" ||
+                           spec.name == "maichat_cloud_drive_move_media";
         require(tool->requiresApproval("{}") == write, "cloud tool approval policy is wrong");
         require(tool->requiresPerCallApproval("{}") == write,
                 "cloud write must ask in prompting modes");
@@ -76,6 +80,42 @@ int main() {
     MaiTool* list = tools.findForModel("maichat_cloud_drive_list_media");
     require(!list->execute("{}", context).hasError(), "read-only list failed");
     require(list->execute(R"({"before":""})", context).hasError(), "empty list cursor was accepted");
+    require(!list->execute(R"({"folder_id":""})", context).hasError(),
+            "root folder filter was rejected");
+    require(nlohmann::json::parse(lastArguments)["folder_id"] == "",
+            "root filter was lost");
+    require(list->execute(R"({"folder_id":null})", context).hasError(),
+            "null folder filter was accepted");
+    MaiTool* createFolder = tools.findForModel("maichat_cloud_drive_create_folder");
+    MaiTool* updateFolder = tools.findForModel("maichat_cloud_drive_update_folder");
+    MaiTool* deleteFolder = tools.findForModel("maichat_cloud_drive_delete_folder");
+    MaiTool* moveMedia = tools.findForModel("maichat_cloud_drive_move_media");
+    require(!tools.findForModel("maichat_cloud_drive_list_folders")->execute("{}", context).hasError(),
+            "folder tree was not exposed to the model");
+    require(!createFolder->execute(R"({"name":"Travel","parent_id":"123E4567-E89B-42D3-A456-426614174000"})",
+                                   context).hasError(), "nested folder create failed");
+    require(nlohmann::json::parse(lastArguments)["parent_id"] == "123e4567-e89b-42d3-a456-426614174000",
+            "folder parent ID was not normalized");
+    require(!updateFolder->execute(R"({"folder_id":"123E4567-E89B-42D3-A456-426614174000","name":"Trips","parent_id":""})",
+                                   context).hasError(), "folder rename and reparent failed");
+    require(!moveMedia->execute(R"({"media_id":"123E4567-E89B-42D3-A456-426614174001","folder_id":""})",
+                                context).hasError(), "move to root failed");
+    const int beforeInvalidFolder = calls;
+    for (const char* name : {"", "..", "a/b", "a\\b", " space", "line\n"}) {
+        const auto arguments = nlohmann::json{{"name", name}}.dump();
+        require(createFolder->execute(arguments, context).hasError(), "unsafe folder name reached host");
+    }
+    require(createFolder->execute(nlohmann::json{{"name", std::string("a\0b", 3)}}.dump(), context).hasError(),
+            "embedded NUL folder name reached host");
+    require(updateFolder->execute(R"({"folder_id":"123e4567-e89b-42d3-a456-426614174000"})",
+                                   context).hasError(), "empty folder update reached host");
+    require(deleteFolder->execute(R"({"folder_id":"bad"})", context).hasError(),
+            "invalid folder deletion reached host");
+    require(moveMedia->execute(R"({"media_id":"123e4567-e89b-42d3-a456-426614174000","folder_id":"bad"})",
+                                context).hasError(), "invalid move target reached host");
+    require(moveMedia->execute(R"({"media_id":"123e4567-e89b-42d3-a456-426614174000","folder_id":"","recursive":true})",
+                                context).hasError(), "unknown move argument reached host");
+    require(calls == beforeInvalidFolder, "invalid folder arguments reached host");
     require(tools.findForModel("maichat_cloud_drive_open_media")
                 ->execute(R"({"media_id":"not-a-media-id"})", context)
                 .hasError(),

@@ -77,6 +77,26 @@ int main(int argc, char** argv) {
     const QJsonObject first = output(registry.findForModel("maichat_cloud_drive_list_media")->execute("{}", context));
     require(first.value(QStringLiteral("media")).toArray().isEmpty(), "private cloud fixture was not initially empty");
 
+    const auto folderCall = [&](const char* tool, const QJsonObject& arguments) {
+        MaiTool* registered = registry.findForModel(tool);
+        require(registered != nullptr, "folder tool was not registered for the model");
+        return output(registered->execute(QJsonDocument(arguments)
+            .toJson(QJsonDocument::Compact).toStdString(), context));
+    };
+    require(folderCall("maichat_cloud_drive_list_folders", {})
+        .value(QStringLiteral("folders")).toArray().isEmpty(), "folder fixture was not empty");
+    const QString folderId = folderCall("maichat_cloud_drive_create_folder",
+        {{QStringLiteral("name"), QStringLiteral("项目")}}).value(QStringLiteral("id")).toString();
+    require(!folderId.isEmpty(), "create folder did not return its ID");
+    const QString nestedId = folderCall("maichat_cloud_drive_create_folder",
+        {{QStringLiteral("name"), QStringLiteral("素材")}, {QStringLiteral("parent_id"), folderId}})
+        .value(QStringLiteral("id")).toString();
+    require(!nestedId.isEmpty(), "nested folder did not return its ID");
+    require(folderCall("maichat_cloud_drive_update_folder",
+        {{QStringLiteral("folder_id"), nestedId}, {QStringLiteral("name"), QStringLiteral("视频")},
+         {QStringLiteral("parent_id"), QString()}}).value(QStringLiteral("name")) == QStringLiteral("视频"),
+        "folder rename/move did not reach the ordinary cloud API");
+
     MaiTool* upload = registry.findForModel("maichat_cloud_drive_upload_media");
     require(upload && upload->requiresPerCallApproval("{}"), "upload lost per-call approval");
     const QByteArray uploadArgs =
@@ -127,6 +147,23 @@ int main(int argc, char** argv) {
     require(!videoId.isEmpty() && !listedVideo.contains(QStringLiteral("id")) &&
             listedVideo.value(QStringLiteral("media_type")) == QStringLiteral("video"),
             "Desktop cloud media list must expose one media_id and type");
+
+    require(folderCall("maichat_cloud_drive_move_media",
+        {{QStringLiteral("media_id"), videoId}, {QStringLiteral("folder_id"), folderId}})
+        .value(QStringLiteral("folder_id")) == folderId, "file did not move into its folder");
+    require(folderCall("maichat_cloud_drive_list_media", {{QStringLiteral("folder_id"), QString()}})
+        .value(QStringLiteral("media")).toArray().isEmpty(), "root filtering exposed nested files");
+    const QJsonArray inFolder = folderCall("maichat_cloud_drive_list_media",
+        {{QStringLiteral("folder_id"), folderId}}).value(QStringLiteral("media")).toArray();
+    require(inFolder.size() == 1 && inFolder.first().toObject()
+        .value(QStringLiteral("folder_id")) == folderId, "folder list lost its file association");
+    require(folderCall("maichat_cloud_drive_move_media",
+        {{QStringLiteral("media_id"), videoId}, {QStringLiteral("folder_id"), QString()}})
+        .value(QStringLiteral("folder_id")).isNull(), "file did not return to root");
+    for (const QString& id : {folderId, nestedId}) {
+        require(folderCall("maichat_cloud_drive_delete_folder", {{QStringLiteral("folder_id"), id}})
+            .value(QStringLiteral("status")) == QStringLiteral("deleted"), "empty folder was not deleted");
+    }
 
     const QByteArray idArgs =
         QJsonDocument(QJsonObject{{QStringLiteral("media_id"), videoId}}).toJson(QJsonDocument::Compact);

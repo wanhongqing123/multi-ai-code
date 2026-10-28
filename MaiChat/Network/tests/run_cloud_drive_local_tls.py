@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -38,6 +39,9 @@ class Fixture(http.server.ThreadingHTTPServer):
         self.content_type = ""
         self.size = 0
         self.room_key = ""
+        self.folders = {}
+        self.folder_id = None
+        self.folder_response_case = ""
 
     def media_type(self):
         if self.content_type.startswith("image/"):
@@ -90,8 +94,93 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def origin(self):
         return f"https://localhost:{self.server.server_port}"
 
+    def folder_request(self, method, body=None):
+        path = self.path_only()
+        root = "/auth/v1/cloud-drive/folders"
+        if path != root and not path.startswith(root + "/"):
+            return False
+        account = self.account()
+        if not account:
+            self.reply(401, {"error": "auth_required"})
+            return True
+        folder_id = path[len(root) + 1:] if path != root else None
+        body = body or {}
+        with self.server.lock:
+            folders = self.server.folders
+            current = folders.get(folder_id)
+            def public(folder):
+                value = {key: value for key, value in folder.items() if key != "owner"}
+                case = self.server.folder_response_case
+                if case == "missing_created":
+                    value.pop("created_at", None)
+                elif case == "string_created":
+                    value["created_at"] = "1793181600000"
+                elif case == "negative_updated":
+                    value["updated_at"] = -1
+                return value
+            def parent_valid(parent):
+                return parent is None or (parent in folders and folders[parent]["owner"] == account)
+            if method == "GET" and folder_id is None:
+                self.reply(200, {"folders": [public(folder) for folder in folders.values()
+                                            if folder["owner"] == account]})
+            elif method == "POST" and folder_id is None:
+                name, parent = body.get("name"), body.get("parent_id") or None
+                if not isinstance(name, str) or not name or "/" in name or "\\" in name:
+                    self.reply(400, {"error": "invalid_name"})
+                elif not parent_valid(parent):
+                    self.reply(404, {"error": "parent_not_found"})
+                elif any(f["owner"] == account and f["name"] == name and
+                         f["parent_id"] == parent for f in folders.values()):
+                    self.reply(409, {"error": "duplicate_name"})
+                else:
+                    folder_id = str(uuid.uuid4())
+                    folder = {"id": folder_id, "name": name, "parent_id": parent,
+                              "created_at": 1793181600000, "updated_at": 1793181600000,
+                              "owner": account}
+                    folders[folder_id] = folder
+                    self.reply(201, public(folder))
+            elif not current or current["owner"] != account:
+                self.reply(404, {"error": "not_found"})
+            elif method == "PATCH":
+                parent = (body.get("parent_id") or None) if "parent_id" in body else current["parent_id"]
+                name = body.get("name", current["name"])
+                ancestor = parent
+                cycle = False
+                while ancestor in folders:
+                    if ancestor == folder_id:
+                        cycle = True
+                        break
+                    ancestor = folders[ancestor]["parent_id"]
+                if not parent_valid(parent):
+                    self.reply(404, {"error": "parent_not_found"})
+                elif cycle or any(f["owner"] == account and f["id"] != folder_id and
+                                  f["parent_id"] == parent and f["name"] == name
+                                  for f in folders.values()):
+                    self.reply(409, {"error": "invalid_move_or_duplicate"})
+                else:
+                    current.update(name=name, parent_id=parent)
+                    self.reply(200, public(current))
+            elif method == "DELETE":
+                nonempty = any(f["parent_id"] == folder_id for f in folders.values()) or (
+                    account == "author" and self.server.folder_id == folder_id and
+                    self.server.status in ("ready", "uploading", "completing"))
+                if nonempty:
+                    self.reply(409, {"error": "Folder is not empty"})
+                else:
+                    del folders[folder_id]
+                    self.reply(200, {"folder_id": folder_id, "status": "deleted"})
+            else:
+                self.reply(404, {"error": "not_found"})
+        return True
+
     def do_GET(self):
         path = self.path_only()
+        if path == "/test/folder-response":
+            case = parse_qs(urlsplit(self.path).query).get("case", [""])[0]
+            with self.server.lock:
+                self.server.folder_response_case = case
+            self.reply(200, {"case": case})
+            return
         if path == "/test/state":
             with self.server.lock:
                 self.reply(200, {"sessions": self.server.sessions,
@@ -144,17 +233,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not account:
             self.reply(401, {"error": "auth_required"})
             return
+        if self.folder_request("GET"):
+            return
         if path == "/auth/v1/cloud-drive/videos":
             with self.server.lock:
                 videos = [{"id": VIDEO_ID, "name": self.server.name,
                     "size_bytes": self.server.size,
                     "content_type": self.server.content_type,
                     "media_type": self.server.media_type(),
+                    "folder_id": self.server.folder_id,
                     "created_at": "2026-10-24T00:00:00Z"}]
                 if account != "author" or self.server.status != "ready":
                     videos = []
+                used = self.server.size if account == "author" and self.server.status == "ready" else 0
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                if "folder_id" in query and (query["folder_id"][0] or None) != self.server.folder_id:
+                    videos = []
             self.reply(200, {"videos": videos, "next_cursor": None,
-                "quota": {"used_bytes": self.server.size if videos else 0,
+                "quota": {"used_bytes": used,
                           "reserved_bytes": 0, "limit_bytes": 10_000_000_000}})
             return
         if path == f"/auth/v1/cloud-drive/videos/uploads/{VIDEO_ID}/parts":
@@ -210,6 +306,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self.reply(400, {"error": "invalid_json"})
             return
+        if self.folder_request("POST", body):
+            return
         if session_mode and path == "/auth/v1/cloud-drive/videos/cleanup-room":
             room = ":".join(str(body.get(key, "")) for key in (
                 "owner_slot", "session_id"))
@@ -239,6 +337,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.server.size = body["size_bytes"]
                 self.server.name = body["name"]
                 self.server.content_type = body["content_type"]
+                self.server.folder_id = None
                 self.server.room_key = ":".join(str(body.get(key, "")) for key in (
                     "owner_slot", "session_id")) if session_mode else ""
                 self.server.part_bytes.clear()
@@ -339,9 +438,51 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def do_PATCH(self):
+        body = self.json_body()
+        if not isinstance(body, dict):
+            self.reply(400, {"error": "invalid_json"})
+            return
+        if self.folder_request("PATCH", body):
+            return
+        account = self.account()
+        if self.path_only() == f"/auth/v1/cloud-drive/videos/{VIDEO_ID}":
+            with self.server.lock:
+                folder_id = body.get("folder_id") or None
+                target = self.server.folders.get(folder_id)
+                if account != "author" or self.server.status != "ready" or (
+                        folder_id and (not target or target["owner"] != account)):
+                    self.reply(404, {"error": "not_found"})
+                    return
+                self.server.folder_id = folder_id
+                response = {"video_id": VIDEO_ID, "folder_id": folder_id,
+                    "status": "ready", "name": self.server.name, "size_bytes": self.server.size,
+                    "content_type": self.server.content_type, "media_type": self.server.media_type(),
+                    "created_at": 1793181600000}
+                case = self.server.folder_response_case
+                if case == "missing_status":
+                    response.pop("status")
+                elif case == "wrong_status":
+                    response["status"] = "uploading"
+                elif case == "missing_name":
+                    response.pop("name")
+                elif case == "negative_size":
+                    response["size_bytes"] = -1
+                elif case == "wrong_content_type":
+                    response["content_type"] = "application/octet-stream"
+                elif case == "wrong_media_type":
+                    response["media_type"] = "image"
+                elif case == "missing_created":
+                    response.pop("created_at")
+                self.reply(200, response)
+            return
+        self.reply(404, {"error": "not_found"})
+
     def do_DELETE(self):
         account = self.account()
         path = self.path_only()
+        if self.folder_request("DELETE"):
+            return
         if account != "author":
             self.reply(404, {"error": "not_found"})
             return

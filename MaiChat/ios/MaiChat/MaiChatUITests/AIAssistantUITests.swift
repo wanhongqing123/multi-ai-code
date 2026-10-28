@@ -612,8 +612,9 @@ final class AIAssistantUITests: XCTestCase {
             app.tap() // Trigger the first-use Photos interruption monitor.
         }
         XCTAssertTrue(app.staticTexts["已保存到相册"].waitForExistence(timeout: 60))
-        menu.tap()
-        app.buttons["删除"].tap()
+        let row = app.otherElements["cloud-drive-row-123e4567-e89b-42d3-a456-426614174000"]
+        row.swipeRight()
+        app.buttons["cloud-drive-delete-123e4567-e89b-42d3-a456-426614174000"].tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))
         app.terminate()
@@ -675,12 +676,16 @@ final class AIAssistantUITests: XCTestCase {
     }
 
     @MainActor func testCloudDriveImageUploadPreviewDelete() async throws {
+        continueAfterFailure = false
         #if targetEnvironment(simulator)
         let control = URL(string: "http://127.0.0.1:18449/test/cert")!
         guard let (certificate, response) = try? await URLSession.shared.data(from: control),
               (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw XCTSkip("需要本机云盘 TLS 测试服务")
         }
+        var reset = URLRequest(url: URL(string: "http://127.0.0.1:18449/test/reset")!)
+        reset.httpMethod = "POST"
+        _ = try await URLSession.shared.data(for: reset)
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test"]
         app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
@@ -717,14 +722,138 @@ final class AIAssistantUITests: XCTestCase {
         fullImage.lifetime = .keepAlways
         add(fullImage)
         close.tap()
-        let menu = app.buttons["cloud-drive-video-menu-\(id)"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        menu.tap()
-        app.buttons["删除"].tap()
+        XCTAssertFalse(app.buttons["cloud-drive-video-menu-\(id)"].exists,
+                       "图片可直接点开，不应再有重复的查看菜单")
+        let row = app.otherElements["cloud-drive-row-\(id)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["cloud-drive-delete-\(id)"].exists)
+        row.swipeRight()
+        let remove = app.buttons["cloud-drive-delete-\(id)"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertTrue(image.exists, "完整右滑只能显示删除按钮，不能直接删除文件")
+        let revealed = XCTAttachment(screenshot: app.screenshot())
+        revealed.name = "cloud-drive-image-right-swipe-delete"
+        revealed.lifetime = .keepAlways
+        add(revealed)
+        remove.tap()
+        XCTAssertTrue(app.buttons["删除文件"].waitForExistence(timeout: 5))
+        if app.buttons["取消"].exists { app.buttons["取消"].tap() }
+        else {
+            // Newer iOS presents this confirmation as an anchored popover;
+            // tapping its backdrop is the system's cancel interaction.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+        }
+        XCTAssertTrue(image.exists, "取消删除后文件应保留")
+        remove.tap()
         app.buttons["删除文件"].tap()
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 30))
         #else
         throw XCTSkip("云盘图片 UI 用例只运行于隔离模拟器")
+        #endif
+    }
+
+    @MainActor func testCloudDriveImagesPageContinuouslyAndKeepZoomGesture() throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-image-pager-test"]
+        app.launch()
+        app.buttons["cloud-drive-pager-fixture-open"].tap()
+        let counter = app.staticTexts["cloud-drive-image-counter"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 10))
+        XCTAssertTrue(counter.label.hasPrefix("1/3"))
+        let image = app.images["cloud-drive-image-preview"].firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        image.swipeRight()
+        XCTAssertTrue(counter.label.hasPrefix("1/3"), "第一张不能循环到末尾")
+        image.swipeLeft()
+        XCTAssertTrue(counter.label.hasPrefix("2/3"))
+        let retry = app.buttons["cloud-drive-image-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5), "加载失败应保留当前页并提供重试")
+        retry.tap()
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        image.doubleTap()
+        image.swipeLeft()
+        XCTAssertTrue(counter.label.hasPrefix("2/3"), "放大图片时横拖应只平移图片")
+        image.doubleTap()
+        image.swipeLeft()
+        XCTAssertTrue(counter.label.hasPrefix("3/3"))
+        image.swipeLeft()
+        XCTAssertTrue(counter.label.hasPrefix("3/3"), "最后一张不能循环到开头")
+        image.swipeRight()
+        XCTAssertTrue(counter.label.hasPrefix("2/3"))
+        let middle = XCTAttachment(screenshot: app.screenshot())
+        middle.name = "cloud-drive-image-pager-middle"
+        middle.lifetime = .keepAlways
+        add(middle)
+        image.swipeRight()
+        XCTAssertTrue(counter.label.hasPrefix("1/3"))
+        app.buttons["cloud-drive-image-close"].tap()
+        XCTAssertTrue(app.staticTexts["云盘图片缓存已清理"].waitForExistence(timeout: 5))
+        #else
+        throw XCTSkip("连续图片手势测试使用隔离模拟器素材")
+        #endif
+    }
+
+    @MainActor func testCloudDriveImagesAppendMetadataWithoutReplacingCurrentPage() throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-image-pager-test"]
+        app.launchEnvironment["MAICHAT_CLOUD_PAGER_APPEND_TEST"] = "YES"
+        app.launch()
+        app.buttons["cloud-drive-pager-fixture-open"].tap()
+        let counter = app.staticTexts["cloud-drive-image-counter"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 10))
+        XCTAssertTrue(counter.label.contains("已加载2"))
+        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate(
+            format: "label BEGINSWITH %@", "1/3"), object: counter)
+        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 10), .completed)
+        let image = app.images["cloud-drive-image-preview"].firstMatch
+        image.swipeLeft()
+        app.buttons["cloud-drive-image-retry"].tap()
+        image.swipeLeft()
+        XCTAssertTrue(counter.label.hasPrefix("3/3"), "追加页应能继续左滑进入")
+        app.buttons["cloud-drive-image-close"].tap()
+        XCTAssertTrue(app.staticTexts["云盘图片缓存已清理"].waitForExistence(timeout: 5))
+        #else
+        throw XCTSkip("分页元数据使用隔离模拟器素材")
+        #endif
+    }
+
+    @MainActor func testCloudDriveFolderAgentTools() async throws {
+        #if targetEnvironment(simulator)
+        let control = URL(string: "http://127.0.0.1:18449/test/cert")!
+        guard let (certificate, response) = try? await URLSession.shared.data(from: control),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机云盘 TLS 测试服务")
+        }
+        var reset = URLRequest(url: URL(string: "http://127.0.0.1:18449/test/reset")!)
+        reset.httpMethod = "POST"
+        _ = try await URLSession.shared.data(for: reset)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--cloud-drive-ui-test", "--cloud-drive-folder-tool-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_URL"] = "https://localhost:18448"
+        app.launchEnvironment["MAICHAT_LOCAL_CLOUD_DRIVE_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        let direct = app.buttons["cloud-drive-upload-sample"]
+        if !direct.exists {
+            let more = app.buttons["OverflowBarButtonItem"]
+            if more.waitForExistence(timeout: 10) { more.tap() }
+        }
+        let upload = direct.exists ? direct : app.buttons["上传样本"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 20))
+        upload.tap()
+        XCTAssertTrue(app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"]
+            .waitForExistence(timeout: 60))
+        app.buttons["cloud-drive-folder-tools-test"].tap()
+        XCTAssertTrue(app.staticTexts["云盘分组工具全链路通过"].waitForExistence(timeout: 60))
+        #else
+        throw XCTSkip("云盘工具链路使用隔离模拟器服务")
         #endif
     }
 

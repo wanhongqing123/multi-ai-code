@@ -465,7 +465,7 @@ void contract_concurrent_writes(MaiSessionStore& store, const char* which) {
 
     std::vector<std::thread> workers;
     for (int i = 0; i < kThreads; ++i) {
-        workers.emplace_back([&store, id = sessionIds[static_cast<std::size_t>(i)]] {
+        workers.emplace_back([&store, kPerThread, id = sessionIds[static_cast<std::size_t>(i)]] {
             for (int n = 0; n < kPerThread; ++n) {
                 MaiMessage message = makeMessage(MaiIdGenerator::newMessageId(), MaiRole::User);
                 message.parts.push_back(textPart(MaiIdGenerator::newPartId(), "x"));

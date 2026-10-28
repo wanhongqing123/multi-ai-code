@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
@@ -6,6 +7,7 @@
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -120,8 +122,13 @@ int main(int argc, char** argv) {
         CHECK(typed.code() == MaiErrorCode::NotConfigured);
         return 0;
     }
-    QThread::msleep(150);
-    app.processEvents();
+    QEventLoop inputDelivery;
+    QObject::connect(input, &QLineEdit::textChanged, &inputDelivery,
+                     [&inputDelivery](const QString& text) {
+                         if (text == QStringLiteral("computer OK")) inputDelivery.quit();
+                     });
+    QTimer::singleShot(2000, &inputDelivery, &QEventLoop::quit);
+    if (input->text() != QStringLiteral("computer OK")) inputDelivery.exec();
     CHECK(input->text() == QStringLiteral("computer OK"));
     CHECK(!controller->clear("owner"));
     return 0;

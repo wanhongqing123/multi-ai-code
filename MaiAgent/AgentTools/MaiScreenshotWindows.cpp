@@ -203,6 +203,28 @@ private:
     HRESULT mResult;
 };
 
+// Qt/OLE 已在界面线程初始化 STA，强行切换 MTA 会返回 RPC_E_CHANGED_MODE。
+// 截屏可沿用当前 STA；释放 COM 前清除 WinRT 工厂缓存，避免下次调用命中失效指针。
+class MaiWinRtApartment {
+public:
+    MaiWinRtApartment() {
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        } catch (const winrt::hresult_error& error) {
+            if (error.code() != RPC_E_CHANGED_MODE) throw;
+            winrt::init_apartment(winrt::apartment_type::single_threaded);
+        }
+    }
+
+    ~MaiWinRtApartment() {
+        winrt::clear_factory_cache();
+        winrt::uninit_apartment();
+    }
+
+    MaiWinRtApartment(const MaiWinRtApartment&) = delete;
+    MaiWinRtApartment& operator=(const MaiWinRtApartment&) = delete;
+};
+
 // 通过 Windows Imaging Component 将捕获像素编码为 PNG，并填写真实图像尺寸。
 // COM、像素布局或编码失败时返回错误，不输出不完整的截图字节。
 MaiError encodePng(const std::vector<std::uint8_t>& pixels, UINT sourceWidth, UINT sourceHeight,
@@ -364,7 +386,7 @@ MaiError captureDisplay(MaiScreenshot& screenshot) {
     }
     const HMONITOR monitor = ::MonitorFromPoint(pointer, MONITOR_DEFAULTTOPRIMARY);
     try {
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        MaiWinRtApartment apartment;
         using winrt::Windows::Graphics::Capture::GraphicsCaptureItem;
         if (!winrt::Windows::Graphics::Capture::GraphicsCaptureSession::IsSupported()) {
             return MaiError::make(MaiErrorCode::NotSupported,
@@ -389,7 +411,7 @@ MaiError captureWindow(const std::string& title, MaiScreenshot& screenshot) {
     MaiError error = findWindow(title, window);
     if (error.hasError()) return error;
     try {
-        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        MaiWinRtApartment apartment;
         using winrt::Windows::Graphics::Capture::GraphicsCaptureItem;
         if (!winrt::Windows::Graphics::Capture::GraphicsCaptureSession::IsSupported()) {
             return MaiError::make(MaiErrorCode::NotSupported,

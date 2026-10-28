@@ -35,9 +35,18 @@ final class CloudDriveDeviceReadOnlySmokeUITests: XCTestCase {
         XCTAssertTrue(counter.label.hasPrefix("1/"))
         let image = app.images["cloud-drive-image-preview"].firstMatch
         XCTAssertTrue(image.waitForExistence(timeout: 45))
+        let save = app.buttons["cloud-drive-image-save"]
+        let firstReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [firstReady], timeout: 45), .completed,
+                       "首张图片应已完成下载和解码")
         XCTAssertFalse(counter.label.hasPrefix("1/1 ·"), "需要至少两张现有图片验证翻页")
         app.swipeLeft()
         XCTAssertTrue(counter.label.hasPrefix("2/"), "左滑应显示第二张图片")
+        let secondReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [secondReady], timeout: 45), .completed,
+                       "第二张图片应已完成下载和解码")
         let second = XCTAttachment(screenshot: app.screenshot())
         second.name = "device-cloud-gallery-second-image"
         second.lifetime = .keepAlways

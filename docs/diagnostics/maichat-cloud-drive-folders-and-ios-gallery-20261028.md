@@ -1,6 +1,6 @@
 # 云盘目录工具与 iOS 图片连续浏览
 
-- 时间与基线：2026-10-28，macOS 开发机，工作树基于 `62b493b5b742975049580a177138c46aed69d941`。普通客户端与工具代码在同一工作树验收；生产部署与真机状态见后文。
+- 时间与基线：2026-10-28，macOS 开发机，工作树基于 `62b493b5b742975049580a177138c46aed69d941`。功能代码已提交推送 `54c65c6f14275d07863e323165a7eef25c618586`；普通客户端与工具复用同一核心，生产部署与真机状态见后文。
 - 用户操作：在创作中心通过 Agent 创建、重命名、移动、删除云盘目录，并把已有文件移入目录；iOS、Android 云盘页面保持简单列表，不增加目录管理菜单；Desktop 增加根目录/上一级导航、文件夹创建/改名/移动/删除空目录、文件移动和子目录上传归档。iOS 点击云盘图片后，在同一预览容器向左看下一张、向右看上一张，首尾停止；放大时横拖只平移图片。
 
 ## 目录的调用入口和边界
@@ -33,4 +33,4 @@
 - 先通过 better-sqlite3 在线备份至 `/opt/maichat/backups/cloud-folders-20261028T104447Z-a09adb09/auth.sqlite`，在克隆副本验证新增表/列迁移；未复制活跃 DB 文件或覆盖 live DB。原媒体全部旧列 SHA-256 `b7640056765094eb052194fdcbd817e7909bd0cbf5ccfc463b724763f5e64e62` 在备份、迁移、上线后与 root 独立回读始终一致；quick_check=ok、FK 错误为零。
 - 专用测试账号通过正式 HTTPS 创建三个测试目录、列出、改名、移动、拒绝循环和非空删除，随后三个目录清零并退出登录，原 active session 集合恢复。root 独立读生产目录总数为零、原媒体摘要不变；health=200，无凭据 auth/me 与 folders 为预期 401。候选使用现有线上 server/service；未部署之前尚未开放的 Session 附件路由，其路径仍 404。
 - 执行命令只请求重启 maichat-auth；现有 maichat-session-sync.service 的 Requires=maichat-auth.service 造成同秒联动重启。Auth/Session Sync 当前健康且近期错误日志为零；media 和 nginx 启动时间保持原值。回滚只需移除本轮 30 drop-in 并重启 auth，默认保留追加 schema；禁止自动恢复整库导致丢失上线后的登录或媒体元数据。
-- iPhone 14 Pro Max（iOS 27.2）最新 Debug App 已编译、签名核验并由 Xcode 安装，版本 2.2.4 (131)，MaiChat.debug.dylib SHA-256 `80340aec38a305b9895bead0bb3c1822d5f0b36bcb9a55d1d6f2239e78ce34c2`。首次真实图片只读 UI 测试在初始化前被系统“为 XCTest 输入 iPhone 密码 / Enable UI Automation”阻挡而超时，未执行产品断言；已通知用户在设备自行确认，未索要密码。真机最终滑动验收待此系统确认后续跑。
+- iPhone 14 Pro Max（iOS 27.2）最新 Debug App 已编译、签名核验并由 Xcode 安装，版本 2.2.4 (131)，MaiChat.debug.dylib SHA-256 `6c9d29ba2c71e7fcf1f13bebbb030c1174e46069f05014003cc3fb1fc48c399f`。首次真实图片只读 UI 测试在初始化前被系统“为 XCTest 输入 iPhone 密码 / Enable UI Automation”阻挡而超时，未执行产品断言；已通知用户在设备自行确认，未索要密码。系统确认页面关闭后继续验收，真实云盘 22 张图片中走通右滑仅露删除、收回操作、点击第一张原图、左滑第二张、右滑回第一张、首端不循环和关闭回原列表。初轮截图只有第二张加载态，故加强用例等待实际下载/解码和保存按钮可用，再跑最终用例 1/1、零跳过（`/private/tmp/maichat-cloud-gallery-device-decoded.xcresult`，45.27 秒），root 已亲看第二张完整 HEIC 画面。真实文件没有被移动、删除或上传；删除确认/取消/执行在隔离模拟器素材上验收。真机录屏命令返回设备不支持 devicectl Screen Recording，连续过渡录像证据采用模拟器的同一 pager 代码，真机保留右滑和解码完成截图。

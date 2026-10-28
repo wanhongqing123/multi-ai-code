@@ -27,6 +27,23 @@ private struct MaiCloudDriveFolders: Decodable {
     let folders: [MaiCloudDriveFolder]
 }
 
+private struct MaiCloudDriveReadyMedia: Decodable {
+    let videoId: String
+    let status: String
+    let name: String
+    let sizeBytes: UInt64
+    let contentType: String
+    let mediaType: String
+    let folderId: String?
+    let createdAt: Int64
+
+    var media: MaiCloudDriveVideo {
+        MaiCloudDriveVideo(id: videoId, name: name, sizeBytes: sizeBytes,
+            contentType: contentType, mediaType: mediaType, createdAt: createdAt,
+            folderId: folderId)
+    }
+}
+
 struct MaiCloudDriveQuota: Decodable, Sendable {
     let usedBytes: UInt64
     let reservedBytes: UInt64
@@ -364,6 +381,12 @@ struct MaiCloudDriveClient: Sendable {
     func moveMedia(id: String, folderID: String) async throws {
         _ = try await request(action: MAI_CLOUD_DRIVE_MOVE_MEDIA,
                               payload: ["media_id": id, "folder_id": folderID])
+    }
+
+    func renameMedia(id: String, name: String) async throws -> MaiCloudDriveVideo {
+        try decode(MaiCloudDriveReadyMedia.self,
+            from: await request(action: MAI_CLOUD_DRIVE_RENAME_MEDIA,
+                                payload: ["media_id": id, "name": name])).media
     }
 
     func delete(videoID: String) async throws {

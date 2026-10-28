@@ -157,6 +157,25 @@ int main(int argc, char** argv) {
         {{QStringLiteral("folder_id"), folderId}}).value(QStringLiteral("media")).toArray();
     require(inFolder.size() == 1 && inFolder.first().toObject()
         .value(QStringLiteral("folder_id")) == folderId, "folder list lost its file association");
+    MaiTool* rename = registry.findForModel("maichat_cloud_drive_rename_media");
+    require(rename != nullptr, "media rename tool was not registered");
+    const QString renamedVideo = QStringLiteral("项目视频.MP4");
+    const QJsonObject renamed = folderCall("maichat_cloud_drive_rename_media",
+        {{QStringLiteral("media_id"), videoId}, {QStringLiteral("name"), renamedVideo}});
+    require(renamed.value(QStringLiteral("video_id")) == videoId &&
+        renamed.value(QStringLiteral("name")) == renamedVideo &&
+        renamed.value(QStringLiteral("folder_id")) == folderId &&
+        renamed.value(QStringLiteral("size_bytes")) == listedVideo.value(QStringLiteral("size_bytes")) &&
+        renamed.value(QStringLiteral("content_type")) == listedVideo.value(QStringLiteral("content_type")),
+        "rename did not preserve video identity, folder, size and type");
+    require(folderCall("maichat_cloud_drive_list_media", {{QStringLiteral("folder_id"), folderId}})
+        .value(QStringLiteral("media")).toArray().first().toObject()
+        .value(QStringLiteral("name")) == renamedVideo, "renamed video did not update the media list");
+    const QByteArray badRename = QJsonDocument(QJsonObject{
+        {QStringLiteral("media_id"), videoId}, {QStringLiteral("name"), QStringLiteral("wrong.mov")}})
+        .toJson(QJsonDocument::Compact);
+    require(rename->execute(badRename.toStdString(), context).hasError(),
+            "media rename changed the video extension");
     require(folderCall("maichat_cloud_drive_move_media",
         {{QStringLiteral("media_id"), videoId}, {QStringLiteral("folder_id"), QString()}})
         .value(QStringLiteral("folder_id")).isNull(), "file did not return to root");
@@ -236,6 +255,13 @@ int main(int argc, char** argv) {
         QThread::msleep(20);
     }
     require(!listedImage.isEmpty(), "uploaded image was not listed as media");
+    const QJsonObject renamedImage = folderCall("maichat_cloud_drive_rename_media",
+        {{QStringLiteral("media_id"), listedImage.value(QStringLiteral("media_id"))},
+         {QStringLiteral("name"), QStringLiteral("海边照片.PNG")}});
+    require(renamedImage.value(QStringLiteral("name")) == QStringLiteral("海边照片.PNG") &&
+        renamedImage.value(QStringLiteral("size_bytes")) == listedImage.value(QStringLiteral("size_bytes")) &&
+        renamedImage.value(QStringLiteral("media_type")) == QStringLiteral("image"),
+        "image rename lost the name, size or media type");
     const QByteArray imageIdArgs = QJsonDocument(QJsonObject{
         {QStringLiteral("media_id"), listedImage.value(QStringLiteral("media_id"))}})
         .toJson(QJsonDocument::Compact);

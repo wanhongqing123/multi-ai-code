@@ -250,15 +250,7 @@ final class AIMobileHostToolProvider {
                     before: cursor.isEmpty ? nil : cursor,
                     folderID: arguments["folder_id"] as? String)
                 return Self.jsonSuccess([
-                    "media": page.videos.map { video in
-                        ["media_id": video.id, "name": video.name,
-                         "size_bytes": video.sizeBytes,
-                         "content_type": video.contentType,
-                         "media_type": video.mediaType ??
-                             (video.isImage ? "image" : "video"),
-                         "created_at": video.createdAt,
-                         "folder_id": video.folderId as Any? ?? NSNull()] as [String: Any]
-                    },
+                    "media": page.videos.map(Self.mediaJSON),
                     "next_cursor": page.nextCursor as Any? ?? NSNull(),
                     "quota": ["used_bytes": page.quota.usedBytes,
                               "reserved_bytes": page.quota.reservedBytes,
@@ -302,6 +294,15 @@ final class AIMobileHostToolProvider {
                 try await MaiCloudDriveClient.shared.moveMedia(id: id, folderID: folderID)
                 return Self.jsonSuccess(["moved": true, "media_id": id,
                                          "folder_id": folderID.isEmpty ? NSNull() as Any : folderID])
+            } catch { return Self.cloudDriveFailure(error) }
+        case "maichat_cloud_drive_rename_media":
+            guard let name = arguments["name"] as? String else {
+                return .failure(code: "invalid_input", message: "name must be a string")
+            }
+            do {
+                let media = try await MaiCloudDriveClient.shared.renameMedia(
+                    id: Self.string(arguments, key: "media_id"), name: name)
+                return Self.jsonSuccess(Self.mediaJSON(media))
             } catch { return Self.cloudDriveFailure(error) }
         case "maichat_cloud_drive_list_pending_uploads":
             guard !appState.maiChatAccountID.isEmpty else {
@@ -635,6 +636,13 @@ final class AIMobileHostToolProvider {
         ["id": folder.id, "name": folder.name,
          "parent_id": folder.parentId as Any? ?? NSNull(),
          "created_at": folder.createdAt, "updated_at": folder.updatedAt]
+    }
+
+    private static func mediaJSON(_ media: MaiCloudDriveVideo) -> [String: Any] {
+        ["media_id": media.id, "name": media.name, "size_bytes": media.sizeBytes,
+         "content_type": media.contentType,
+         "media_type": media.mediaType ?? (media.isImage ? "image" : "video"),
+         "created_at": media.createdAt, "folder_id": media.folderId as Any? ?? NSNull()]
     }
 
     static func boundedLimit(_ arguments: [String: Any], fallback: Int = 50) -> Int {

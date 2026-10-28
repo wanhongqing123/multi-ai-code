@@ -33,7 +33,7 @@ int main() {
                                    lastArguments = arguments;
                                    return MaiToolResult::success("{\"ok\":true}");
                                });
-    require(tools.specs().size() == 14, "cloud tool count changed");
+    require(tools.specs().size() == 15, "cloud tool count changed");
     for (const auto& spec : tools.specs()) {
         require(nlohmann::json::parse(spec.parametersJson, nullptr, false).is_object(),
                 "cloud tool schema is invalid JSON");
@@ -46,7 +46,8 @@ int main() {
                            spec.name == "maichat_cloud_drive_create_folder" ||
                            spec.name == "maichat_cloud_drive_update_folder" ||
                            spec.name == "maichat_cloud_drive_delete_folder" ||
-                           spec.name == "maichat_cloud_drive_move_media";
+                           spec.name == "maichat_cloud_drive_move_media" ||
+                           spec.name == "maichat_cloud_drive_rename_media";
         require(tool->requiresApproval("{}") == write, "cloud tool approval policy is wrong");
         require(tool->requiresPerCallApproval("{}") == write,
                 "cloud write must ask in prompting modes");
@@ -116,6 +117,20 @@ int main() {
     require(moveMedia->execute(R"({"media_id":"123e4567-e89b-42d3-a456-426614174000","folder_id":"","recursive":true})",
                                 context).hasError(), "unknown move argument reached host");
     require(calls == beforeInvalidFolder, "invalid folder arguments reached host");
+    MaiTool* rename = tools.findForModel("maichat_cloud_drive_rename_media");
+    require(!rename->execute(R"({"media_id":"123E4567-E89B-42D3-A456-426614174000","name":"Travel.MOV"})",
+                             context).hasError(), "valid file rename was rejected");
+    require(lastName == rename->name() && nlohmann::json::parse(lastArguments)["media_id"] ==
+                "123e4567-e89b-42d3-a456-426614174000", "rename ID was not normalized");
+    const int beforeInvalidRename = calls;
+    for (const char* name : {"", "../x.mp4", "a/b.mp4", "name", "x.pdf", "CON.mp4", "a\n.mp4"}) {
+        const auto arguments = nlohmann::json{{"media_id", "123e4567-e89b-42d3-a456-426614174000"},
+                                             {"name", name}}.dump();
+        require(rename->execute(arguments, context).hasError(), "unsafe rename reached host");
+    }
+    require(rename->execute(R"({"media_id":"123e4567-e89b-42d3-a456-426614174000","name":"Travel.MOV","folder_id":""})",
+                            context).hasError(), "extra rename argument reached host");
+    require(calls == beforeInvalidRename, "invalid rename arguments reached host");
     require(tools.findForModel("maichat_cloud_drive_open_media")
                 ->execute(R"({"media_id":"not-a-media-id"})", context)
                 .hasError(),

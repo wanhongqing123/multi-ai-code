@@ -366,6 +366,28 @@ int main(int argc, char** argv) {
             "folder filter lost root distinction, total quota or unfiltered compatibility");
     require(request(author, MAI_CLOUD_DRIVE_DELETE_FOLDER, childFilter.c_str()).httpStatus == 409,
             "nonempty media folder was deleted");
+    const std::string renameInput = nlohmann::json{{"media_id", id}, {"name", "Renamed.mov"}}.dump();
+    const auto renamed = request(author, MAI_CLOUD_DRIVE_RENAME_MEDIA, renameInput.c_str());
+    require(renamed.status == MAI_CLOUD_DRIVE_OK, "file rename failed");
+    const auto renamedBody = nlohmann::json::parse(renamed.body);
+    require(renamedBody["name"] == "Renamed.mov" && renamedBody["folder_id"] == childId &&
+            renamedBody["video_id"] == id && renamedBody["size_bytes"] == contents.size(),
+            "rename changed media identity, placement or size");
+    const auto renamedPage = nlohmann::json::parse(request(author, MAI_CLOUD_DRIVE_LIST_MEDIA,
+                                                          childFilter.c_str()).body);
+    require(renamedPage["videos"][0]["name"] == "Renamed.mov" &&
+            renamedPage["quota"] == childPage["quota"] &&
+            request(author, MAI_CLOUD_DRIVE_PLAY_LINK, target.c_str()).status == MAI_CLOUD_DRIVE_OK,
+            "renamed media was not listed or playable with unchanged quota");
+    require(request(viewer, MAI_CLOUD_DRIVE_RENAME_MEDIA, renameInput.c_str()).httpStatus == 404,
+            "another account renamed private media");
+    const std::string changedExtension = nlohmann::json{{"media_id", id}, {"name", "Renamed.mp4"}}.dump();
+    require(request(author, MAI_CLOUD_DRIVE_RENAME_MEDIA, changedExtension.c_str()).httpStatus == 400 &&
+            request(author, MAI_CLOUD_DRIVE_LIST_MEDIA).body.find("Renamed.mov") != std::string::npos,
+            "rename converted the extension or partially changed a rejected name");
+    require(request(author, MAI_CLOUD_DRIVE_RENAME_MEDIA,
+                    R"({"media_id":"123e4567-e89b-42d3-a456-426614174000","name":"../unsafe.mov"})").status ==
+                MAI_CLOUD_DRIVE_INVALID_ARGUMENT, "unsafe rename filename reached account API");
     const std::string moveRoot = nlohmann::json{{"media_id", id}, {"folder_id", ""}}.dump();
     require(request(author, MAI_CLOUD_DRIVE_MOVE_MEDIA, moveRoot.c_str()).status == MAI_CLOUD_DRIVE_OK,
             "media move to root failed");

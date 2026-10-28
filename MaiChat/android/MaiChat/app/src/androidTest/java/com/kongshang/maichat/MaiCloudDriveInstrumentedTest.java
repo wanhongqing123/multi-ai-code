@@ -971,12 +971,37 @@ public final class MaiCloudDriveInstrumentedTest {
             JSONObject moved = host(owner.get(), "maichat_cloud_drive_move_media",
                 new JSONObject().put("media_id", mediaId).put("folder_id", childId));
             assertTrue(moved.toString(), moved.getBoolean("ok"));
+            JSONObject named = host(owner.get(), "maichat_cloud_drive_rename_media",
+                new JSONObject().put("media_id", mediaId).put("name", "项目影片.MP4"));
+            assertTrue(named.toString(), named.getBoolean("ok"));
+            JSONObject renamedMedia = named.getJSONObject("output");
+            assertEquals("项目影片.MP4", renamedMedia.getString("name"));
+            assertEquals(childId, renamedMedia.getString("folder_id"));
+            assertFalse(renamedMedia.toString().contains("token"));
+            assertFalse(renamedMedia.toString().contains("url"));
+            JSONObject normalMedia = request(client, MaiCloudDrive.LIST,
+                new JSONObject().put("folder_id", childId)).json()
+                .getJSONArray("videos").getJSONObject(0);
+            assertEquals("项目影片.MP4", normalMedia.getString("name"));
+            CountDownLatch renameDone = new CountDownLatch(1);
+            AtomicReference<MaiCloudDrive.Result> normalRename = new AtomicReference<>();
+            client.renameMedia(mediaId, "归档影片.mp4", value -> {
+                normalRename.set(value); renameDone.countDown();
+            });
+            assertTrue(renameDone.await(30, TimeUnit.SECONDS));
+            assertTrue(normalRename.get().body, normalRename.get().ok());
+            assertEquals("归档影片.mp4", normalRename.get().json().getString("name"));
+            JSONObject invalidRename = host(owner.get(), "maichat_cloud_drive_rename_media",
+                new JSONObject().put("media_id", mediaId).put("name", "不能转换.mov"));
+            assertFalse(invalidRename.toString(), invalidRename.getBoolean("ok"));
+            assertEquals("invalid_input", invalidRename.getString("errorCode"));
             JSONObject filtered = host(owner.get(), "maichat_cloud_drive_list_media",
                 new JSONObject().put("folder_id", childId));
             assertTrue(filtered.toString(), filtered.getBoolean("ok"));
             JSONArray media = filtered.getJSONObject("output").getJSONArray("media");
             assertEquals(1, media.length());
             assertEquals(childId, media.getJSONObject(0).getString("folder_id"));
+            assertEquals("归档影片.mp4", media.getJSONObject(0).getString("name"));
             assertFalse(filtered.getJSONObject("output").toString().contains("read_url"));
             assertFalse(filtered.getJSONObject("output").toString().contains("token"));
             JSONObject root = host(owner.get(), "maichat_cloud_drive_list_media",

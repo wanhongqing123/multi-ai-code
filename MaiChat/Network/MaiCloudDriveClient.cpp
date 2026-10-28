@@ -1230,7 +1230,7 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
     const char* method = "GET";
     json request = json::object();
     const bool folderAction = action >= MAI_CLOUD_DRIVE_LIST_FOLDERS &&
-        action <= MAI_CLOUD_DRIVE_MOVE_MEDIA;
+        action <= MAI_CLOUD_DRIVE_RENAME_MEDIA;
     if (folderAction && sessionMode(options)) return;
     if (action == MAI_SESSION_ATTACHMENT_CLEANUP_ROOM && sessionMode(options)) {
         route = root + "/cleanup-room";
@@ -1261,15 +1261,23 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
         if (action == MAI_CLOUD_DRIVE_LIST_FOLDERS) {
             if (!input.empty()) return;
             route = folders;
-        } else if (action == MAI_CLOUD_DRIVE_MOVE_MEDIA) {
+        } else if (action == MAI_CLOUD_DRIVE_MOVE_MEDIA || action == MAI_CLOUD_DRIVE_RENAME_MEDIA) {
             std::string id;
-            std::string folder;
-            if (input.size() != 2 || !stringField(input, "media_id", &id) ||
-                !validUuid(id) || !stringField(input, "folder_id", &folder) ||
-                (!folder.empty() && !validUuid(folder))) return;
+            if (input.size() != 2 || !stringField(input, "media_id", &id) || !validUuid(id)) return;
+            if (action == MAI_CLOUD_DRIVE_RENAME_MEDIA) {
+                std::string name;
+                MaiCloudDriveMediaInfo media{};
+                if (!stringField(input, "name", &name) || !validFolderName(name) ||
+                    !mediaInfo(name, &media)) return;
+                request["name"] = name;
+            } else {
+                std::string folder;
+                if (!stringField(input, "folder_id", &folder) ||
+                    (!folder.empty() && !validUuid(folder))) return;
+                request["folder_id"] = folder;
+            }
             route = root + "/" + id;
             method = "PATCH";
-            request["folder_id"] = folder;
         } else {
             const bool create = action == MAI_CLOUD_DRIVE_CREATE_FOLDER;
             std::string id;
@@ -1339,7 +1347,7 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
         if (!stringField(response, "folder_id", &field) || field != input["folder_id"] ||
             !stringField(response, "status", &status) || status != "deleted")
             result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
-    } else if (action == MAI_CLOUD_DRIVE_MOVE_MEDIA) {
+    } else if (action == MAI_CLOUD_DRIVE_MOVE_MEDIA || action == MAI_CLOUD_DRIVE_RENAME_MEDIA) {
         std::string status;
         std::string name;
         std::string contentType;
@@ -1355,9 +1363,23 @@ extern "C" void mai_cloud_drive_request(const MaiCloudDriveOptions* options,
             !uintField(response, "size_bytes", 1, media.max_size_bytes, &number) ||
             !uintField(response, "created_at", 1, 9'007'199'254'740'991, &number) ||
             !response.contains("folder_id") ||
-            (input["folder_id"] == "" ? !response["folder_id"].is_null() :
-             response["folder_id"] != input["folder_id"]))
+            !(response["folder_id"].is_null() || (response["folder_id"].is_string() &&
+              validUuid(response["folder_id"].get<std::string>()))) ||
+            (action == MAI_CLOUD_DRIVE_MOVE_MEDIA &&
+             (input["folder_id"] == "" ? !response["folder_id"].is_null() :
+              response["folder_id"] != input["folder_id"])))
             result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+        if (result->status == MAI_CLOUD_DRIVE_OK && action == MAI_CLOUD_DRIVE_RENAME_MEDIA) {
+            const std::string requestedName = input["name"].get<std::string>();
+            std::string returnedExtension = name.substr(name.find_last_of('.'));
+            std::string requestedExtension = requestedName.substr(requestedName.find_last_of('.'));
+            std::transform(returnedExtension.begin(), returnedExtension.end(), returnedExtension.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            std::transform(requestedExtension.begin(), requestedExtension.end(), requestedExtension.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (!validFolderName(name) || returnedExtension != requestedExtension)
+                result->status = MAI_CLOUD_DRIVE_INVALID_RESPONSE;
+        }
     } else if (action == MAI_CLOUD_DRIVE_PLAY_LINK ||
                action == MAI_CLOUD_DRIVE_THUMBNAIL_LINK) {
         uint64_t expires = 0;

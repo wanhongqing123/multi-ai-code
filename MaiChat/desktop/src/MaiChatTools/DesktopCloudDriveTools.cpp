@@ -319,8 +319,11 @@ MaiToolResult request(Operation& operation, MaiCloudDriveAction action, const QJ
     const MaiCloudDriveOptions options = operation.options();
     mai_cloud_drive_request(&options, action, body.constData(), operation.cancel.get(), &result);
     const MaiToolResult reply = result.http_status == 404 &&
-        action >= MAI_CLOUD_DRIVE_LIST_FOLDERS && action <= MAI_CLOUD_DRIVE_MOVE_MEDIA ?
-        failure(MaiErrorCode::NotFound, "cloud folder or media was not found") : resultJson(result);
+        action >= MAI_CLOUD_DRIVE_LIST_FOLDERS && action <= MAI_CLOUD_DRIVE_RENAME_MEDIA ?
+        failure(MaiErrorCode::NotFound, "cloud folder or media was not found") :
+        result.http_status == 400 && action == MAI_CLOUD_DRIVE_RENAME_MEDIA ?
+        failure(MaiErrorCode::InvalidInput, "use a safe file name and keep the existing file extension") :
+        resultJson(result);
     mai_cloud_drive_result_free(&result);
     return reply;
 }
@@ -539,6 +542,8 @@ void registerDesktopCloudDriveTools(MaiToolRegistry& registry, std::function<Des
                 return request(operation, MAI_CLOUD_DRIVE_DELETE_FOLDER, args);
             if (name == "maichat_cloud_drive_move_media")
                 return request(operation, MAI_CLOUD_DRIVE_MOVE_MEDIA, args);
+            if (name == "maichat_cloud_drive_rename_media")
+                return request(operation, MAI_CLOUD_DRIVE_RENAME_MEDIA, args);
             const QString directory = accountDirectory(access.accountId);
             if (directory.isEmpty()) return failure(MaiErrorCode::Internal, "could not open private upload storage");
             if (name == "maichat_cloud_drive_list_media") {

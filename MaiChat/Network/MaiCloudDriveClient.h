@@ -23,6 +23,7 @@ typedef enum MaiCloudDriveAction {
     MAI_CLOUD_DRIVE_UPDATE_FOLDER = 9,
     MAI_CLOUD_DRIVE_DELETE_FOLDER = 10,
     MAI_CLOUD_DRIVE_MOVE_MEDIA = 11,
+    MAI_CLOUD_DRIVE_RENAME_MEDIA = 12,
     // The account API retains its /videos transport path and video_id field.
     // These names also cover images without changing existing callers.
     MAI_CLOUD_DRIVE_LIST_MEDIA = MAI_CLOUD_DRIVE_LIST_VIDEOS,
@@ -145,6 +146,9 @@ void mai_cloud_drive_cancel_destroy(MaiCloudDriveCancel* cancel);
 // parent_id. Empty parent_id means root. DELETE_FOLDER accepts folder_id and
 // refuses nonempty folders. MOVE_MEDIA accepts {"media_id":...,"folder_id":...}
 // (empty folder_id moves to root). Folder actions never alter OSS object keys.
+// RENAME_MEDIA accepts {"media_id":...,"name":"new-name.ext"}; it updates only
+// the display name. The account service requires the existing extension to be
+// preserved (case-insensitive) and leaves content, placement and quota intact.
 // The remaining media actions need
 // {"video_id":"uuid"}. THUMBNAIL_LINK returns a short-lived signed HTTPS
 // thumbnail_url. ABORT_UPLOAD discards an unfinished upload session;

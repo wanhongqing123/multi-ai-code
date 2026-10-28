@@ -30,7 +30,7 @@ function validFolderName(value) {
     value.length > 0 && Buffer.byteLength(value,'utf8') <= 240 &&
     Buffer.byteLength(value.normalize('NFC'),'utf8') <= 240 &&
     value !== '.' && value !== '..' && !/[. ]$/u.test(value) &&
-    !/[\u0000-\u001f\u007f-\u009f\u2028\u2029<>:"|?*/\\]/u.test(value) &&
+    !/[\u0000-\u001f\u007f-\u009f\ud800-\udfff\u2028\u2029<>:"|?*/\\]/u.test(value) &&
     !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value);
 }
 
@@ -234,17 +234,36 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     }).immediate();
   }
 
-  function moveMedia(id,body,principal) {
+  function updateMedia(id,body,principal) {
     if (!validID(id)) return result(404,{ error:'Video not found' });
-    const target = Object.hasOwn(body,'folder_id') ? folderID(body.folder_id) : false;
-    if (target === false) return result(400,{ error:'Invalid folder placement' });
+    if (!body || typeof body !== 'object' || Array.isArray(body) ||
+        Object.keys(body).some(key => !['name','folder_id'].includes(key)))
+      return result(400,{ error:'Invalid media update' });
+    const rename = Object.hasOwn(body,'name');
+    const move = Object.hasOwn(body,'folder_id');
+    const name = rename && typeof body.name === 'string' ? body.name.normalize('NFC') : null;
+    const target = move ? folderID(body.folder_id) : null;
+    if ((!rename && !move) || (rename && !validFolderName(name)) ||
+        (move && target === false))
+      return result(400,{ error:'Invalid media name or folder placement' });
     return db.transaction(() => {
       const row = own(id,principal.user_id);
       if (!row || row.status !== 'ready') return result(404,{ error:'Video not found' });
-      if (!folderExists(target,principal)) return result(404,{ error:'Folder not found' });
-      db.prepare(`UPDATE cloud_drive_videos SET folder_id=?
-        WHERE id=? AND owner_user_id=? AND status='ready'`).run(target,id,principal.user_id);
-      return result(200,publicReady({ ...row,folder_id:target }));
+      const nextFolder = move ? target : row.folder_id;
+      const nextName = rename ? name : row.name;
+      if (!folderExists(nextFolder,principal)) return result(404,{ error:'Folder not found' });
+      if (rename) {
+        const media = mediaType(nextName);
+        const extension = nextName.slice(nextName.lastIndexOf('.')).toLowerCase();
+        const originalExtension = row.name.slice(row.name.lastIndexOf('.')).toLowerCase();
+        if (!media || nextName.lastIndexOf('.') <= 0 ||
+            extension !== originalExtension || media.contentType !== row.content_type)
+          return result(400,{ error:'The existing media extension and type must be preserved' });
+      }
+      db.prepare(`UPDATE cloud_drive_videos SET name=?,folder_id=?
+        WHERE id=? AND owner_user_id=? AND status='ready'`)
+        .run(nextName,nextFolder,id,principal.user_id);
+      return result(200,publicReady({ ...row,name:nextName,folder_id:nextFolder }));
     }).immediate();
   }
 
@@ -760,7 +779,7 @@ function createCloudDriveService({ db, now = Date.now, startUpload, signPart,
     if (item && !item[2] && method === 'DELETE')
       return remove(item[1],principal);
     if (mode === 'drive' && item && !item[2] && method === 'PATCH')
-      return moveMedia(item[1],body,principal);
+      return updateMedia(item[1],body,principal);
     return result(404,{ error:'Not found' });
   }
 

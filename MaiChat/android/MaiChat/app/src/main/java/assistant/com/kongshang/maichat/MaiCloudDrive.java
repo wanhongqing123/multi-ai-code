@@ -32,7 +32,7 @@ import org.json.JSONObject;
 final class MaiCloudDrive {
     static final int LIST = 1, PLAY_LINK = 2, DELETE = 3, THUMBNAIL_LINK = 5;
     static final int LIST_FOLDERS = 7, CREATE_FOLDER = 8, UPDATE_FOLDER = 9,
-        DELETE_FOLDER = 10, MOVE_MEDIA = 11;
+        DELETE_FOLDER = 10, MOVE_MEDIA = 11, RENAME_MEDIA = 12;
     static final int OK = 0, CANCELED = 6, INSUFFICIENT_SPACE = 11;
     static final long MAX_VIDEO_BYTES = 2_000_000_000L;
     static final long QUOTA_BYTES = 10_000_000_000L;
@@ -373,6 +373,13 @@ final class MaiCloudDrive {
         try { payload.put("media_id", id); payload.put("folder_id", folderId); }
         catch (org.json.JSONException impossible) { throw new IllegalArgumentException(impossible); }
         request(MOVE_MEDIA, payload, completion);
+    }
+
+    void renameMedia(String id, String name, Consumer<Result> completion) {
+        JSONObject payload = new JSONObject();
+        try { payload.put("media_id", id); payload.put("name", name); }
+        catch (org.json.JSONException impossible) { throw new IllegalArgumentException(impossible); }
+        request(RENAME_MEDIA, payload, completion);
     }
 
     void request(int action, JSONObject payload, Consumer<Result> completion) {

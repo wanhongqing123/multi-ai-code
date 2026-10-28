@@ -75,7 +75,7 @@ OSS 事实；核对成功可直接删除元数据，不重新占用用户容量�
 | `GET /v1/cloud-drive/videos/{id}/play-link` | 只向所有者签发 60 秒私有原文件读取 URL，并返回 `size_bytes` / `content_type` 供客户端下载前检查空间 |
 | `GET /v1/cloud-drive/videos/{id}/thumbnail-link` | 只向所有者签发 60 秒私有 OSS 缩图或第 0 毫秒视频截帧 URL；返回 `thumbnail_url`、`thumbnail_expires_in`、`content_type: image/jpeg` |
 | `DELETE /v1/cloud-drive/videos/{id}` | 删除本人文件；失败返回 202 并重试 |
-| `PATCH /v1/cloud-drive/videos/{id}` | `{folder_id:UUID|""}` 移动本人已完成文件；空字符串表示根目录；返回含 `video_id`、`folder_id` 的文件元数据 |
+| `PATCH /v1/cloud-drive/videos/{id}` | `{name?,folder_id?:UUID|""}` 重命名或移动本人已完成文件，至少一项；空 `folder_id` 表示根目录，省略则不移动；两项同时提交为一个原子更新，返回完整 ready 文件元数据 |
 | `GET /v1/cloud-drive/folders` | 返回 `{folders:[{id,name,parent_id,created_at,updated_at}]}`；当前账号全部目录，`parent_id:null` 表示根目录下的目录 |
 | `POST /v1/cloud-drive/folders` | `{name,parent_id?:UUID|""}` 创建目录；省略或空字符串表示放在根目录；返回新目录对象，HTTP 201 |
 | `PATCH /v1/cloud-drive/folders/{id}` | `{name?,parent_id?:UUID|""}` 重命名或移动目录，至少一项；返回更新后的目录对象 |
@@ -87,6 +87,13 @@ OSS 事实；核对成功可直接删除元数据，不重新占用用户容量�
 目录不能移入自身或其子孙。目录只组织数据库元数据，既有 OSS 对象键、上传、
 签名读取与容量计算不变。账号最终注销会清理目录元数据；这些接口不适用于
 独立的会话附件空间。
+
+文件重命名使用完整新文件名，服务端先做 NFC 规范化，再检查 240 UTF-8 字节上限、
+控制字符、孤立 Unicode 代理项、首尾空白、路径分隔符和跨平台非法／保留名称。
+必须保留原扩展名，字母大小写可以变化，`.jpeg` 改 `.jpg` 也会拒绝；MIME 不得改变。
+仅更新文件显示名，文件 ID、OSS key、容量、字节、创建时间和原目录位置不变。
+Agent 工具为 `maichat_cloud_drive_rename_media({media_id,name})`，普通客户端复用
+同一元数据接口；移动端只由 Agent 提供重命名入口，Desktop 另提供界面入口。
 
 ### 创作中心会话附件
 

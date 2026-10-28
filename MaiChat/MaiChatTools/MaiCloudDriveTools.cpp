@@ -20,7 +20,7 @@ using Json = nlohmann::json;
 
 enum class Action { List, Pending, Upload, Pause, Resume, Abort, Play, Delete,
                     SessionOpen, ListFolders, CreateFolder, UpdateFolder,
-                    DeleteFolder, MoveMedia };
+                    DeleteFolder, MoveMedia, RenameMedia };
 
 const char* toolName(Action action) {
     switch (action) {
@@ -38,6 +38,7 @@ const char* toolName(Action action) {
         case Action::UpdateFolder: return "maichat_cloud_drive_update_folder";
         case Action::DeleteFolder: return "maichat_cloud_drive_delete_folder";
         case Action::MoveMedia: return "maichat_cloud_drive_move_media";
+        case Action::RenameMedia: return "maichat_cloud_drive_rename_media";
     }
     return "";
 }
@@ -103,6 +104,10 @@ const char* toolDescription(Action action) {
             return "Move one existing private cloud image or video to a folder by media_id. "
                    "Use an empty folder_id to move it to root. The file ID, content and cloud quota "
                    "stay unchanged; no file bytes are uploaded again.";
+        case Action::RenameMedia:
+            return "Rename one existing private cloud image or video by media_id. Supply the full "
+                   "new display filename, keeping its current extension (letter case may change). "
+                   "This does not convert the file, reupload it, or change its folder, ID or quota.";
     }
     return "";
 }
@@ -121,6 +126,8 @@ const char* toolSchema(Action action) {
             return R"({"type":"object","properties":{"folder_id":{"type":"string","minLength":36,"maxLength":36}},"required":["folder_id"],"additionalProperties":false})";
         case Action::MoveMedia:
             return R"({"type":"object","properties":{"media_id":{"type":"string","minLength":36,"maxLength":36},"folder_id":{"type":"string","maxLength":36}},"required":["media_id","folder_id"],"additionalProperties":false})";
+        case Action::RenameMedia:
+            return R"({"type":"object","properties":{"media_id":{"type":"string","minLength":36,"maxLength":36},"name":{"type":"string","minLength":1,"maxLength":240}},"required":["media_id","name"],"additionalProperties":false})";
         case Action::SessionOpen:
             return R"({"type":"object","properties":{"attachment_id":{"type":"string","minLength":36,"maxLength":36}},"required":["attachment_id"],"additionalProperties":false})";
         case Action::Upload:
@@ -206,7 +213,8 @@ public:
         return mAction == Action::Upload || mAction == Action::Resume ||
                mAction == Action::Abort || mAction == Action::Delete ||
                mAction == Action::CreateFolder || mAction == Action::UpdateFolder ||
-               mAction == Action::DeleteFolder || mAction == Action::MoveMedia;
+               mAction == Action::DeleteFolder || mAction == Action::MoveMedia ||
+               mAction == Action::RenameMedia;
     }
     bool requiresPerCallApproval(const std::string& arguments) const override {
         return requiresApproval(arguments);
@@ -255,6 +263,14 @@ public:
                     !normalizeId(arguments, "media_id") || !normalizeId(arguments, "folder_id", true))
                     return invalid("supply media_id and folder_id (an empty string for root)");
                 break;
+            case Action::RenameMedia: {
+                MaiCloudDriveMediaInfo media{};
+                if (!onlyKeys(arguments, {"media_id", "name"}) ||
+                    !normalizeId(arguments, "media_id") || !validName(arguments) ||
+                    !mai_cloud_drive_media_info(arguments["name"].get<std::string>().c_str(), &media))
+                    return invalid("supply media_id and a safe full filename preserving its extension");
+                break;
+            }
             case Action::SessionOpen: {
                 if (!onlyKeys(arguments, "attachment_id") ||
                     !arguments.contains("attachment_id") ||
@@ -325,7 +341,7 @@ void registerMaiCloudDriveTools(MaiToolRegistry& tools, MaiCloudDriveToolHandler
          {Action::List, Action::Pending, Action::Upload, Action::Pause,
           Action::Resume, Action::Abort, Action::Play, Action::Delete,
           Action::SessionOpen, Action::ListFolders, Action::CreateFolder,
-          Action::UpdateFolder, Action::DeleteFolder, Action::MoveMedia}) {
+          Action::UpdateFolder, Action::DeleteFolder, Action::MoveMedia, Action::RenameMedia}) {
         tools.add(std::make_unique<MaiCloudDriveTool>(action, handler));
     }
 }

@@ -166,6 +166,31 @@ void moveTo(QWidget& parent, QPushButton* action, const QString& name,
     require(waitForButton(parent, QStringLiteral("cloudDriveNewFolder")), "move did not finish");
 }
 
+void editMediaName(QWidget& parent, const QString& oldName, const QString& newName,
+                   bool cancel = false, const QString& screenshot = {}) {
+    QPushButton* action = visibleButton(parent, QStringLiteral("cloudDriveRenameMedia"));
+    require(action != nullptr, "media rename action is unavailable");
+    QTimer fill;
+    fill.setInterval(20);
+    QObject::connect(&fill, &QTimer::timeout, [&] {
+        QWidget* modal = QApplication::activeModalWidget();
+        if (!modal) return;
+        auto* input = modal->findChild<QLineEdit*>(QStringLiteral("appTextInput"));
+        auto* button = modal->findChild<QPushButton*>(cancel ? QStringLiteral("appTextInputCancel") :
+            QStringLiteral("appTextInputConfirm"));
+        if (!input || !button) return;
+        require(input->text() == oldName, "media rename dialog did not prefill the full old name");
+        fill.stop();
+        input->setText(newName);
+        if (!screenshot.isEmpty())
+            require(modal->grab().save(screenshot), "could not save media rename screenshot");
+        button->click();
+    });
+    fill.start();
+    action->click();
+    require(waitForButton(parent, QStringLiteral("cloudDriveNewFolder")), "media rename did not finish");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -279,6 +304,21 @@ int main(int argc, char** argv) {
     require(waitForThumbnail(dialog), "signed thumbnail did not load for video");
     require(dialog.grab().save(screenshots + QStringLiteral("/cloud-uploaded.png")),
             "failed to save uploaded screenshot");
+    const QString oldName = QFileInfo(source).fileName();
+    editMediaName(dialog, oldName, QStringLiteral("已取消.mp4"), true);
+    require(waitForVisibleText(dialog, oldName), "canceling rename changed the file name");
+    editMediaName(dialog, oldName, QStringLiteral("错误后缀.mov"));
+    require(waitForLabel(dialog, QStringLiteral("cloudDriveStatus"), QStringLiteral("保留扩展名")),
+            "extension-changing rename did not explain the failure");
+    require(waitForVisibleText(dialog, oldName), "failed rename removed the original file row");
+    const QString renamedVideo = QStringLiteral("演示视频.MP4");
+    editMediaName(dialog, oldName, renamedVideo, false,
+        screenshots + QStringLiteral("/cloud-file-rename-dialog.png"));
+    require(waitForVisibleText(dialog, renamedVideo), "renamed video did not refresh in its folder");
+    require(waitForLabel(dialog, QStringLiteral("cloudDriveFolderPath"), QStringLiteral("文档")),
+            "rename changed the selected folder");
+    require(dialog.grab().save(screenshots + QStringLiteral("/cloud-file-renamed.png")),
+            "failed to save renamed file screenshot");
 
     // Deleting a nonempty folder must preserve its files and report a recoverable error.
     visibleButton(dialog, QStringLiteral("cloudDriveParentFolder"))->click();
@@ -318,7 +358,7 @@ int main(int argc, char** argv) {
         QApplication::processEvents();
         QThread::msleep(20);
     }
-    require(playedVod && mai_cloud_vod_size(playedVod.get()) ==
+    require(playedVod && playedName == renamedVideo && mai_cloud_vod_size(playedVod.get()) ==
                 quint64(QFileInfo(source).size()) && !QFileInfo(playedName).exists(),
             "cloud playback did not open a seekable stream without a local video file");
     playedVod.reset();
@@ -355,6 +395,8 @@ int main(int argc, char** argv) {
     require(waitForButton(dialog, QStringLiteral("cloudDriveViewImage")),
             "image did not upload and appear in the list");
     require(waitForThumbnail(dialog), "signed thumbnail did not load for image");
+    editMediaName(dialog, QFileInfo(imageSource).fileName(), QStringLiteral("海边照片.jpg"));
+    require(waitForVisibleText(dialog, QStringLiteral("海边照片.jpg")), "image rename did not update the row");
     require(dialog.grab().save(screenshots + QStringLiteral("/cloud-image-uploaded.png")),
             "failed to save image row screenshot");
     visibleButton(dialog, QStringLiteral("cloudDriveViewImage"))->click();

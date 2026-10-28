@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
+import unicodedata
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -448,13 +449,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         account = self.account()
         if self.path_only() == f"/auth/v1/cloud-drive/videos/{VIDEO_ID}":
             with self.server.lock:
-                folder_id = body.get("folder_id") or None
+                if not body or any(key not in ("name", "folder_id") for key in body):
+                    self.reply(400, {"error": "invalid_update"})
+                    return
+                folder_id = (body.get("folder_id") or None) if "folder_id" in body else self.server.folder_id
                 target = self.server.folders.get(folder_id)
                 if account != "author" or self.server.status != "ready" or (
                         folder_id and (not target or target["owner"] != account)):
                     self.reply(404, {"error": "not_found"})
                     return
+                name = body.get("name", self.server.name)
+                try:
+                    safe = isinstance(name, str) and bool(name) and name == name.strip() and \
+                        name not in (".", "..") and not re.search(r'[<>:"|?*/\\\x00-\x1f\x7f-\x9f\u2028\u2029]', name) and \
+                        not re.match(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)', name, re.I) and \
+                        not name.endswith((".", " ")) and \
+                        0 < len(unicodedata.normalize("NFC", name).encode("utf-8")) <= 240
+                    same_extension = name.rsplit(".", 1)[0] and "." in name and \
+                        name.rsplit(".", 1)[-1].lower() == self.server.name.rsplit(".", 1)[-1].lower()
+                except (UnicodeError, AttributeError):
+                    safe = same_extension = False
+                if "name" in body and (not safe or not same_extension):
+                    self.reply(400, {"error": "invalid_name_or_extension"})
+                    return
                 self.server.folder_id = folder_id
+                self.server.name = unicodedata.normalize("NFC", name)
                 response = {"video_id": VIDEO_ID, "folder_id": folder_id,
                     "status": "ready", "name": self.server.name, "size_bytes": self.server.size,
                     "content_type": self.server.content_type, "media_type": self.server.media_type(),

@@ -67,7 +67,7 @@ QString errorText(int status, long http) {
     if (http == 429) return QStringLiteral("未完成的上传太多，请稍后重试或放弃旧任务。");
     if (http == 410) return QStringLiteral("上传会话已过期，请重新上传。");
     if (http == 409) return QStringLiteral("操作未完成：可能存在同名文件夹，或文件夹还包含文件。请刷新后重试。");
-    if (http == 400) return QStringLiteral("文件夹名称或目标位置无效，请检查后重试。");
+    if (http == 400) return QStringLiteral("名称或目标位置无效，请检查后重试。");
     if (status == MAI_CLOUD_DRIVE_CHECKPOINT_MISMATCH)
         return QStringLiteral("所选文件与原上传任务不一致，请选择原文件。");
     if (status == MAI_CLOUD_DRIVE_PART_MISMATCH)
@@ -483,6 +483,7 @@ void CloudDriveDialog::setBusy(bool busy, const QString& message) {
                                 QStringLiteral("cloudDrivePlay"),
                                 QStringLiteral("cloudDriveViewImage"),
                                 QStringLiteral("cloudDriveDelete"),
+                                QStringLiteral("cloudDriveRenameMedia"),
                                 QStringLiteral("cloudDriveMoveMedia"),
                                 QStringLiteral("cloudDriveFolderOpen"),
                                 QStringLiteral("cloudDriveFolderRename"),
@@ -966,6 +967,11 @@ void CloudDriveDialog::renderVideos(const QJsonArray& videos, bool append) {
                     [this, id, name] { saveVideo(id, name); });
             layout->addWidget(save);
         }
+        auto* rename = new QPushButton(QStringLiteral("改名"), row);
+        rename->setObjectName(QStringLiteral("cloudDriveRenameMedia"));
+        connect(rename, &QPushButton::clicked, this,
+                [this, id, name] { renameMedia(id, name); });
+        layout->addWidget(rename);
         auto* move = new QPushButton(QStringLiteral("移动"), row);
         move->setObjectName(QStringLiteral("cloudDriveMoveMedia"));
         connect(move, &QPushButton::clicked, this,
@@ -1280,6 +1286,28 @@ void CloudDriveDialog::startImagePreview(const QString& mediaId) {
         QFile::remove(target);
         return image;
     }));
+}
+
+void CloudDriveDialog::renameMedia(const QString& mediaId, const QString& name) {
+    if (busy_ || !sameAccount()) return;
+    AppTextInputDialog::Options options;
+    options.title = QStringLiteral("重命名文件");
+    options.initialText = name;
+    options.placeholder = QStringLiteral("完整文件名");
+    const QString extension = QFileInfo(name).suffix();
+    options.description = QStringLiteral("请保留文件扩展名 .%1").arg(extension);
+    bool accepted = false;
+    const QString renamed = AppTextInputDialog::getText(this, options, &accepted).trimmed();
+    if (!accepted || renamed == name) return;
+    const QByteArray encoded = renamed.toUtf8();
+    if (!mai_cloud_drive_folder_name_valid(encoded.constData()) ||
+        QFileInfo(renamed).suffix().compare(extension, Qt::CaseInsensitive) != 0) {
+        setStatus(QStringLiteral("请使用有效的完整文件名，并保留扩展名 .%1。")
+            .arg(extension), true);
+        return;
+    }
+    mutateFolder(MAI_CLOUD_DRIVE_RENAME_MEDIA,
+        {{QStringLiteral("media_id"), mediaId}, {QStringLiteral("name"), renamed}});
 }
 
 void CloudDriveDialog::deleteVideo(const QString& videoId, const QString& name) {

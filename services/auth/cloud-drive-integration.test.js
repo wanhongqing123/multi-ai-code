@@ -203,6 +203,23 @@ test('authenticated two-account private media upload uses OSS multipart control'
       fetch(`${base}${route}`,{ method,headers:{ Authorization:`Bearer ${token}`,
         ...(body ? { 'Content-Type':'application/json' } : {}) },
         ...(body ? { body:JSON.stringify(body) } : {}) });
+    const renamed = await folderRequest(`/v1/cloud-drive/videos/${id}`,
+      'PATCH',{ name:'Holiday.MOV' });
+    assert.equal(renamed.status,200);
+    const renamedBody = await renamed.json();
+    assert.equal(renamedBody.video_id,id);
+    assert.equal(renamedBody.name,'Holiday.MOV');
+    assert.equal(renamedBody.content_type,'video/quicktime');
+    assert.equal((await folderRequest(`/v1/cloud-drive/videos/${id}`,
+      'PATCH',{ name:'Wrong.mp4' })).status,400);
+    assert.equal((await folderRequest(`/v1/cloud-drive/videos/${id}`,
+      'PATCH',{ name:'\ud800Invalid.mov' })).status,400);
+    assert.equal((await folderRequest(`/v1/cloud-drive/videos/${id}`,
+      'PATCH',{ name:'Foreign.mov' },viewer)).status,404);
+    const afterRename = await folderRequest('/v1/cloud-drive/videos');
+    const afterRenameBody = await afterRename.json();
+    assert.equal(afterRenameBody.videos[0].name,'Holiday.MOV');
+    assert.deepEqual(afterRenameBody.quota,videos.quota);
     assert.equal((await fetch(`${base}/v1/cloud-drive/folders`)).status,401);
     const folderCreated = await folderRequest('/v1/cloud-drive/folders','POST',
       { name:'旅行' });

@@ -66,6 +66,7 @@ private:
     void startPlayback(const QString& videoId, const QString& name);
     void saveVideo(const QString& videoId, const QString& name);
     void startImagePreview(const QString& mediaId);
+    void renameMedia(const QString& mediaId, const QString& name);
     void deleteVideo(const QString& videoId, const QString& name);
     void discardUpload(const QString& checkpointPath, const QString& name);
     void setBusy(bool busy, const QString& message = {});

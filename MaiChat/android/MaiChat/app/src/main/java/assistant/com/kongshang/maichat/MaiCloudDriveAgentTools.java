@@ -120,6 +120,7 @@ public final class MaiCloudDriveAgentTools {
         case "maichat_cloud_drive_update_folder":
         case "maichat_cloud_drive_delete_folder":
         case "maichat_cloud_drive_move_media":
+        case "maichat_cloud_drive_rename_media":
             return folders(activity, client, account, tool, arguments);
         case "maichat_cloud_drive_list_pending_uploads":
             return pending(activity, client, account);
@@ -274,6 +275,10 @@ public final class MaiCloudDriveAgentTools {
             operation = callback -> client.moveMedia(arguments.optString("media_id", ""),
                 arguments.optString("folder_id", ""), callback);
             break;
+        case "maichat_cloud_drive_rename_media":
+            operation = callback -> client.renameMedia(arguments.optString("media_id", ""),
+                arguments.optString("name", ""), callback);
+            break;
         default: throw new Failure("invalid_input", "unknown cloud folder operation");
         }
         MaiCloudDrive.Result result = awaitClient(activity, client, account, operation);
@@ -291,6 +296,14 @@ public final class MaiCloudDriveAgentTools {
         case "maichat_cloud_drive_delete_folder":
             return new JSONObject().put("deleted", true)
                 .put("folder_id", arguments.getString("folder_id"));
+        case "maichat_cloud_drive_rename_media":
+            return new JSONObject().put("media_id", body.getString("video_id"))
+                .put("name", body.getString("name"))
+                .put("size_bytes", body.getLong("size_bytes"))
+                .put("content_type", body.getString("content_type"))
+                .put("media_type", body.getString("media_type"))
+                .put("created_at", body.getLong("created_at"))
+                .put("folder_id", body.isNull("folder_id") ? JSONObject.NULL : body.getString("folder_id"));
         default:
             String folder = arguments.getString("folder_id");
             return new JSONObject().put("moved", true)

@@ -150,6 +150,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private AlertDialog passwordDialog;
     private String passwordRequestId;
     private String passwordRequestIdentity;
+    private Button pdfAcceptanceButton;
     private MaiChatHostTools maiChatHostTools;
     private Consumer<Boolean> pendingScreenShare;
     private RemoteIMMediaStore mediaStore;
@@ -331,7 +332,7 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         showInitialLogin = session.requiresLogin();
         render();
         // 仅显式 Debug Intent 验收普通 PDF API；默认无入口，不影响真实会话或账号密码。
-        com.kongshang.maichat.tools.MobilePdfSecurityAcceptance.installIfRequested(
+        pdfAcceptanceButton = com.kongshang.maichat.tools.MobilePdfSecurityAcceptance.installIfRequested(
             this, maiChatHostTools.pdfPasswords(), mediaExecutor);
         handleNotificationIntent(getIntent());
         handleLocalSocialIntent(getIntent());
@@ -976,6 +977,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         }
         navigation.addView(root, new FrameLayout.LayoutParams(-1, -1));
         setContentView(navigation);
+        // Debug 验收按钮随真实根容器重新附着；普通/Release 运行该字段为 null，不改变页面。
+        com.kongshang.maichat.tools.MobilePdfSecurityAcceptance.reattach(this, pdfAcceptanceButton);
         renderedLandscapeIm = landscapeIm;
         navigation.post(this::updateVideoDockLayout);
         swipeBack = new ChatSwipeBack(new ChatSwipeBack.Host() {

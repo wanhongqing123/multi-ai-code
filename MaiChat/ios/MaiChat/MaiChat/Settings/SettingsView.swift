@@ -609,6 +609,8 @@ struct AccountPasswordView: View {
             .accessibilityIdentifier("account-password-save")
         }
         .navigationTitle("登录密码")
+        // 短安全表单使用原生行内标题，避免大标题滚入半透明导航背景后变得过淡。
+        .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(isSaving)
         .toolbar {
             if request != nil {

@@ -3,6 +3,7 @@
 package com.kongshang.maichat.tools;
 
 import android.view.Gravity;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import com.kongshang.maichat.BuildConfig;
@@ -19,10 +20,10 @@ import org.json.JSONObject;
 public final class MobilePdfSecurityAcceptance {
     private MobilePdfSecurityAcceptance() {}
 
-    public static void installIfRequested(MainActivity activity, MobilePdfPasswordRequests prompts,
+    public static Button installIfRequested(MainActivity activity, MobilePdfPasswordRequests prompts,
         ExecutorService worker) {
         if (!BuildConfig.DEBUG || !activity.getIntent().getBooleanExtra("maichat-pdf-security-ui-test", false))
-            return;
+            return null;
         Button run = new Button(activity);
         run.setText("PDF 本地验收");
         run.setContentDescription("pdf-security-test-run");
@@ -73,5 +74,14 @@ public final class MobilePdfSecurityAcceptance {
                 }
             });
         });
+        return run;
+    }
+
+    /** 正常 render 会替换根容器；重新附着同一个测试按钮，保留在途状态而不是创建重复入口。 */
+    public static void reattach(MainActivity activity, Button button) {
+        if (button == null) return;
+        android.view.ViewGroup.LayoutParams layout = button.getLayoutParams();
+        if (button.getParent() instanceof ViewGroup) ((ViewGroup) button.getParent()).removeView(button);
+        activity.addContentView(button, layout);
     }
 }

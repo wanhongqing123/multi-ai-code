@@ -627,7 +627,7 @@ private final class AIiOS27ScreenCapture: NSObject {
         }
     }
 
-    deinit {
+    isolated deinit {
         for observer in [backgroundObserver, foregroundObserver, activeObserver, inactiveObserver] {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }

@@ -168,7 +168,8 @@ public:
     bool getSession(const std::string& id, MaiSession& out) const override {
         std::lock_guard<std::mutex> lock(mMutex);
         sqlite3_stmt* statement = prepareLocked(
-            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth "
+            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth, "
+            "title_edited "
             "FROM sessions WHERE id = ?1");
         if (!statement) return false;
         Reset guard(statement);
@@ -182,7 +183,8 @@ public:
         std::lock_guard<std::mutex> lock(mMutex);
         std::vector<MaiSession> out;
         sqlite3_stmt* statement = prepareLocked(
-            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth "
+            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth, "
+            "title_edited "
             "FROM sessions ORDER BY updated DESC, id DESC");
         if (!statement) return out;
         Reset guard(statement);
@@ -675,7 +677,8 @@ public:
         MaiSession session;
         bool found = false;
         sqlite3_stmt* statement = prepareLocked(
-            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth "
+            "SELECT id, title, directory, model, agent, created, updated, parent_id, depth, "
+            "title_edited "
             "FROM sessions WHERE id = ?1");
         if (statement) {
             Reset guard(statement);
@@ -717,6 +720,7 @@ private:
         session.agent = textColumn(statement, 4);
         session.parentId = textColumn(statement, 7);
         session.depth = sqlite3_column_int(statement, 8);
+        session.titleEdited = sqlite3_column_int(statement, 9) != 0;
         session.created = sqlite3_column_int64(statement, 5);
         session.updated = sqlite3_column_int64(statement, 6);
         return session;
@@ -748,10 +752,11 @@ private:
     void writeSessionLocked(const MaiSession& session) {
         sqlite3_stmt* statement = prepareLocked(
             "INSERT INTO sessions(id, title, directory, model, agent, created, updated, "
-            "                     parent_id, depth) "
-            "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) "
+            "                     parent_id, depth, title_edited) "
+            "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) "
             "ON CONFLICT(id) DO UPDATE SET title=excluded.title, directory=excluded.directory, "
-            "model=excluded.model, agent=excluded.agent, updated=excluded.updated");
+            "model=excluded.model, agent=excluded.agent, updated=excluded.updated, "
+            "title_edited=excluded.title_edited");
         if (!statement) return;
         Reset guard(statement);
         bindText(statement, 1, session.id);
@@ -761,6 +766,7 @@ private:
         bindText(statement, 5, session.agent);
         bindText(statement, 8, session.parentId);
         sqlite3_bind_int(statement, 9, session.depth);
+        sqlite3_bind_int(statement, 10, session.titleEdited ? 1 : 0);
         sqlite3_bind_int64(statement, 6, session.created);
         sqlite3_bind_int64(statement, 7, session.updated);
         executePreparedStatement(statement);
@@ -986,6 +992,11 @@ const char* kMigrationV5 =
     "CREATE INDEX IF NOT EXISTS specialist_tasks_active "
     "ON specialist_tasks(status, last_checked_at, created);";
 
+// v6：记录标题是否由显式更新命名；默认 0 保留旧库自动起名的现有行为。
+// 仅追加列，不重建会话或消息，也不根据标题字面量猜测用户意图。
+const char* kMigrationV6 =
+    "ALTER TABLE sessions ADD COLUMN title_edited INTEGER NOT NULL DEFAULT 0;";
+
 int readUserVersion(sqlite3* database) {
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nullptr) != SQLITE_OK)
@@ -1103,6 +1114,41 @@ MaiResult<std::unique_ptr<MaiSessionStore>> makeMaiSqliteStore(
             sqlite3_close(database);
             return {MaiErrorCode::Internal, "cannot migrate schema to v5: " + what};
         }
+    }
+
+    if (readUserVersion(database) < 6) {
+        // 先取得写锁再检查列；两个连接同时升级，或旧二进制保留新列但降了版本号时，
+        // 都不能重复 ADD COLUMN。检查失败也不能把半初始化的存储交给调用方。
+        char* migrationError = nullptr;
+        bool ok = sqlite3_exec(database, "BEGIN IMMEDIATE", nullptr, nullptr, &migrationError) ==
+                  SQLITE_OK;
+        sqlite3_stmt* columns = nullptr;
+        bool hasTitleEdited = false;
+        if (ok)
+            ok = sqlite3_prepare_v2(database, "PRAGMA table_info(sessions)", -1, &columns,
+                                    nullptr) == SQLITE_OK;
+        if (ok) {
+            int status = SQLITE_ROW;
+            while ((status = sqlite3_step(columns)) == SQLITE_ROW) {
+                if (textColumn(columns, 1) == "title_edited") hasTitleEdited = true;
+            }
+            ok = status == SQLITE_DONE;
+        }
+        sqlite3_finalize(columns);
+        if (ok && !hasTitleEdited)
+            ok = sqlite3_exec(database, kMigrationV6, nullptr, nullptr, &migrationError) ==
+                 SQLITE_OK;
+        if (ok)
+            ok = sqlite3_exec(database, "PRAGMA user_version=6;COMMIT;", nullptr, nullptr,
+                              &migrationError) == SQLITE_OK;
+        if (!ok) {
+            const std::string what = migrationError ? migrationError : sqlite3_errmsg(database);
+            sqlite3_free(migrationError);
+            sqlite3_exec(database, "ROLLBACK", nullptr, nullptr, nullptr);
+            sqlite3_close(database);
+            return {MaiErrorCode::Internal, "cannot migrate schema to v6: " + what};
+        }
+        sqlite3_free(migrationError);
     }
 
     return std::unique_ptr<MaiSessionStore>(new SqliteStore(database));

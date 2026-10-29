@@ -4,6 +4,129 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testSessionRenameToolKeepsCurrentDraftAndPersistsTitle() async throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let base = "http://127.0.0.1:18390"
+        let statusURL = URL(string: base + "/test/status")!
+        guard let (_, response) = try? await URLSession.shared.data(from: statusURL),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要本机无付费 Session/Responses 模型 fixture")
+        }
+        let (certificate, _) = try await URLSession.shared.data(from: URL(string: base + "/test/cert")!)
+        let app = XCUIApplication()
+        // 固定本用例的独立数据库目录，重启仍读同一 SQLite；不采用 standalone 人造会话列表。
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18390"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL_PORT"] = "18389"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_SOCKET_PORT"] = "18391"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL"] = "1"
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 35))
+        app.buttons["创作中心"].tap()
+        let composer = app.textViews["ai-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 25))
+        // 本用例验证改名/刷新，不重复审批 UI；通过正常设置切换本机测试会话的权限模式。
+        app.buttons["更多"].tap()
+        app.buttons["操作权限"].tap()
+        XCTAssertTrue(app.buttons["完全访问"].waitForExistence(timeout: 5))
+        app.buttons["完全访问"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "完全访问"),
+            object: app.buttons["操作权限"])], timeout: 10), .completed,
+            "必须等待普通设置保存成功，不能把点击选项当成已切换权限模式")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)).tap()
+        let drawer = app.scrollViews["ai-session-drawer"]
+        func openDrawer() {
+            app.buttons["对话列表"].tap()
+            XCTAssertTrue(drawer.waitForExistence(timeout: 5))
+        }
+        func capture(_ name: String) {
+            let image = XCTAttachment(screenshot: app.screenshot())
+            image.name = name
+            image.lifetime = .keepAlways
+            add(image)
+        }
+        openDrawer()
+        let rows = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ai-conversation-' AND identifier != 'ai-conversation-empty-draft'"))
+        XCTAssertEqual(rows.count, 1, "全新隔离目录应只有初始会话，防止把其他会话当作当前会话")
+        let originalIdentifier = try XCTUnwrap(rows.allElementsBoundByIndex.first?.identifier)
+        let originalID = String(originalIdentifier.dropFirst("ai-conversation-".count))
+        app.buttons[originalIdentifier].tap()
+        let token = "rename-" + UUID().uuidString.prefix(8).lowercased()
+        let marker = "session-rename-tool:" + token
+        let title = "Pinned " + token
+        let draft = "unsent draft " + token
+        composer.tap()
+        composer.typeText(draft)
+
+        // 假 Mac 使用既有远端 prompt 协议触发当前本地 Agent，保留用户尚未发送的输入草稿。
+        var delivered = false
+        for _ in 0..<60 {
+            var components = URLComponents(string: base + "/test/phone-prompt")!
+            components.queryItems = [URLQueryItem(name: "text", value: marker)]
+            var request = URLRequest(url: try XCTUnwrap(components.url))
+            request.httpMethod = "POST"
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 200 { delivered = true; break }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTAssertTrue(delivered, "应在已有15秒presence周期内找到测试会话")
+        let done = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS 'SESSION_RENAME_TOOL_DONE'")).firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 30))
+        XCTAssertEqual(composer.value as? String, draft, "远端改名不能清空当前未发送草稿或切走页面")
+        let (statusData, _) = try await URLSession.shared.data(from: statusURL)
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: statusData) as? [String: Any])
+        XCTAssertEqual(status["phoneSession"] as? String, originalID)
+        let modelRequests = status["modelRequests"] as? [[String: Any]] ?? []
+        let resultText = try XCTUnwrap(modelRequests.last(where: {
+            ($0["latestText"] as? String)?.contains(marker) == true && $0["toolOutput"] as? Bool == true
+        })?["toolOutputText"] as? String)
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(resultText.utf8)) as? [String: Any])
+        XCTAssertEqual(result["session_id"] as? String, originalID, "工具必须修改执行上下文对应的当前 ID")
+        XCTAssertEqual(result["title"] as? String, title)
+
+        openDrawer()
+        let renamed = app.buttons[originalIdentifier]
+        XCTAssertTrue(renamed.waitForExistence(timeout: 10))
+        XCTAssertTrue(renamed.label.contains(title), "列表必须读到同一 ID 的持久化新标题")
+        capture("session-rename-current-id-and-title")
+        renamed.tap()
+        XCTAssertEqual(composer.value as? String, draft)
+        openDrawer()
+        app.buttons["新对话"].tap()
+        composer.tap()
+        composer.typeText("second-session " + token)
+        app.buttons["发送"].tap()
+        XCTAssertTrue(app.staticTexts["收到"].waitForExistence(timeout: 25))
+        openDrawer()
+        XCTAssertTrue(app.buttons[originalIdentifier].label.contains(title))
+        app.buttons[originalIdentifier].tap()
+        XCTAssertEqual(composer.value as? String, draft, "切换其他会话后原草稿仍应归属原 ID")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 35))
+        app.buttons["创作中心"].tap()
+        XCTAssertTrue(app.buttons["对话列表"].waitForExistence(timeout: 25))
+        openDrawer()
+        XCTAssertTrue(app.buttons[originalIdentifier].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons[originalIdentifier].label.contains(title), "重启必须恢复原 ID 的手动标题")
+        capture("session-rename-title-after-restart")
+        app.buttons[originalIdentifier].tap()
+        XCTAssertTrue(done.waitForExistence(timeout: 15), "重命名不得替换或清空原会话历史")
+        // 当前产品草稿驻内存；本用例只要求切换不丢草稿，重启断言针对标题和历史持久化。
+        #else
+        throw XCTSkip("只使用模拟器独立数据库和本机模型 fixture")
+        #endif
+    }
+
     @MainActor func testPdfSecurityUsesNativeRenderAndPrivatePasswordForm() async throws {
         #if targetEnvironment(simulator)
         continueAfterFailure = false

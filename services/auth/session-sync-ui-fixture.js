@@ -387,19 +387,27 @@ async function start() {
       latestText.includes('remote-session-delete-tool');
     const remoteWorkspaceTool = !toolOutput &&
       latestText.includes('remote-session-workspace-tool');
+    // 唯一显式测试 marker 才返回改名工具；仍由真实 Agent/Store 执行，不在 fixture 直接改标题。
+    const renameMatch = !toolOutput && latestText.match(/session-rename-tool:([A-Za-z0-9_-]{1,60})/);
+    const renameCurrentTitle = renameMatch ? `Pinned ${renameMatch[1]}` : null;
     modelRequests.push({ latestText: latestText.slice(0, 180), toolOutput,
       cameraAction: cameraAction || '', toolOutputText: String(toolOutputText).slice(0, 300),
+      renameTitle: renameCurrentTitle || '',
       inputTypes: input.map(item => item?.type || item?.role || '') });
     if (cameraAction) modelCalls.push(cameraAction);
     if (remoteCreateTool) modelCalls.push('remote_session_create');
     if (remoteDeleteTool) modelCalls.push('remote_session_delete');
     if (remoteWorkspaceTool) modelCalls.push('remote_session_set_workspace');
+    if (renameCurrentTitle) modelCalls.push('session_rename');
     const marker = cameraAction ||
       ['open', 'status', 'close'].find(action => latestText.includes(`camera-${action}`));
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const events = [{ type: 'response.created' }];
-    if (cameraAction || remoteCreateTool || remoteDeleteTool || remoteWorkspaceTool) {
-      const call = cameraAction
+    if (cameraAction || remoteCreateTool || remoteDeleteTool || remoteWorkspaceTool || renameCurrentTitle) {
+      const call = renameCurrentTitle
+        ? { type: 'function_call', call_id: `rename_${randomUUID().replaceAll('-', '')}`,
+          name: 'session_rename', arguments: JSON.stringify({ title: renameCurrentTitle }) }
+        : cameraAction
         ? { type: 'function_call', call_id: `camera_${randomUUID().replaceAll('-', '')}`,
           name: 'maichat_camera_command', arguments: JSON.stringify({ action: cameraAction }) }
         : remoteDeleteTool
@@ -419,7 +427,8 @@ async function start() {
       events.push({ type: 'response.completed', response: {
         status: 'completed', output: [call] } });
     } else {
-      const answer = marker ? `CAMERA_${marker.toUpperCase()}_DONE` :
+      const answer = latestText.includes('session-rename-tool:') ? 'SESSION_RENAME_TOOL_DONE' :
+        marker ? `CAMERA_${marker.toUpperCase()}_DONE` :
         latestText.includes('remote-session-create-tool')
           ? 'REMOTE_CREATE_TOOL_DONE' :
           latestText.includes('remote-session-delete-tool')

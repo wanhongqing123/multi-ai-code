@@ -472,6 +472,7 @@ if(MAIAGENT_BUILD_TESTS)
 
   foreach(test_name
       MaiCoreTests          # id / 会话 / 事件总线
+      MaiSessionRenameTests # 当前会话改名、普通入口、显式命名与持久化
       MaiFilePathTests      # 路径词法 + 文件系统（走系统 API，不用 std::filesystem）
       MaiStoreTests         # 存储契约：内存和 SQLite 行为必须一致
       MaiModelClientTests   # 流式解析 + 工具调用分片聚合
@@ -517,6 +518,8 @@ if(MAIAGENT_BUILD_TESTS)
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
   target_include_directories(MaiStoreTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite)
+  target_include_directories(MaiSessionRenameTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite)
   # 随库 OpenSSL 同时构建 SSL 和 Crypto；有 SSL 库的平台都运行本地 TLS 模拟测试。
   if(MAI_OPENSSL_SSL_TARGET)

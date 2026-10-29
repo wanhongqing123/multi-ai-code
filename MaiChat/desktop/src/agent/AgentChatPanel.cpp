@@ -1887,8 +1887,9 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
         appendNotice(message, true);
     });
     connect(&controller, &AgentController::sessionTitleChanged, this,
-            [this](const QString& sessionId, const QString&) {
-                if (!isCurrentSession(sessionId)) return;
+            [this](const QString&, const QString&) {
+                // 列表展示所有会话。后台会话改名也要刷新，不能因用户已经切走而遗漏；
+                // 当前页的标题和消息仍由各自的会话过滤处理。
                 emit sessionListChanged();
             });
     connect(&controller, &AgentController::sessionStructureChanged, this, [this] {

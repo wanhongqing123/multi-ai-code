@@ -802,17 +802,43 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 return session.id;
 
             } else if constexpr (std::is_same_v<T, MaiUpdateSession>) {
+                // 空标题仍表示“不改”；显式改名使用与工具相同的跨设备标题契约。
+                if (!operation.title.empty()) {
+                    const auto valid = maiValidateSessionTitle(operation.title);
+                    if (valid) return valid;
+                }
                 std::string title;
+                bool changed = false;
                 const bool found =
                     mRuntime->store->mutateSession(operation.sessionId, [&](MaiSession& session) {
-                        if (!operation.title.empty()) session.title = operation.title;
-                        if (!operation.model.empty()) session.model = operation.model;
-                        if (!operation.agent.empty()) session.agent = operation.agent;
-                        if (!operation.directory.empty()) session.directory = operation.directory;
-                        session.updated = MaiTime::getCurrentTime();
+                        // 标题与显式命名标记在同一次存储 mutation 中写入；Titler 的锁内复查
+                        // 因此不会在当前轮收尾时把有效的占位同名标题覆盖掉。
+                        if (!operation.title.empty() &&
+                            (session.title != operation.title || !session.titleEdited)) {
+                            session.title = operation.title;
+                            session.titleEdited = true;
+                            changed = true;
+                        }
+                        if (!operation.model.empty() && session.model != operation.model) {
+                            session.model = operation.model;
+                            changed = true;
+                        }
+                        if (!operation.agent.empty() && session.agent != operation.agent) {
+                            session.agent = operation.agent;
+                            changed = true;
+                        }
+                        if (!operation.directory.empty() &&
+                            session.directory != operation.directory) {
+                            session.directory = operation.directory;
+                            changed = true;
+                        }
+                        if (changed) session.updated = MaiTime::getCurrentTime();
                         title = session.title;
                     });
                 if (!found) return {MaiErrorCode::NotFound, "session not found"};
+                const auto persisted = mRuntime->store->lastWriteError();
+                if (persisted) return persisted;
+                if (!changed) return operation.sessionId;
                 mRuntime->emitter.emitSession(MaiEventType::SessionUpdated, operation.sessionId,
                                               title);
                 return operation.sessionId;
@@ -848,6 +874,7 @@ MaiResult<std::string> MaiAgent::submit(const MaiOperation& operation) {
                 std::string title;
                 mRuntime->store->mutateSession(operation.sessionId, [](MaiSession& session) {
                     session.title.clear();
+                    session.titleEdited = false;
                     session.updated = MaiTime::getCurrentTime();
                 });
 

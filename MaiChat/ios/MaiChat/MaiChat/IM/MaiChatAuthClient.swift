@@ -830,7 +830,11 @@ actor MaiChatAuthClient {
     func sessionSyncSocketURL() -> URL {
         #if DEBUG && targetEnvironment(simulator)
         if usesLocalTestServer {
-            return URL(string: "wss://localhost:18191/v1/session-sync/ws")!
+            // 独立 UI fixture 的认证、模型和 WSS 端口必须成套，不能拿新证书连接共享旧端口。
+            // 只允许本机端口覆盖，其他旧用例保留默认值；正式设备/生产 URL 不受影响。
+            let configured = Int(ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_SOCKET_PORT"] ?? "")
+            let port = configured.flatMap { (1...65535).contains($0) ? $0 : nil } ?? 18191
+            return URL(string: "wss://localhost:\(port)/v1/session-sync/ws")!
         }
         #endif
         var components = URLComponents(

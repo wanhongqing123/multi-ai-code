@@ -1105,7 +1105,10 @@ actor AIAssistantBackend {
         var key = storedKey(for: settings.model)
         #if targetEnvironment(simulator)
         if uiTest {
-            settings.baseUrl = "http://127.0.0.1:18189"
+            // 独立验收账号使用配套的本机模型端口，避免把测试调用发送到其他正在运行的 fixture。
+            let modelPort = Int(ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_MODEL_PORT"] ?? "18189")
+                .flatMap { (1...65535).contains($0) ? $0 : nil } ?? 18189
+            settings.baseUrl = "http://127.0.0.1:\(modelPort)"
             settings.model = "test-model"
             settings.policy = "on-request"
             key = "test-key"
@@ -1156,7 +1159,9 @@ actor AIAssistantBackend {
 
     func save(_ config: AIModelSettings) throws {
         #if targetEnvironment(simulator)
-        let isLocalUITest = ProcessInfo.processInfo.arguments.contains("--ai-ui-test")
+        // 与 open 的本地模型判定一致，让正常 Root 验收也能通过正式设置保存权限模式。
+        let isLocalUITest = ProcessInfo.processInfo.arguments.contains("--ai-ui-test") ||
+            ProcessInfo.processInfo.environment["MAICHAT_LOCAL_UI_MODEL"] == "1"
         #else
         let isLocalUITest = false
         #endif

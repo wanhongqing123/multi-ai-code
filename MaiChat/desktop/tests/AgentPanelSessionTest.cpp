@@ -845,6 +845,28 @@ void AgentPanelSessionTest::anotherSessionTitleDoesNotRenameTheHeader() {
 
     harness.publishFromOther(MaiEventType::SessionUpdated, QStringLiteral("子任务的名字"));
     QCOMPARE(title->text(), QStringLiteral("创作中心"));
+
+    // A 发起改名后用户可能已经切到 B；持久化标题的事件仍须刷新整个侧栏，
+    // 同时不能切走当前选择、替换当前页头部或插入另一会话的消息。
+    AgentSessionList sessions(*harness.controller);
+    connect(harness.panel.get(), &AgentChatPanel::sessionListChanged, &sessions, [&] {
+        sessions.refresh();
+        sessions.setCurrent(harness.panel->sessionId());
+    });
+    sessions.setCurrent(harness.mine);
+    auto* list = sessions.findChild<QListWidget*>();
+    QVERIFY(list != nullptr);
+    const int messageItems = harness.view()->itemCount();
+    const QString renamed = QStringLiteral("已改名的后台对话");
+    const auto result = harness.controller->agent().submit(
+        MaiUpdateSession{harness.other.toStdString(), renamed.toStdString(), "", "", ""});
+    QVERIFY(result);
+    QTRY_COMPARE(list->findItems(renamed, Qt::MatchExactly).size(), 1);
+    QVERIFY(list->currentItem() != nullptr);
+    QCOMPARE(list->currentItem()->data(Qt::UserRole).toString(), harness.mine);
+    QCOMPARE(harness.panel->sessionId(), harness.mine);
+    QCOMPARE(title->text(), QStringLiteral("创作中心"));
+    QCOMPARE(harness.view()->itemCount(), messageItems);
 }
 
 void AgentPanelSessionTest::currentSessionTitleStaysInTheSessionList() {

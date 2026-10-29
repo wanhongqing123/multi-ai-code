@@ -262,6 +262,72 @@ public:
     }
 };
 
+// 改名只作用于发起工具的当前根会话，不让模型通过参数猜别的会话 ID。
+// 仍用普通 MaiUpdateSession 提交，持久化、事件和其它会话字段的并发保护由既有门面负责。
+class RenameSessionTool final : public MaiTool {
+public:
+    std::string name() const override {
+        return "session_rename";
+    }
+    std::string description() const override {
+        return "Rename the current conversation on this device. Supply only the new title; "
+               "the conversation ID is taken from the running session. This does not create "
+               "a conversation, switch views, or change the workspace or message history.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"title":{"type":"string","minLength":1,)"
+               R"("maxLength":120,"description":"Nonblank single-line UTF-8 title, at most 120 characters and 480 bytes"}},)"
+               R"("required":["title"],"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override {
+        // 普通写操作跟随当前权限模式；非付费改名不额外强制逐次审批。
+        return true;
+    }
+    MaiToolResult execute(const std::string& raw, const MaiToolContext& context) override {
+        if (context.sessionAgent == nullptr) return unavailable();
+        const auto parsed = parseArguments(raw);
+        if (!parsed) return failed(parsed.error());
+        const Json& args = parsed.value();
+        if (args.size() != 1 || !args.contains("title") || !args["title"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "session_rename requires only a title string");
+        const std::string title = args["title"].get<std::string>();
+        const auto valid = maiValidateSessionTitle(title);
+        if (valid) return failed(valid);
+        MaiSession current;
+        if (!context.sessionAgent->getSession(context.sessionId, current))
+            return MaiToolResult::failure(MaiErrorCode::NotFound, "current session not found");
+        if (!current.isRoot())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "sub-agents cannot rename user conversations");
+        if (context.isCanceled())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "session rename was canceled");
+        // 已命名同名是真正的无操作。尚未命名的占位同名需要仅落显式标记，
+        // 否则本轮 finish 会把用户刚确认的名称当成占位符再次自动命名。
+        if (current.title == title && !current.isUntitled())
+            return MaiToolResult::success(Json{
+                {"session_id", current.id},
+                {"title", current.title},
+                {"changed", false}}.dump());
+        const auto renamed =
+            context.sessionAgent->submit(MaiUpdateSession{current.id, title, "", "", ""});
+        if (!renamed) return failed(renamed.error());
+        // 工具结果必须来自实际存储回读，不能把请求值当成已落库的事实。
+        MaiSession stored;
+        if (!context.sessionAgent->getSession(current.id, stored))
+            return MaiToolResult::failure(MaiErrorCode::NotFound,
+                                          "current session no longer exists");
+        if (stored.title != title)
+            return MaiToolResult::failure(MaiErrorCode::Internal,
+                                          "session title update was not persisted");
+        return MaiToolResult::success(Json{
+            {"session_id", stored.id},
+            {"title", stored.title},
+            {"changed", current.title !=
+                            stored.title}}.dump());
+    }
+};
+
 class SetWorkspaceTool final : public MaiTool {
 public:
     std::string name() const override {
@@ -352,5 +418,6 @@ void registerMaiSessionTools(MaiToolRegistry& registry, bool includeWorkspaceSwi
     registry.add(std::make_unique<ListSessionsTool>());
     registry.add(makeMaiCreateSessionTool(MaiSessionCreateMode::InheritWorkspace));
     registry.add(std::make_unique<DeleteSessionTool>());
+    registry.add(std::make_unique<RenameSessionTool>());
     if (includeWorkspaceSwitch) registry.add(std::make_unique<SetWorkspaceTool>());
 }

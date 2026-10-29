@@ -32,7 +32,9 @@ struct MaiCreateSession {
 
 struct MaiUpdateSession {
     std::string sessionId;
-    std::string title;  // 空表示不改
+    // 空表示不改；非空须通过 maiValidateSessionTitle，并持久标记为显式名称。
+    // 即使用户名称恰好等于占位标题，自动命名也不会再覆盖它。
+    std::string title;
     std::string model;
     std::string agent;
     // 移动端更新后，应用沙箱的绝对路径可能改变。调用方传入当前工作目录时，

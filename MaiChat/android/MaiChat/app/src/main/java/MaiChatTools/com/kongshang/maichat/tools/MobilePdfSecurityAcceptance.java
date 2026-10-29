@@ -38,17 +38,24 @@ public final class MobilePdfSecurityAcceptance {
                 File directory = new File(activity.getCacheDir(), "pdf-security-acceptance/" + UUID.randomUUID());
                 File source = new File(directory, "source.pdf"), output = new File(directory, "protected.pdf");
                 JSONObject proof = new JSONObject();
+                String stage = "prepare";
                 try {
                     if (!directory.mkdirs()) throw new java.io.IOException("Test directory unavailable");
+                    stage = "render";
                     JSONObject rendered = AgentPdfRenderer.render(
                         "<html><body><h1>MaiChat PDF</h1><p>private fixture content</p></body></html>", source);
+                    stage = "password-form";
                     String secret = prompts.requestPassword();
                     if (secret == null) throw new CancellationException();
+                    stage = "encrypt-response";
                     JSONObject encrypted = MaiPdfSecurity.encrypt(source, output, secret, false);
+                    stage = "response-privacy";
                     if (encrypted.toString().contains(secret)) throw new java.io.IOException("Unsafe response");
+                    stage = "encrypted-marker";
                     String bytes = new String(Files.readAllBytes(output.toPath()), StandardCharsets.ISO_8859_1);
                     if (!bytes.startsWith("%PDF-") || !bytes.contains("/Encrypt"))
                         throw new java.io.IOException("Encrypted output unavailable");
+                    stage = "proof-metadata";
                     proof.put("status", "passed").put("source_pages", rendered.getInt("pages"))
                         .put("page_count", encrypted.getLong("page_count"))
                         .put("password_protected", true).put("path", output.getAbsolutePath());
@@ -57,7 +64,8 @@ public final class MobilePdfSecurityAcceptance {
                     catch (Exception ignored) {}
                     if (canceled instanceof InterruptedException) Thread.currentThread().interrupt();
                 } catch (Exception failure) {
-                    try { proof.put("status", "failed"); } catch (Exception ignored) {}
+                    try { proof.put("status", "failed").put("stage", stage)
+                        .put("failure_kind", failure.getClass().getSimpleName()); } catch (Exception ignored) {}
                 } finally {
                     source.delete();
                     // 只保存无凭据证明；加密文件供独立阅读器检查，明文输入在每条路径均清理。

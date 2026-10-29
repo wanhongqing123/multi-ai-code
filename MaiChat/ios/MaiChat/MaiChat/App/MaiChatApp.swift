@@ -530,7 +530,12 @@ private struct PdfSecurityUITestProbe: View {
             .appendingPathComponent("pdf-protection-ui-\(UUID().uuidString)", isDirectory: true)
         let source = directory.appendingPathComponent("source.pdf")
         let output = directory.appendingPathComponent("protected.pdf")
-        defer { try? FileManager.default.removeItem(at: source) }
+        let alias = directory.deletingLastPathComponent()
+            .appendingPathComponent("pdf-output-alias-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: alias)
+        }
         func publish(_ fields: [String: Any]) {
             guard let data = try? JSONSerialization.data(withJSONObject: fields),
                   let text = String(data: data, encoding: .utf8) else { return }
@@ -538,6 +543,8 @@ private struct PdfSecurityUITestProbe: View {
         }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            // 模拟真机 /var 等父目录别名；核心回传规范路径后，普通宿主不能把成功误报成失败。
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
             let metadata = try MaiPdfRenderer.render(html:
                 "<html><body><h1>MaiChat PDF</h1><p>private fixture content</p></body></html>", output: source)
             guard let sourceDocument = PDFDocument(url: source), sourceDocument.pageCount > 0 else {
@@ -545,7 +552,11 @@ private struct PdfSecurityUITestProbe: View {
             }
             let sourcePages = sourceDocument.pageCount
             let password = try await AIPdfPasswordRequests.shared.requestPassword(appState: appState)
-            _ = try await MaiPdfSecurity.encrypt(source: source, output: output, password: password)
+            let delivered = try await MaiPdfSecurity.encrypt(source: source,
+                output: alias.appendingPathComponent("protected.pdf"), password: password)
+            guard delivered.standardizedFileURL == output.resolvingSymlinksInPath().standardizedFileURL else {
+                publish(["status": "failed", "stage": "canonical-output"]); return
+            }
             guard let document = PDFDocument(url: output), document.isLocked else {
                 publish(["status": "failed", "stage": "not-locked"]); return
             }

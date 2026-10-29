@@ -36,3 +36,15 @@
 - 2026-10-29 18:54 CST左右再次只读确认：iPhone14ProMax的CoreDevice状态仍为unavailable，Mac console session仍锁屏。已请求连接/解锁，当前不能把新138标记为已安装或完成真机视觉验收。
 - 首份138 generic Debug签名构建从 `4a328b6f0db5bbc23ccbd55fbac6c0943687f0cf` 成功，深度签名核验与qpdf许可检查通过。实际安装尝试CoreDevice4016失败，`...install.json`及日志 `/private/tmp/maichat-ios138-password-pdf-install.log` 记录设备无法提供连接/电源assertion；没有替换手机上的137。
 - 查看完整模拟器录像的18–42秒取帧后，发现两个安全页的大标题在原半透明导航背景下持续过淡。仅将两表单改用原生行内标题，不改密码处理、其他页面或全局导航外观。PDF同一完整用例 `/private/tmp/maichat-ios138-pdf-inline-title.xcresult` **1/1通过、零跳过**；执行者亲看 `...inline-attachments/026E1889-6160-4517-A3E3-94DDF98F190C.png` 中标题已为清晰黑色，取消/确认与安全输入继续可操作。最终增量签名包与后续Android实页结果另补。
+
+## 签名候选与安装边界
+
+- 产品提交 `52b0a63be52c21456b7fd58ef439093e88f59183` 已推origin/main并独立回读。iOS **2.2.4(138)** generic Debug构建退出0，`codesign --verify --deep --strict` 通过。构建日志 `/private/tmp/maichat-ios138-password-pdf-final-device-build.log`；清单 `/private/tmp/maichat-ios138-password-pdf-final-candidate.json`。
+- App位置 `/Users/hongqingwan/Library/Developer/Xcode/DerivedData/MaiChat-dpmznbhuepzeitfmwzvmmzmcdeql/Build/Products/Debug-iphoneos/MaiChat.app`。主文件91,856B，SHA-256 `3f409f1c04c939c9dee63fbf8dcd8ee646bbfe93567a5dd595e184a8d8bc9209`；调试dylib89,571,072B，SHA-256 `8b6937e6ccc5632c338f286a559fd8cad142a9ad17a96910b78927444f8eebdd`；QPDF LICENSE/NOTICE实际在App资源目录且有独立清单哈希。
+- 19:04 CST最终设备回读仍为同一iPhone14ProMax `unavailable`。没有再次循环安装或宣称138已上手机；已授权的覆盖安装待连接恢复后继续。Mac当前原生表单仍因console锁屏未验，未替换正在运行的Mac App；Windows未构建或实机验证。普通iOS/Android模拟器、纯C++和独立阅读器证据各自保留其范围，不相互替代。
+
+## 普通移动 API 的路径回传修复
+
+- Android普通页面验收已生成真实加密PDF，独立Poppler空/错误密码拒绝，正确虚构密码显示AES-256、1页A4并可读；但普通Java封装把结果报失败。封装原先直接比较调用方路径字符串与核心resolve后的路径；改为核对同一canonical文件并保留核心真实路径，同一正常App流程通过。首轮未保留请求和返回路径的具体两种拼写，不将某个Android别名字串写成现场事实。
+- Swift普通封装存在相同的原始路径比较，真机 `/var` 与 `/private/var` 等父目录别名可能触发此类误报。两端均按规范化路径核对。现有iOS普通PDF验收增加真正的父目录symlink别名，验证核心回传实际URL、取消无产物、正确/错误密码、源与加密页数一致；`/private/tmp/maichat-ios138-pdf-canonical.xcresult` **1/1通过、零跳过**。别名与明文测试源在结束时清理，不放宽核心对末级symlink和已有输出的限制。
+- Android正常登录密码页已打开并取消，未向共享18190账号提交新密码。原生PDF路径使用普通Android排版、安全输入与共用核心，未通过模型或付费请求验收。已停止补充可选路径取证字段或扩大测试，最终APK和截图证据另附。

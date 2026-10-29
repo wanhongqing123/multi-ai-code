@@ -44,9 +44,15 @@ enum MaiPdfSecurity {
             guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   value["ok"] as? Bool == true else { throw Failure.encryptionFailed }
             guard let result = value["output"] as? [String: Any],
-                  let path = result["path"] as? String, path == output.path,
+                  let path = result["path"] as? String, path.hasPrefix("/"),
                   result["password_protected"] as? Bool == true else { throw Failure.invalidResponse }
-            return output
+            // iOS 的 /var 与 /private/var 可指向同一沙盒；核心返回 canonical 路径，不能用原拼写误报。
+            let actual = URL(fileURLWithPath: path)
+            guard actual.standardizedFileURL.resolvingSymlinksInPath().path ==
+                    output.standardizedFileURL.resolvingSymlinksInPath().path else {
+                throw Failure.invalidResponse
+            }
+            return actual
         }.value
     }
 

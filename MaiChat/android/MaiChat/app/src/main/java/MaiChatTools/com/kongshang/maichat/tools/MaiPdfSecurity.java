@@ -60,8 +60,12 @@ public final class MaiPdfSecurity {
         if (!Boolean.TRUE.equals(value.opt("ok"))) throw new IOException("PDF encryption failed");
         JSONObject result = value.optJSONObject("output");
         if (result == null || !Boolean.TRUE.equals(result.opt("password_protected")) ||
-            !output.getPath().equals(result.optString("path")))
+            !new File(result.optString("path")).isAbsolute())
             throw new IOException("PDF encryption response is invalid");
+        // 核心返回 resolve 后路径；Android App 数据目录可能有等价别名，不能按原始字符串误报。
+        // 校验同一 canonical 文件后保留核心实际路径，调用者不会拿到另一个拼写的假失败。
+        if (!output.getCanonicalFile().equals(new File(result.getString("path")).getCanonicalFile()))
+            throw new IOException("PDF encryption output path is invalid");
         return result;
     }
 

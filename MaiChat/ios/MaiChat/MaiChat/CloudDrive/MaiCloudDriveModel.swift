@@ -437,11 +437,19 @@ struct MaiCloudDriveUploadProgress: Sendable {
         return .aborted
     }
 
+    // UI 删除不显示成功或失败文字；失败时保留原文件行，只写诊断日志。
+    // Agent 使用 deleteForAgent，仍会如实抛出错误。
     func delete(videoID: String) async {
         do {
             try await deleteForAgent(videoID: videoID)
-            notice = "已从云盘删除"
-        } catch { listError = error.localizedDescription }
+        } catch {
+            let failure = error as NSError
+            AppDiagnosticLog.shared.record(level: .warning, category: "cloud-drive",
+                event: "ui-delete-failed", fields: [
+                    "error_domain": failure.domain,
+                    "error_code": String(failure.code)
+                ])
+        }
     }
 
     func deleteForAgent(videoID: String) async throws {

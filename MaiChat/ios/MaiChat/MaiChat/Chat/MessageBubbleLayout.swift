@@ -694,6 +694,8 @@ final class ChatNavigationController: UINavigationController,
     }
 
 #if DEBUG
+    // 仅在容器几何变化时记录窗口边界和系统安全区，定位底栏是否覆盖到 home 区域。
+    // 这些数据只用于诊断，不写入 SwiftUI 状态，也不参与尺寸或滚动位置计算。
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard let window = view.window else { return }

@@ -108,3 +108,10 @@
 - 随后用户图 `144115250159782623-1793264787-738868541.png` 显示删除确认跑到顶部。源码原来将 `.confirmationDialog` 挂在整个滚动页面上，系统在较新iOS以锚定popover呈现；测试代码此前已有需要点背景关闭popover的兼容分支。该位置没有与实际行尾删除按钮建立稳定锚定关系。改为普通 `.alert` 居中确认，保留同一个待删除ID、取消、破坏性确认与model.delete路径，不用额外坐标/padding移动弹窗。
 - `/private/tmp/maichat-ios137-cloud-cleanup.xcresult` **2/2 PASS，零跳过**：图片上传/预览/左滑显示删除、确认框中线位于屏幕中线附近、取消保留文件、再确认删除生成的隔离素材；文件夹导航/空态/远端删除恢复仍通过，且灰色说明不存在。执行者亲看 `...-attachments/7BBD9BCA-9B0C-4A0D-B2B5-EEBA4E0D6322.png`，删除确认居中、取消和删除均清楚；`88BBADA8-0547-47F2-B4DD-F868CA580CA0.png` 中路径下直接是文件条目，没有灰字及空行。
 - 本轮没有再改半透明样式、布局或滚动；没有在真实账号删除文件。137真机构建/装机结果后续追加，不能把隔离模拟器删除测试写成真实账号数据操作。
+- 137产品提交 `edcaece91462031db001a33336365bf048992f99` 已完成generic Debug构建、深度签名检查和覆盖安装。设备回读2.2.4(137)，实际安装路径 `/private/var/containers/Bundle/Application/D89D0933-FBC4-4A96-A905-848F50EB30AB/MaiChat.app/`，普通启动PID6032。设备自身日志 `/private/tmp/maichat-ios137-cloud-runtime.log` 确认 `2026-10-29T09:15:39.212Z app_version=2.2.4 build=137 ios=27.2`，导航容器height873/maxY932/windowHeight932/safeBottom34。主程序SHA-256 `06f036ffb05dd9728461e6e7604b8af6157969ea69b7c6871e449699b0cb0bdc`，调试dylib `2c15977284b9a71033bd5d168cbe0cfa3dfb95dacdc10d9982a2b51ec28dc991`；清单 `/private/tmp/maichat-ios137-cloud-candidate.json`。真机连续滚动视觉仍未取得录像，不与模拟器证据混淆。
+
+## 后续云盘反馈：删除后不显示文字提示
+
+- 用户随后明确成功无需“已从云盘删除”，失败也不要文字提示。UI `delete(videoID:)` 成功不再设置notice，失败只记录错误domain/code并保留原文件行，不把底层错误文案放入列表；Agent `deleteForAgent` 继续真实抛错，不向模型误报删除成功。普通列表刷新、上传等错误策略不在此改动范围。
+- 初次统一模拟器构建发现日志中误用了本作用域不存在的 `DiagnosticLogPrivacy.stableTag`；删除不必要的媒体字段，仅保留domain/code。第二次构建通过，日志 `/private/tmp/maichat-password-ios-secure-form-fixed.log`。此节改动尚未随137安装，后续新包回执另记。
+- 按用户长期要求，在根AGENTS.md与CLAUDE.md同步补充每次改代码都维护注释的约定；涉及安全区、路径显示、下载按钮、删除状态与密码工具的注释均说明作用和边界。

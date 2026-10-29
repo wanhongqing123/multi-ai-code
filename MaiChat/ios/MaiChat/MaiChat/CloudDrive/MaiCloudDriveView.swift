@@ -364,6 +364,7 @@ struct MaiCloudDriveView: View {
                             sectionTitle("待上传")
                             ForEach(model.localTasks) { task in uploadCard(task) }
                         }
+                        // 根目录不重复显示“我的云盘”；进入子目录后保留可点击的返回路径。
                         if model.currentFolderID != nil {
                             folderNavigation
                                 .id("cloud-drive-directory-navigation-top")
@@ -608,6 +609,7 @@ struct MaiCloudDriveView: View {
                 loadMore: { loadMorePreviewMedia(item.id) })
                 .ignoresSafeArea()
         }
+        // 删除确认不依赖滚动列表的锚点，避免系统将 popover 定位到页面顶部。
         .alert("从我的云盘删除这个文件？",
                             isPresented: Binding(get: { deletingID != nil },
                                                  set: { if !$0 { deletingID = nil } })) {
@@ -819,6 +821,7 @@ struct MaiCloudDriveView: View {
                 ? "封面已加载" : "封面待加载")
             .accessibilityIdentifier("cloud-drive-play-\(media.id)")
             if !media.isImage {
+                // 单项保存操作直接执行；无障碍标签仍说明用途，页面只显示下载图标。
                 Button {
                     saveVideo(media)
                 } label: {

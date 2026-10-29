@@ -209,8 +209,6 @@ private final class MaiChatBootstrap: ObservableObject {
                 _ = RemoteIMBackgroundWork.audioQueue
                 try RemoteIMMediaStorage.prepareDirectories()
                 let settings = LocalSettingsStore()
-                // 旧版曾在本机保存 IM 签名密钥；新登录只保留服务端会话刷新令牌。
-                try? KeychainSecretStore().saveSecretKey("")
                 return (settings, settings.load())
             }
             guard !Task.isCancelled else { return }
@@ -240,16 +238,7 @@ struct MaiChatApp: App {
         AppDiagnosticLog.shared.install()
         MaiCloudDriveAgentPlaybackCache.shared.cleanupOrphans()
         Task.detached(priority: .utility) {
-            // 账号会话已取代手填共享令牌；启动时删除此前保存的连接信息。
-            UserDefaults.standard.removeObject(forKey: "oss-media-signer-url")
-            UserDefaults.standard.removeObject(forKey: "cloud-credentials-last-sync")
-            UserDefaults.standard.removeObject(forKey: "cloud-credentials-synced-providers")
-            try? KeychainSecretStore(account: "oss-media-signer-token").saveSecretKey("")
-            if let documents = FileManager.default.urls(for: .documentDirectory,
-                                                         in: .userDomainMask).first {
-                try? FileManager.default.removeItem(
-                    at: documents.appendingPathComponent("cloud-service-setup.json"))
-            }
+            // 模型凭据由当前账号领取；启动时预取并按有效期刷新，后续请求仍由客户端直连。
             _ = try? await AICloudCredentialSync.refreshAccountModelKeysIfAvailable()
             try? await AICloudCredentialSync.refreshSeedanceIfNeeded()
             try? await AICloudCredentialSync.refreshBailianIfNeeded()

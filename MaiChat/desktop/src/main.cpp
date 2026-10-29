@@ -8,7 +8,6 @@
 #include <QFontDatabase>
 #include <QHash>
 #include <QStandardPaths>
-#include <QSettings>
 #include <QTimer>
 #include <memory>
 #include <utility>
@@ -93,13 +92,6 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName(QStringLiteral("MaiChat"));
     const QStringList arguments = QCoreApplication::arguments();
     const bool smokeMode = arguments.contains(QStringLiteral("--smoke"));
-    if (!smokeMode) {
-        QSettings settings;
-        for (const char* key : {"agent/cloudServiceUrl", "agent/cloudServiceToken",
-                                "agent/cloudServiceTokenMigrationFailed"})
-            settings.remove(QLatin1String(key));
-        settings.sync();
-    }
 #ifdef MAICHAT_VERSION
     QApplication::setApplicationVersion(QStringLiteral(MAICHAT_VERSION));
 #endif

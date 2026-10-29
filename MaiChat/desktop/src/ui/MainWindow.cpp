@@ -1684,27 +1684,13 @@ QString readTextFile(const QString &path) {
 
 namespace {
 
-// 本地只保存已选模型。Responses 地址由供应商确定；
+// 本地保存推理强度和审批策略。Responses 地址由供应商确定；
 // 模型凭据领取后仅驻留当前进程内存。
 AgentController::ModelConfig loadAgentModelConfig(
     const QHash<QString, QString>& modelKeys) {
   AgentController::ModelConfig config;
 
   QSettings settings;
-  bool removedLegacySetting = false;
-  for (const char *obsolete :
-       {"agent/apiKey", "agent/deepseekApiKey", "agent/baseUrl",
-        "agent/deepseekBaseUrl", "agent/wire", "agent/deepseekWire",
-        "agent/glmChatBaseUrl", "agent/cloudServiceUrl",
-        "agent/cloudServiceToken", "agent/cloudServiceTokenMigrationFailed"}) {
-    const QString key = QLatin1String(obsolete);
-    if (!settings.contains(key))
-      continue;
-    settings.remove(key);
-    removedLegacySetting = true;
-  }
-  if (removedLegacySetting)
-    settings.sync();
   config.modelName = QStringLiteral("deepseek-flash");
   config.reasoningEffort = settings.value(
       QStringLiteral("agent/reasoningEffort"), QStringLiteral("high")).toString();

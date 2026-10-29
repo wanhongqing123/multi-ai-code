@@ -25,7 +25,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.AtomicMoveNotSupportedException;
-import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -472,8 +471,8 @@ public final class AIAssistantController {
                     "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828");
             }
             catch (Exception failure) { Log.w("MaiChatAgent", "Agent model staging failed", failure); }
+            // 本地仅读取非敏感设置；模型凭据和 Workspace ID 由当前账号领取。
             File settings = new File(root, "settings.json");
-            clearLegacyModelKeyFiles();
             if (settings.isFile()) {
                 JSONObject saved =
                     new JSONObject(new String(Files.readAllBytes(settings.toPath()), StandardCharsets.UTF_8));
@@ -482,19 +481,6 @@ public final class AIAssistantController {
                 reasoningEffort = normalizeReasoningEffort(
                     saved.optString("reasoningEffort", reasoningEffort));
                 policy = saved.optString("policy", policy);
-                // Workspace ID 已由服务端管理；升级时清除旧 settings.json 中的副本。
-                if (saved.has("wanWorkspaceId")) {
-                    saved.remove("wanWorkspaceId");
-                    android.util.AtomicFile clean = new android.util.AtomicFile(settings);
-                    FileOutputStream out = clean.startWrite();
-                    try {
-                        out.write(saved.toString().getBytes(StandardCharsets.UTF_8));
-                        clean.finishWrite(out);
-                    } catch (Exception failure) {
-                        clean.failWrite(out);
-                        Log.w("MaiChatAgent", "Legacy workspace ID cleanup failed", failure);
-                    }
-                }
             }
             // Existing conversations continue to load, but new turns use the current main model.
             if (testEndpoint == null) model = DEFAULT_MODEL;
@@ -2406,25 +2392,6 @@ public final class AIAssistantController {
             throw failure;
         }
         return new ImportedFile(name, mime, image);
-    }
-    private void clearLegacyModelKeyFiles() {
-        for (String name : new String[] {"api-key.enc", "ark-api-key.enc",
-                "glm-main-api-key.enc", "glm-video-api-key.enc",
-                "deepseek-main-api-key.enc", "wan-api-key.enc",
-                "kling-api-key.enc", "minimax-api-key.enc",
-                "cloud-service-token.enc", "cloud-service-url.txt"}) {
-            new File(root, name).delete();
-            new File(root, name + ".bak").delete();
-            new File(root, name + ".new").delete();
-        }
-        try {
-            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
-            store.load(null);
-            if (store.containsAlias("MaiChat.AIAssistant.APIKey"))
-                store.deleteEntry("MaiChat.AIAssistant.APIKey");
-        } catch (Exception failure) {
-            Log.w("MaiChatAgent", "Stored service token cleanup failed", failure);
-        }
     }
     private void exportSystemCertificates() throws Exception {
         SystemCertificateBundle.writeCurrentPem(new File(root, "trusted-roots.pem"));

@@ -151,8 +151,6 @@ private slots:
     void agentAccountKeysUpdateModelWithoutSavingSecrets();
     void agentDeepSeekKeyAloneConfiguresMainModel();
     void agentModelFailureRefreshesWithoutDialog();
-    void agentSettingsDeletesSharedTokenFromSettings();
-    void agentSettingsIgnoresLegacyTokenStoreFailure();
     void leftNavigationRailIsResizableAndWider();
     void navigationIconsSitNearTopEdge();
     void cloudDriveNavigationUsesMainPageInRequestedOrder();
@@ -1264,27 +1262,6 @@ void MainWindowLayoutTest::composerUsesEmbeddedIconSendAction() {
 
 // AI 回复建议只填入输入框供用户审阅，不能自动发送或悄悄改变选中会话。
 void MainWindowLayoutTest::aiReplySuggestionOnlyFillsComposer() {
-    QSettings settings;
-    const bool hadBaseUrl = settings.contains(QStringLiteral("agent/baseUrl"));
-    const bool hadApiKey = settings.contains(QStringLiteral("agent/apiKey"));
-    const QVariant oldBaseUrl = settings.value(QStringLiteral("agent/baseUrl"));
-    const QVariant oldApiKey = settings.value(QStringLiteral("agent/apiKey"));
-    struct RestoreSettings {
-        QSettings* settings;
-        bool hadBaseUrl;
-        bool hadApiKey;
-        QVariant baseUrl;
-        QVariant apiKey;
-        ~RestoreSettings() {
-            if (hadBaseUrl) settings->setValue(QStringLiteral("agent/baseUrl"), baseUrl);
-            else settings->remove(QStringLiteral("agent/baseUrl"));
-            if (hadApiKey) settings->setValue(QStringLiteral("agent/apiKey"), apiKey);
-            else settings->remove(QStringLiteral("agent/apiKey"));
-        }
-    } restore{&settings, hadBaseUrl, hadApiKey, oldBaseUrl, oldApiKey};
-    settings.remove(QStringLiteral("agent/baseUrl"));
-    settings.remove(QStringLiteral("agent/apiKey"));
-
     auto client = std::make_unique<FakeRemoteIMClient>();
     auto* fake = client.get();
     RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
@@ -2753,76 +2730,6 @@ void MainWindowLayoutTest::agentModelFailureRefreshesWithoutDialog() {
     send->click();
     QCOMPARE(retries, 1);
     QCOMPARE(draft->toPlainText(), QStringLiteral("尚未发送的草稿"));
-    QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
-}
-
-void MainWindowLayoutTest::agentSettingsDeletesSharedTokenFromSettings() {
-    const QString originalOrganization = QCoreApplication::organizationName();
-    const QString originalApplication = QCoreApplication::applicationName();
-    struct RestoreIdentity {
-        QString organization;
-        QString application;
-        ~RestoreIdentity() {
-            QCoreApplication::setOrganizationName(organization);
-            QCoreApplication::setApplicationName(application);
-        }
-    } restore{originalOrganization, originalApplication};
-    QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
-    QCoreApplication::setApplicationName(QStringLiteral("AgentTokenMigration"));
-    QSettings settings;
-    settings.clear();
-    settings.setValue(QStringLiteral("agent/cloudServiceUrl"), QString());
-    const QString dummyToken(43, QLatin1Char('M'));
-    settings.setValue(QStringLiteral("agent/cloudServiceToken"), dummyToken);
-    settings.sync();
-    struct Cleanup {
-        QSettings& settings;
-        ~Cleanup() {
-            settings.clear();
-            settings.sync();
-        }
-    } cleanup{settings};
-
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    MainWindow window(app);
-    settings.sync();
-    QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceToken")));
-    QVERIFY(!settings.contains(QStringLiteral("agent/cloudServiceUrl")));
-}
-
-void MainWindowLayoutTest::agentSettingsIgnoresLegacyTokenStoreFailure() {
-    const QString originalOrganization = QCoreApplication::organizationName();
-    const QString originalApplication = QCoreApplication::applicationName();
-    struct RestoreIdentity {
-        QString organization;
-        QString application;
-        ~RestoreIdentity() {
-            QCoreApplication::setOrganizationName(organization);
-            QCoreApplication::setApplicationName(application);
-        }
-    } restore{originalOrganization, originalApplication};
-    QCoreApplication::setOrganizationName(QStringLiteral("MaiChatTests"));
-    QCoreApplication::setApplicationName(QStringLiteral("AgentTokenFailureUi"));
-    QSettings settings;
-    settings.clear();
-    settings.setValue(QStringLiteral("agent/cloudServiceUrl"), QString());
-    settings.setValue(QStringLiteral("agent/cloudServiceTokenMigrationFailed"), true);
-    settings.sync();
-    struct Cleanup {
-        QSettings& settings;
-        ~Cleanup() { settings.clear(); settings.sync(); }
-    } cleanup{settings};
-
-    auto client = std::make_unique<FakeRemoteIMClient>();
-    RemoteIMApplication app(QStringLiteral("desktop-user"), std::move(client));
-    MainWindow window(app);
-    window.setAccountModelKeys({{QStringLiteral("glm"), QString(40, QLatin1Char('G'))},
-                             {QStringLiteral("deepseek"), QString(40, QLatin1Char('D'))}});
-    auto* chip = window.findChild<QPushButton*>(QStringLiteral("agentModelChip"));
-    QVERIFY(chip);
-    QCOMPARE(chip->text(), QStringLiteral("deepseek-flash"));
-    QVERIFY(window.findChild<QPushButton*>(QStringLiteral("settingsAgentModelButton")) == nullptr);
     QVERIFY(window.findChild<QDialog*>(QStringLiteral("agentModelDialog")) == nullptr);
 }
 

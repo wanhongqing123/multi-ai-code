@@ -6,7 +6,7 @@
 
 #include <QString>
 
-// 默认项是账号刷新令牌；构造参数也供启动时清理已停用的系统凭据项。
+// 默认项是账号刷新令牌；构造参数也供测试使用独立的系统凭据命名空间。
 class SecureRefreshTokenStore {
 public:
     explicit SecureRefreshTokenStore(

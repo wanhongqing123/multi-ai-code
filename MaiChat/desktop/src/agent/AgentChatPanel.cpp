@@ -712,10 +712,19 @@ public:
         state_->setText(state);
     }
 
-    // 只显示最后一行，而且截断。子 Agent 可能吐几千字，
-    // 全塞进来的话这张卡会把主对话流挤没。
-    void setLatest(const QString& text) {
-        QString line = text.trimmed();
+    // 输入是流式 delta，不是完整正文；先保留有限尾部再取末行，
+    // 否则最后一个标点 chunk 会把整条进度摘要覆盖成一个标点。
+    void appendLatestText(const QString& partId, const QString& text) {
+        if (partId != latestPartId_) {
+            latestPartId_ = partId;
+            latestText_.clear();
+        }
+        latestText_.append(text);
+        if (latestText_.size() > 4096) {
+            latestText_ = latestText_.right(4096);
+            if (latestText_.at(0).isLowSurrogate()) latestText_.remove(0, 1);
+        }
+        QString line = latestText_.trimmed();
         const int newline = line.lastIndexOf(QLatin1Char('\n'));
         if (newline >= 0) line = line.mid(newline + 1).trimmed();
         if (line.size() > 60) line = line.left(60) + QStringLiteral("…");
@@ -727,6 +736,8 @@ private:
     QLabel* name_ = nullptr;
     QLabel* state_ = nullptr;
     QLabel* latest_ = nullptr;
+    QString latestPartId_;
+    QString latestText_;
 };
 
 class AgentChatPanel::ThinkingLine final : public QFrame {
@@ -1791,7 +1802,7 @@ AgentChatPanel::AgentChatPanel(AgentController& controller, QWidget* parent)
     connect(&controller, &AgentController::textDelta, this,
             [this](const QString& sessionId, const QString&, const QString& partId, const QString& delta) {
                 if (!isCurrentSession(sessionId)) {
-                    noteOtherSession(sessionId, delta);
+                    noteOtherSession(sessionId, delta, partId);
                     return;
                 }
                 clearPendingThinking();
@@ -2809,13 +2820,14 @@ void AgentChatPanel::appendTextMediaCards(const QString& messageId, const QStrin
     }
 }
 
-void AgentChatPanel::noteOtherSession(const QString& sessionId, const QString& text) {
+void AgentChatPanel::noteOtherSession(const QString& sessionId, const QString& text,
+                                    const QString& partId) {
     // 只认自己的孩子。别的根会话（用户在另一个标签页里开的）不关这儿的事。
     if (!runtime_->controller->isChildOf(sessionId, runtime_->sessionId)) return;
 
     SubAgentCard* card = subAgentCardFor(sessionId);
     if (card == nullptr) return;
-    if (!text.isEmpty()) card->setLatest(text);
+    if (!text.isEmpty()) card->appendLatestText(partId, text);
 
     // 状态每次都从核心现取，不在这边推算：多端同时开着的时候，
     // 推算出来的状态会和真实情况岔开。

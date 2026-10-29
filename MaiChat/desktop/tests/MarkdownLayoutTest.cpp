@@ -31,6 +31,7 @@ private slots:
     void typographyDoesNotInheritPlatformApplicationFonts();
     void emptyDocumentTakesNoSpace();
     void narrowerWidthWrapsTaller();
+    void chatSourceLinesStayOnDistinctVisualLines();
     void headingIsTallerThanBody();
     void codeBlockKeepsEveryLine();
     void listIndentsByDepth();
@@ -66,6 +67,18 @@ void MarkdownLayoutTest::emptyDocumentTakesNoSpace() {
     // 宽度为 0 时不能崩，也不能算出个高度来——窗口还没显示时就是这个状态。
     const MarkdownLayout zero = laidOut(QStringLiteral("有内容"), 0);
     QCOMPARE(zero.height(), qreal(0));
+}
+
+void MarkdownLayoutTest::chatSourceLinesStayOnDistinctVisualLines() {
+    // 宽窗口没有自动折行干扰：每条真实换行都必须增加可见高度，并保留复制文本。
+    const auto one = laidOut(QStringLiteral("A1 first recommendation"), 1200);
+    auto report = laidOut(QStringLiteral("A1 first\nrecommendation one\nA2 second\nrecommendation two"), 1200);
+    QVERIFY(report.height() >= one.height() * 3);
+    const auto hard = laidOut(QStringLiteral("A1 first  \nrecommendation one  \nA2 second  \nrecommendation two"), 1200);
+    QCOMPARE(report.height(), hard.height());
+    report.setSelection(0, report.textLength());
+    QCOMPARE(report.selectedText().trimmed(), QStringLiteral("A1 first\nrecommendation one\nA2 second\nrecommendation two"));
+    QVERIFY(!report.selectedText().contains(QChar(QChar::LineSeparator)));
 }
 
 void MarkdownLayoutTest::narrowerWidthWrapsTaller() {

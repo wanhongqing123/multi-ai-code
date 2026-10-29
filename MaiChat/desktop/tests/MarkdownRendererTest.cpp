@@ -11,7 +11,7 @@ class MarkdownRendererTest : public QObject {
 private slots:
     void rendersCommonAiCliMarkdown();
     void stylesStandaloneImcliSourceFooter();
-    void collapsesSoftLineBreaksLikeElectron();
+    void preservesChatSoftLineBreaks();
     void escapesRawHtmlAndUnsafeLinks();
     void rendersFencedCodeWithoutInlineFormatting();
     void rendersGfmTableStrikethroughTaskList();
@@ -54,15 +54,23 @@ void MarkdownRendererTest::rendersCommonAiCliMarkdown() {
     QVERIFY(html.contains(QStringLiteral("href=\"https://example.com\"")));
 }
 
-void MarkdownRendererTest::collapsesSoftLineBreaksLikeElectron() {
-    // CommonMark 软换行折叠为空格——与 Electron 端 react-markdown 行为一致；
-    // 硬换行（行尾两个空格）仍然是 <br />。
+void MarkdownRendererTest::preservesChatSoftLineBreaks() {
+    // 聊天内容的实际换行要与 iOS 一致保留；不是让用户补两个空格才能逐条阅读。
     const QString html = MarkdownRenderer::renderToHtml(QStringLiteral("line 1\nline 2"));
-    QVERIFY(html.contains(QStringLiteral("line 1\nline 2")));
-    QVERIFY(!html.contains(QStringLiteral("<br")));
+    QVERIFY(html.contains(QStringLiteral("line 1<br />\nline 2")));
 
     const QString hardBreak = MarkdownRenderer::renderToHtml(QStringLiteral("line 1  \nline 2"));
     QVERIFY(hardBreak.contains(QStringLiteral("<br />")));
+    const QString source = QStringLiteral("A1 **first**\nrecommendation one\nA2 `second`\nrecommendation two");
+    const QString report = MarkdownRenderer::renderToHtml(source);
+    QCOMPARE(report.count(QStringLiteral("<br />")), 3);
+    QVERIFY(report.contains(QStringLiteral("<strong>first</strong>")));
+    const QString preview = MarkdownRenderer::renderPreviewHtml(source);
+    QCOMPARE(preview.count(QStringLiteral("<br />")), 3);
+    for (const auto& newline : {QStringLiteral("\n"), QStringLiteral("\r\n"), QStringLiteral("\r")}) {
+        const auto mixed = MarkdownRenderer::renderToHtml(QStringLiteral("first") + newline + QStringLiteral("second"));
+        QVERIFY(mixed.contains(QStringLiteral("first<br />\nsecond")));
+    }
 }
 
 void MarkdownRendererTest::escapesRawHtmlAndUnsafeLinks() {

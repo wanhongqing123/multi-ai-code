@@ -312,15 +312,10 @@ CloudDriveDialog::CloudDriveDialog(AccessProvider access, AccountIdProvider acco
     quotaCaption_->setStyleSheet(QStringLiteral("color:#667085;font-size:12px;"));
     quotaLayout->addWidget(quotaCaption_);
     root->addWidget(quotaCard);
-    auto* pendingTitle = new QLabel(QStringLiteral("待续传"), this);
-    pendingTitle->setStyleSheet(QStringLiteral("font-weight:650;"));
-    root->addWidget(pendingTitle);
     uploadScroll_ = makeScroll(&uploadRows_, this);
-    uploadScroll_->setFixedHeight(54);
+    // 待续传仅在有真实任务时占位；空区域不再把文件列表向下推，也无需重复分区标题。
+    uploadScroll_->hide();
     root->addWidget(uploadScroll_);
-    auto* videosTitle = new QLabel(QStringLiteral("文件夹与文件"), this);
-    videosTitle->setStyleSheet(QStringLiteral("font-weight:650;"));
-    root->addWidget(videosTitle);
     auto* navigation = new QHBoxLayout;
     navigation->setSpacing(6);
     rootFolderButton_ = new QPushButton(QStringLiteral("根目录"), this);
@@ -399,7 +394,7 @@ void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
         refreshNotice_.clear();
         updateFolderNavigation();
         clearRows(videoRows_);
-        clearRows(uploadRows_);
+        renderCheckpoints({});
         setBusy(false);
         quota_->setText(QStringLiteral("未连接"));
         quotaBar_->setValue(0);
@@ -423,7 +418,7 @@ void CloudDriveDialog::openDrive(const QString& suggestedVideo) {
         quota_->setText(QStringLiteral("正在读取空间…"));
         quotaBar_->setValue(0);
         clearRows(videoRows_);
-        clearRows(uploadRows_);
+        renderCheckpoints({});
     }
     show();
     if (!embedded_) {
@@ -515,15 +510,12 @@ void CloudDriveDialog::refreshCheckpoints() {
 
 void CloudDriveDialog::renderCheckpoints(const QJsonArray& uploads) {
     clearRows(uploadRows_);
-    if (uploadScroll_)
-        uploadScroll_->setFixedHeight(uploads.isEmpty() ? 54 : qMin(170, 18 + uploads.size() * 70));
-    if (uploads.isEmpty()) {
-        auto* empty = new QLabel(QStringLiteral("没有待续传的文件"), this);
-        empty->setStyleSheet(QStringLiteral("color:#98a2b3;padding:10px;"));
-        empty->setMaximumHeight(42);
-        uploadRows_->addWidget(empty);
-        return;
+    if (uploadScroll_) {
+        uploadScroll_->setVisible(!uploads.isEmpty());
+        if (!uploads.isEmpty()) uploadScroll_->setFixedHeight(qMin(170, 18 + uploads.size() * 70));
     }
+    // 只收起展示，不删除检查点；非空仍复用下方继续/放弃动作和原上传进度实现。
+    if (uploads.isEmpty()) return;
     for (const QJsonValue& value : uploads) {
         const QJsonObject task = value.toObject();
         const QString checkpoint = task.value(QStringLiteral("checkpoint_path")).toString();

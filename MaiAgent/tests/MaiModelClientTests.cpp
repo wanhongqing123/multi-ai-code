@@ -48,6 +48,8 @@ struct FakeServer {
     int transientFailures = 0;
     bool stallWithoutBytes = false;
     bool sendOnlyHeartbeats = false;
+    // 重复有效但不推进的协议事件，用于证明服务端状态/空 delta 不会无限续期。
+    std::string repeatedEvent;
     bool keepOpenAfterDone = false;
     std::vector<std::string> delayedChunks;
     int delayedChunkMs = 0;
@@ -112,7 +114,7 @@ struct FakeServer {
                     });
                 return;
             }
-            if (stallWithoutBytes || sendOnlyHeartbeats) {
+            if (stallWithoutBytes || sendOnlyHeartbeats || !repeatedEvent.empty()) {
                 response.set_chunked_content_provider(
                     "text/event-stream", [this](std::size_t, httplib::DataSink& sink) {
                         if (releaseStall.load()) {
@@ -120,6 +122,9 @@ struct FakeServer {
                             return false;
                         }
                         if (sendOnlyHeartbeats && !sink.write(": keepalive\n\n", 13)) return false;
+                        if (!repeatedEvent.empty() &&
+                            !sink.write(repeatedEvent.data(), repeatedEvent.size()))
+                            return false;
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         return true;
                     });
@@ -488,29 +493,156 @@ void test_chat_completions_does_not_release_tools_without_done() {
     CHECK(fake.requestCount.load() == 1);
 }
 
-void test_heartbeats_do_not_extend_model_inactivity() {
-    FakeServer fake;
-    fake.sendOnlyHeartbeats = true;
-    fake.start();
+void test_heartbeats_do_not_extend_model_progress_deadline() {
+    for (const auto wire : {MaiWireApi::ChatCompletions, MaiWireApi::Responses}) {
+        FakeServer fake;
+        fake.sendOnlyHeartbeats = true;
+        fake.start();
 
+        MaiModelConfig config;
+        config.baseUrl = fake.base();
+        config.inactivityTimeoutSeconds = 1;
+        config.progressTimeoutSeconds = 2;
+        config.totalTimeoutSeconds = 6;
+        config.wire = wire;
+        config.maxRetries = 0;
+        auto client = makeMaiModelClient(config);
+        MaiModelRequest request;
+        request.model = "test-model";
+        MaiStreamSink sink;
+        const std::atomic<bool> cancel{false};
+        const auto started = std::chrono::steady_clock::now();
+        const MaiError result = client->stream(request, sink, cancel);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        CHECK(result.code() == MaiErrorCode::Network);
+        CHECK(result.message().find("made no progress") != std::string::npos);
+        CHECK(result.message().find("Reduce image size") == std::string::npos);
+        CHECK(elapsed >= std::chrono::milliseconds(1500));
+        CHECK(elapsed < std::chrono::seconds(5));
+        CHECK(fake.requestCount.load() == 1);
+    }
+}
+
+std::string response_event(const nlohmann::json& event) {
+    return "data: " + event.dump() + "\n\n";
+}
+
+void test_protocol_liveness_and_progress_are_distinct() {
+    // 连接确有保活，等待超过短传输期限仍能收到正文；不是把有效请求按无正文直接杀掉。
+    for (const auto wire : {MaiWireApi::ChatCompletions, MaiWireApi::Responses}) {
+        FakeServer fake;
+        fake.delayedChunks = {
+            ": keepalive\n\n",
+            ": keepalive\n\n",
+            ": keepalive\n\n",
+            ": keepalive\n\n",
+            wire == MaiWireApi::Responses
+                ? response_event({{"type", "response.output_text.delta"}, {"delta", "ready"}})
+                : text_delta("ready"),
+            wire == MaiWireApi::Responses ? response_event({{"type", "response.completed"}})
+                                          : kDone};
+        fake.delayedChunkMs = 450;
+        fake.start();
+        MaiModelConfig config;
+        config.baseUrl = fake.base();
+        config.wire = wire;
+        config.inactivityTimeoutSeconds = 1;
+        config.progressTimeoutSeconds = 4;
+        config.totalTimeoutSeconds = 7;
+        config.maxRetries = 0;
+        auto client = makeMaiModelClient(config);
+        MaiModelRequest request;
+        request.model = "test-model";
+        MaiStreamSink sink;
+        std::string output;
+        sink.onText = [&](std::string_view text) { output.append(text); };
+        const std::atomic<bool> cancel{false};
+        CHECK(!client->stream(request, sink, cancel));
+        CHECK(output == "ready");
+    }
+    // 同一状态重复发送只说明链路活跃；无实质推进仍按独立期限结束，且不重试旧请求。
+    FakeServer fake;
+    fake.repeatedEvent =
+        response_event({{"type", "response.in_progress"}, {"output_index", nullptr}}) +
+        response_event(
+            {{"type", "response.content_part.added"}, {"output_index", 0}, {"content_index", 0}}) +
+        response_event({{"type", "response.output_text.delta"}, {"delta", ""}});
+    fake.start();
     MaiModelConfig config;
     config.baseUrl = fake.base();
+    config.wire = MaiWireApi::Responses;
     config.inactivityTimeoutSeconds = 1;
-    config.totalTimeoutSeconds = 4;
-    config.maxRetries = 0;
+    config.progressTimeoutSeconds = 2;
+    config.totalTimeoutSeconds = 6;
     auto client = makeMaiModelClient(config);
     MaiModelRequest request;
     request.model = "test-model";
     MaiStreamSink sink;
     const std::atomic<bool> cancel{false};
-    const auto started = std::chrono::steady_clock::now();
-    const MaiError result = client->stream(request, sink, cancel);
-    const auto elapsed = std::chrono::steady_clock::now() - started;
+    const auto result = client->stream(request, sink, cancel);
     CHECK(result.code() == MaiErrorCode::Network);
-    CHECK(result.message().find("inactive") != std::string::npos);
-    CHECK(result.message().find("0 images; received ") != std::string::npos);
-    CHECK(result.message().find("Reduce image size") == std::string::npos);
-    CHECK(elapsed < std::chrono::seconds(3));
+    CHECK(result.message().find("made no progress") != std::string::npos);
+    CHECK(fake.requestCount.load() == 1);
+}
+
+void test_responses_lifecycle_advances_without_synthetic_output() {
+    FakeServer fake;
+    fake.delayedChunks = {
+        response_event({{"type", "response.created"}}),
+        response_event({{"type", "response.in_progress"}}),
+        response_event({{"type", "response.output_item.added"},
+                        {"output_index", 0},
+                        {"item", {{"type", "message"}}}}),
+        response_event(
+            {{"type", "response.content_part.added"}, {"output_index", 0}, {"content_index", 0}}),
+        response_event(
+            {{"type", "response.content_part.done"}, {"output_index", 0}, {"content_index", 0}}),
+        response_event({{"type", "response.output_text.delta"}, {"delta", "answer"}}),
+        response_event({{"type", "response.completed"}})};
+    fake.delayedChunkMs = 550;
+    fake.start();
+    MaiModelConfig config;
+    config.baseUrl = fake.base();
+    config.wire = MaiWireApi::Responses;
+    config.inactivityTimeoutSeconds = 2;
+    config.progressTimeoutSeconds = 2;
+    config.totalTimeoutSeconds = 7;
+    config.maxRetries = 0;
+    auto client = makeMaiModelClient(config);
+    MaiModelRequest request;
+    request.model = "test-model";
+    MaiStreamSink sink;
+    std::string output, reasoning;
+    sink.onText = [&](std::string_view text) { output.append(text); };
+    sink.onReasoning = [&](std::string_view text) { reasoning.append(text); };
+    const std::atomic<bool> cancel{false};
+    const auto started = std::chrono::steady_clock::now();
+    CHECK(!client->stream(request, sink, cancel));
+    CHECK(output == "answer" && reasoning.empty());
+    CHECK(std::chrono::steady_clock::now() - started > std::chrono::seconds(2));
+}
+
+void test_silent_transport_still_times_out() {
+    for (const auto wire : {MaiWireApi::ChatCompletions, MaiWireApi::Responses}) {
+        FakeServer fake;
+        fake.stallWithoutBytes = true;
+        fake.start();
+        MaiModelConfig config;
+        config.baseUrl = fake.base();
+        config.wire = wire;
+        config.inactivityTimeoutSeconds = 1;
+        config.progressTimeoutSeconds = 5;
+        config.totalTimeoutSeconds = 7;
+        auto client = makeMaiModelClient(config);
+        MaiModelRequest request;
+        request.model = "test-model";
+        MaiStreamSink sink;
+        const std::atomic<bool> cancel{false};
+        const auto result = client->stream(request, sink, cancel);
+        CHECK(result.code() == MaiErrorCode::Network);
+        CHECK(result.message().find("transport inactive") != std::string::npos);
+        CHECK(fake.requestCount.load() == 1);
+    }
 }
 
 void test_real_model_progress_extends_idle_deadline() {
@@ -522,6 +654,7 @@ void test_real_model_progress_extends_idle_deadline() {
     MaiModelConfig config;
     config.baseUrl = fake.base();
     config.inactivityTimeoutSeconds = 2;
+    config.progressTimeoutSeconds = 2;
     config.totalTimeoutSeconds = 6;
     auto client = makeMaiModelClient(config);
     MaiModelRequest request;
@@ -1226,7 +1359,10 @@ int main() {
     test_transient_http_failure_retries_before_streaming();
     test_chat_completions_requires_done_before_reporting_success();
     test_chat_completions_does_not_release_tools_without_done();
-    test_heartbeats_do_not_extend_model_inactivity();
+    test_heartbeats_do_not_extend_model_progress_deadline();
+    test_protocol_liveness_and_progress_are_distinct();
+    test_responses_lifecycle_advances_without_synthetic_output();
+    test_silent_transport_still_times_out();
     test_real_model_progress_extends_idle_deadline();
     test_done_ends_stream_without_waiting_for_socket_close();
     test_cancel_interrupts_silent_model_stream();

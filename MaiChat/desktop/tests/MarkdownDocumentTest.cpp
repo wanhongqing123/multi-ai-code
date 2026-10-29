@@ -32,7 +32,7 @@ private slots:
     void flattensNestedLists();
     void readsTaskListsAndOrderedNumbers();
     void dropsUnsafeLinkTargets();
-    void foldsSoftBreaksIntoSpaces();
+    void preservesChatSoftBreaks();
     void keepsSourceForCopying();
     void plainTextIsOneLine();
     void parsesTables();
@@ -190,13 +190,21 @@ void MarkdownDocumentTest::dropsUnsafeLinkTargets() {
     QVERIFY(sawAnchor);
 }
 
-void MarkdownDocumentTest::foldsSoftBreaksIntoSpaces() {
-    // CommonMark 的行为，和老渲染器、Electron 端一致。两端不一致的话，
-    // 同一条消息在手机和桌面上会断在不同位置。
+void MarkdownDocumentTest::preservesChatSoftBreaks() {
+    // 实际聊天分行必须保留，块结构/原文仍由解析器决定，不把全文预先替换成 HTML。
     const MarkdownDocument document =
         MarkdownDocument::parse(QStringLiteral("第一行\n第二行\n\n另一段"));
     QCOMPARE(document.blocks().size(), 2);
-    QCOMPARE(textOf(document.blocks()[0].spans), QStringLiteral("第一行 第二行"));
+    QCOMPARE(textOf(document.blocks()[0].spans), QStringLiteral("第一行\n第二行"));
+    const QString source = QStringLiteral("A1 **first**\nrecommendation one\nA2 `second`\nrecommendation two");
+    const auto report = MarkdownDocument::parse(source);
+    QCOMPARE(report.blocks().size(), 1);
+    QCOMPARE(textOf(report.blocks().first().spans), QStringLiteral("A1 first\nrecommendation one\nA2 second\nrecommendation two"));
+    QCOMPARE(report.source(), source);
+    for (const auto& newline : {QStringLiteral("\n"), QStringLiteral("\r\n"), QStringLiteral("\r")}) {
+        const auto mixed = MarkdownDocument::parse(QStringLiteral("first") + newline + QStringLiteral("second"));
+        QCOMPARE(textOf(mixed.blocks().first().spans), QStringLiteral("first\nsecond"));
+    }
 }
 
 void MarkdownDocumentTest::keepsSourceForCopying() {

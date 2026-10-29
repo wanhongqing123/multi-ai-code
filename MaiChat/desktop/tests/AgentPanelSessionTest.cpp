@@ -283,6 +283,7 @@ private slots:
     void anotherSessionFailingDoesNotShowAnError();
     void anotherSessionTitleDoesNotRenameTheHeader();
     void currentSessionTitleStaysInTheSessionList();
+    void subAgentCardsKeepTaskAndStreamedLatestLineVisible();
     void approvalFromAnotherSessionIsStillShown();
     void pendingApprovalIsRestoredAfterSessionSwitch();
     void pendingQuestionIsRestoredOnlyInItsSession();
@@ -878,6 +879,55 @@ void AgentPanelSessionTest::currentSessionTitleStaysInTheSessionList() {
     auto* title = harness.panel->findChild<QLabel*>(QStringLiteral("agentHeaderTitle"));
     QVERIFY(title);
     QCOMPARE(title->text(), QStringLiteral("创作中心"));
+}
+
+void AgentPanelSessionTest::subAgentCardsKeepTaskAndStreamedLatestLineVisible() {
+    Harness harness;
+    QVERIFY(QTest::qWaitForWindowExposed(harness.panel.get()));
+    QVERIFY(harness.controller->sendPrompt(harness.mine, QStringLiteral("Review fixture")));
+    harness.controller->agent().waitIdle();
+    harness.panel->openSession(harness.mine);
+    const QString task = QStringLiteral("logic-func-reviewer");
+    const auto spawned = harness.controller->agent().spawnSubAgent(
+        harness.mine.toStdString(), task.toStdString(), "Read-only fixture task");
+    QVERIFY(spawned);
+    harness.controller->agent().waitIdle();
+    const auto publish = [&](const QString& delta, const char* partId = "prt_sub_card_layout") {
+        MaiEvent event;
+        event.id = "evt_sub_card_layout";
+        event.type = MaiEventType::MessagePartDelta;
+        event.sessionId = spawned.value();
+        event.messageId = "msg_sub_card_layout";
+        event.partId = partId;
+        event.field = "text";
+        event.delta = delta.toStdString();
+        harness.controller->agent().eventBus().publish(event);
+        QCoreApplication::processEvents();
+    };
+    publish(QStringLiteral("代码审查已完成，发现两个需要核实的问题"));
+    publish(QStringLiteral("。"));
+    auto* card = harness.panel->findChild<QFrame*>(QStringLiteral("agentSubTaskCard"));
+    QVERIFY(card != nullptr);
+    QLabel* name = nullptr;
+    QLabel* latest = nullptr;
+    for (auto* label : card->findChildren<QLabel*>()) {
+        if (label->text().startsWith(QStringLiteral("子任务"))) name = label;
+        if (label->text().startsWith(QStringLiteral("代码审查"))) latest = label;
+    }
+    QVERIFY(name != nullptr);
+    QTRY_VERIFY(name->width() >= name->fontMetrics().horizontalAdvance(name->text()));
+    QVERIFY(latest != nullptr);
+    QCOMPARE(latest->text(), QStringLiteral("代码审查已完成，发现两个需要核实的问题。"));
+    QTRY_VERIFY(latest->width() >= latest->fontMetrics().horizontalAdvance(latest->text()));
+    QVERIFY(card->rect().contains(name->geometry()));
+    QVERIFY(card->rect().contains(latest->geometry()));
+    QCOMPARE(harness.panel->sessionId(), harness.mine);
+    const QString capture = qEnvironmentVariable("MAICHAT_SUB_AGENT_CARD_CAPTURE");
+    if (!capture.isEmpty()) QVERIFY(harness.panel->grab().save(capture));
+    // 工具执行后的新正文片段、后续轮次都重新开始摘要，不能拼接上一片段的尾巴。
+    publish(QStringLiteral("新的检查开始"), "prt_sub_card_next");
+    publish(QStringLiteral("。"), "prt_sub_card_next");
+    QTRY_COMPARE(latest->text(), QStringLiteral("新的检查开始。"));
 }
 
 void AgentPanelSessionTest::approvalFromAnotherSessionIsStillShown() {

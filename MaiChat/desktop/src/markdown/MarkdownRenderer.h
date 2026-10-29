@@ -8,6 +8,7 @@
 
 class MarkdownRenderer final {
 public:
+    // 聊天正文保留原文中的软换行；由 md4c 判定语义，不对 Markdown 全文替换换行。
     static QString renderToHtml(const QString& markdown);
 // 纯文本预览使用语义化 HTML，不添加装饰性代码标签或内边距。
     static QString renderPreviewHtml(const QString& markdown);

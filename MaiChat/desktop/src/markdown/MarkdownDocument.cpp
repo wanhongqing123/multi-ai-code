@@ -14,8 +14,8 @@
 // 所以接 enter_block / leave_block / enter_span / leave_span / text 这五个回调，
 // 自己攒结构。
 //
-// 方言和老路线保持一致（MD_DIALECT_GITHUB + MD_FLAG_NOHTML），否则同一段文字在
-// agent 和 IM 里会渲染成两样。
+// 方言和 HTML 路线保持一致；聊天中的实际换行在解析器层保留，否则同一段逐行建议
+// 会在桌面挤成一段。代码块、列表、表格仍按 md4c 的结构解析，不修改原文。
 
 namespace {
 
@@ -526,8 +526,8 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
                 builder->commitPendingCallout();
                 break;
             }
-            // 软换行折成空格——CommonMark 的行为，和老渲染器、Electron 端一致。
-            builder->addText(QStringLiteral(" "));
+            // 与硬换行保持同一聊天显示语义；正常配置会由 md4c 直接发 MD_TEXT_BR。
+            builder->addText(QStringLiteral("\n"));
             break;
 
         case MD_TEXT_NULLCHAR:
@@ -565,7 +565,7 @@ MarkdownDocument MarkdownDocument::parse(const QString& markdown) {
     Builder builder;
     MD_PARSER parser{};
     parser.abi_version = 0;
-    parser.flags = MD_DIALECT_GITHUB | MD_FLAG_NOHTML;
+    parser.flags = MD_DIALECT_GITHUB | MD_FLAG_NOHTML | MD_FLAG_HARD_SOFT_BREAKS;
     parser.enter_block = enterBlock;
     parser.leave_block = leaveBlock;
     parser.enter_span = enterSpan;

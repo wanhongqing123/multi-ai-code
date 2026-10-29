@@ -9,8 +9,9 @@
 #include "md4c-html.h"
 
 // Markdown 解析交给 md4c（0.5.2，与 Qt 官方内嵌同源），GFM 方言与 Electron 端
-// react-markdown + remark-gfm 对齐：表格、删除线、任务列表、自动链接、软换行
-// 折叠为空格（CommonMark 行为，两端一致）。本文件只负责两件事：
+// react-markdown + remark-gfm 对齐：表格、删除线、任务列表、自动链接。
+// 聊天的真实换行按 iOS 阅读效果保留；只在解析器语义层启用软换行转硬换行，
+// 不预处理全文，避免破坏代码、表格和列表。本文件只负责两件事：
 //   1) 调 md4c 产出标准 HTML；
 //   2) 针对 QTextDocument 的 CSS 子集限制做后处理（行内 padding、块级圆角/
 //      内边距、<input> 复选框都不支持），并套上与 .remote-im-markdown 对齐的样式。
@@ -49,7 +50,7 @@ QString parseHtml(const QString& markdown) {
     QByteArray out;
     out.reserve(utf8.size() * 2);
     md_html(utf8.constData(), static_cast<MD_SIZE>(utf8.size()), appendHtmlChunk, &out,
-            MD_DIALECT_GITHUB | MD_FLAG_NOHTML, MD_HTML_FLAG_XHTML);
+            MD_DIALECT_GITHUB | MD_FLAG_NOHTML | MD_FLAG_HARD_SOFT_BREAKS, MD_HTML_FLAG_XHTML);
     return sanitizeLinks(QString::fromUtf8(out));
 }
 

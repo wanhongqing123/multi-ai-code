@@ -122,7 +122,8 @@ private:
     // **子任务的正文不进主对话流**：那是它自己的活，父要的是结论，
     // 而结论会通过 wait_agent 回到父这边、正常出现在回答里。全铺出来的话
     // 一屏里三个 agent 同时说话，谁也读不下去。
-    void noteOtherSession(const QString& sessionId, const QString& text);
+    void noteOtherSession(const QString& sessionId, const QString& text,
+                          const QString& partId = QString());
     SubAgentCard* subAgentCardFor(const QString& sessionId);
 
     void onSend();

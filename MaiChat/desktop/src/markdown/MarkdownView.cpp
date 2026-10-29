@@ -403,14 +403,19 @@ void MarkdownView::resizeEvent(QResizeEvent* event) {
 }
 
 bool MarkdownView::eventFilter(QObject* watched, QEvent* event) {
-    // 工具卡展开、思考条收起之后高度变了，后面所有东西都要往下挪。
-    // 只认高度真的变了的情况：setGeometry 自己也会回弹一个 Resize，
-    // 不比高度的话这里会无限递归。
+    // 工具卡展开或初始空卡填入文字后，宽高都可能变化。只比较高度会让
+    // Maximum 策略的子任务卡一直占用空标签时的窄宽度，标题/状态被裁掉。
+    // 按实际分配尺寸比较，避免 setGeometry 回弹的 Resize 导致无限递归。
     if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize) {
         for (const std::unique_ptr<Item>& item : runtime_->items) {
             if (item->widget != watched) continue;
-            const qreal available = item->frame.width();
-            if (widgetSlotHeight(item->widget, qRound(available)) == item->widgetHeight) break;
+            const qreal full = qMax<qreal>(
+                viewport()->width() - 2 * runtime_->theme.viewMargin, 1);
+            const qreal available = runtime_->maxContentWidth > 0
+                ? qMin<qreal>(full, runtime_->maxContentWidth) : full;
+            const int width = widgetSlotWidth(item->widget, qRound(available));
+            if (width == qRound(item->frame.width()) &&
+                widgetSlotHeight(item->widget, width) == item->widgetHeight) break;
             relayoutAll();
             break;
         }

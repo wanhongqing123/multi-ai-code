@@ -313,8 +313,13 @@ struct StreamCtx {
     bool sawOutput = false;
     bool done = false;
     long inactivityTimeoutSeconds = 0;
-    std::chrono::steady_clock::time_point lastModelProgress = std::chrono::steady_clock::now();
+    long progressTimeoutSeconds = 0;
+    // 心跳和未拼完的 SSE 都证明连接仍在传输，但不能证明模型产生了有效进展。
+    // 两个期限各自计时，避免慢推理被短传输期限中断，也避免心跳永久掩盖卡住的模型。
+    std::chrono::steady_clock::time_point lastStreamActivity = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point lastModelProgress = lastStreamActivity;
     bool inactive = false;
+    bool progressTimedOut = false;
     std::size_t responseBytes = 0;
     curl_off_t uploadedBytes = 0;
 };
@@ -388,15 +393,36 @@ void handleSseLine(StreamCtx& context, const std::string& line) {
     if (delta.contains("tool_calls") && delta["tool_calls"].is_array() &&
         !delta["tool_calls"].empty()) {
         context.sawOutput = true;
-        context.lastModelProgress = std::chrono::steady_clock::now();
+        // 仅建立调用槽位或重复发送空参数不表示模型在继续生成；
+        // 真正的参数增量才延长模型进展期限。
+        for (const auto& toolCall : delta["tool_calls"]) {
+            if (!toolCall.is_object() || !toolCall.contains("function")) continue;
+            const auto& function = toolCall["function"];
+            if (function.is_object() && function.contains("arguments") &&
+                function["arguments"].is_string() &&
+                !function["arguments"].get_ref<const std::string&>().empty()) {
+                context.lastModelProgress = std::chrono::steady_clock::now();
+                break;
+            }
+        }
         context.tools.feed(delta["tool_calls"]);
     }
+}
+
+std::size_t headerCallback(char*, std::size_t size, std::size_t count, void* userdata) {
+    auto& context = *static_cast<StreamCtx*>(userdata);
+    if (count != 0 && size > SIZE_MAX / count) return 0;
+    const auto length = size * count;
+    // 仅记录响应头到达的时间，不保存头内容；这属于传输活动而非模型输出。
+    if (length > 0) context.lastStreamActivity = std::chrono::steady_clock::now();
+    return context.cancel->load(std::memory_order_relaxed) ? 0 : length;
 }
 
 std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     const std::size_t total = size * nmemb;
     context.responseBytes += total;
+    if (total > 0) context.lastStreamActivity = std::chrono::steady_clock::now();
     // 返回不等于 total 的值会让 curl 以 CURLE_WRITE_ERROR 中断传输。取消和收到完整的
     // [DONE] 都在这里结束，不等服务端继续保持连接。
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
@@ -412,19 +438,27 @@ std::size_t writeCallback(char* ptr, std::size_t size, std::size_t nmemb, void* 
     return context.done ? 0 : total;
 }
 
-int progressCallback(void* userdata, curl_off_t, curl_off_t uploadTotal, curl_off_t uploadNow) {
+int progressCallback(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t uploadNow) {
     auto& context = *static_cast<StreamCtx*>(userdata);
     if (context.cancel->load(std::memory_order_relaxed)) return 1;
-    // 大型多模态 POST 在模型响应前可能长时间上传；实际上传进度算作活动，
-    // 上传后再执行响应空闲期限。
-    if (uploadTotal > 0 && uploadNow > context.uploadedBytes) {
-        context.uploadedBytes = uploadNow;
-        context.lastModelProgress = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    // curl 在没有任何字节变化时也会调用本回调；只有实际上传增长才算传输活动。
+    // 回调签名必须保留下载总量、下载进度和上传总量三个位置，最后一项才是已上传字节。
+    if (uploadNow > context.uploadedBytes) {
+        context.lastStreamActivity = now;
+        // 完整请求仍在发送时服务端不能开始回答；真实上传增长也是请求阶段的有效进展。
+        context.lastModelProgress = now;
     }
+    context.uploadedBytes = uploadNow;
     if (context.inactivityTimeoutSeconds > 0 &&
-        std::chrono::steady_clock::now() - context.lastModelProgress >=
+        now - context.lastStreamActivity >=
             std::chrono::seconds(context.inactivityTimeoutSeconds)) {
         context.inactive = true;
+        return 1;
+    }
+    if (context.progressTimeoutSeconds > 0 &&
+        now - context.lastModelProgress >= std::chrono::seconds(context.progressTimeoutSeconds)) {
+        context.progressTimedOut = true;
         return 1;
     }
     return 0;
@@ -494,6 +528,7 @@ public:
             context.sink = &sink;
             context.cancel = &cancel;
             context.inactivityTimeoutSeconds = mConfig.inactivityTimeoutSeconds;
+            context.progressTimeoutSeconds = mConfig.progressTimeoutSeconds;
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 #if defined(_WIN32)
             // 内嵌 OpenSSL 没有随包 PEM 时使用 Windows 信任根；显式 CA 路径仍保持独立。
@@ -510,6 +545,8 @@ public:
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
+            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &context);
             // 连接静默期间进度回调仍会运行；写回调要等新字节到达才能检查取消或空闲期限。
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
@@ -535,12 +572,21 @@ public:
             if (context.inactive)
                 return MaiError::make(
                     MaiErrorCode::Network,
-                    "model stream inactive for " +
+                    "model stream transport inactive for " +
                         std::to_string(mConfig.inactivityTimeoutSeconds) + " seconds (request " +
                         std::to_string(body.size()) + " bytes, " + std::to_string(imageCount) +
                         " images; received " + std::to_string(context.responseBytes) +
-                        " bytes). The provider did not start a model response; retry later or "
-                        "choose another available model.");
+                        " bytes). No response bytes or upload progress were received during this "
+                        "interval; retry later or choose another available model.");
+            if (context.progressTimedOut)
+                return MaiError::make(
+                    MaiErrorCode::Network,
+                    "model stream made no progress for " +
+                        std::to_string(mConfig.progressTimeoutSeconds) + " seconds (request " +
+                        std::to_string(body.size()) + " bytes, " + std::to_string(imageCount) +
+                        " images; received " + std::to_string(context.responseBytes) +
+                        " bytes). The provider sent no text, reasoning, or tool arguments during "
+                        "this interval; retry later or choose another available model.");
 
             const bool transient = curlResult != CURLE_OK ? isRetryableCurlError(curlResult)
                                                           : status == 408 || status >= 500;

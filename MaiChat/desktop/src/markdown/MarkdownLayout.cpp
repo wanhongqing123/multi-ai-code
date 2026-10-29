@@ -318,7 +318,11 @@ private:
                               const QVector<TextRun::Link>& links, qreal x, qreal y, qreal avail,
                               Qt::Alignment alignment, bool selectable = true) {
         TextRun run;
-        run.layout = std::make_unique<QTextLayout>(text, base);
+        // QTextLayout 是单段排版器，段内强制断行使用 U+2028，而不是原文的 LF。
+        // 只转换布局副本且等长替换，原文复制、格式与链接的 UTF-16 偏移仍保持不变。
+        QString layoutText = text;
+        layoutText.replace(QLatin1Char('\n'), QChar(QChar::LineSeparator));
+        run.layout = std::make_unique<QTextLayout>(layoutText, base);
         run.position = QPointF(x, y);
         run.textStart = out_.text.size();
         run.links = links;

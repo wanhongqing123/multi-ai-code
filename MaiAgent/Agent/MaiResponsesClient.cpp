@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
+#include <tuple>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -254,11 +256,33 @@ struct StreamContext {
     bool sawOutput = false;
     bool done = false;
     bool inactive = false;
+    bool progressTimedOut = false;
     long inactivityTimeoutSeconds = 0;
-    std::chrono::steady_clock::time_point lastModelProgress = std::chrono::steady_clock::now();
+    long progressTimeoutSeconds = 0;
+    // 链路活动与生成进展是两个事实；保活证明连接仍有数据，不能证明模型仍在计算。
+    std::chrono::steady_clock::time_point lastStreamActivity = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point lastModelProgress = lastStreamActivity;
+    std::set<std::tuple<std::string, int, int>> progressEvents;
     std::size_t responseBytes = 0;
     curl_off_t uploadedBytes = 0;
 };
+
+void noteProtocolProgress(StreamContext& context, const std::string& type, int outputIndex = -1,
+                          int contentIndex = -1) {
+    // 同一 HTTP 应答内重复的 in_progress/快照不能永久延长生成期限。
+    // 有界保存阶段键即可；超过此数的长输出仍由实际文字/参数增量继续计时。
+    if (context.progressEvents.size() < 4096 &&
+        context.progressEvents.emplace(type, outputIndex, contentIndex).second)
+        context.lastModelProgress = std::chrono::steady_clock::now();
+}
+
+int eventIndex(const Json& event, const char* name, int fallback) {
+    const auto value = event.find(name);
+    if (value == event.end() || !value->is_number_integer()) return fallback;
+    const double index = value->get<double>();
+    if (index < 0 || index > std::numeric_limits<int>::max()) return fallback;
+    return static_cast<int>(index);
+}
 
 void mergeCall(PendingCall& call, const Json& item) {
     if (!item.is_object()) return;
@@ -306,9 +330,36 @@ void emitFullOutput(StreamContext& context, const Json& response) {
 void handleEvent(StreamContext& context, const Json& event) {
     const std::string type = stringField(event, "type");
     if (type.empty()) return;
-    const int outputIndex = event.value("output_index", -1);
-    const int contentIndex = event.value("content_index", 0);
+    // 生命周期帧可以没有内容索引；缺失/空索引不能让异常越过 curl 的 C 回调边界。
+    const int outputIndex = eventIndex(event, "output_index", -1);
+    const int contentIndex = eventIndex(event, "content_index", 0);
     const auto key = std::make_pair(outputIndex, contentIndex);
+    if (type == "response.created" || type == "response.in_progress") {
+        // 生命周期属于协议进展，但不是助手文字或已交付输出；保留原重试/历史边界。
+        noteProtocolProgress(context, type);
+        return;
+    }
+    if (type == "response.content_part.added" || type == "response.content_part.done" ||
+        type == "response.reasoning_summary_part.added" ||
+        type == "response.reasoning_summary_part.done") {
+        if (outputIndex >= 0)
+            noteProtocolProgress(context, type, outputIndex,
+                                 eventIndex(event, "summary_index", contentIndex));
+        return;
+    }
+    if (type == "response.reasoning_summary_text.delta" ||
+        type == "response.custom_tool_call_input.delta") {
+        // 当前工具协议不消费这些额外内容，仍承认非空协议增量；不伪装成思考或工具结果。
+        if (!stringField(event, "delta").empty())
+            context.lastModelProgress = std::chrono::steady_clock::now();
+        return;
+    }
+    if (type == "response.reasoning_summary_text.done" ||
+        type == "response.custom_tool_call_input.done") {
+        noteProtocolProgress(context, type, outputIndex,
+                             eventIndex(event, "summary_index", contentIndex));
+        return;
+    }
     if (type == "response.output_text.delta" || type == "response.reasoning_text.delta") {
         const std::string delta = stringField(event, "delta");
         if (delta.empty()) return;
@@ -334,25 +385,32 @@ void handleEvent(StreamContext& context, const Json& event) {
             context.sawOutput = true;
             if (context.sink->onReasoning) context.sink->onReasoning(text);
         }
-        context.lastModelProgress = std::chrono::steady_clock::now();
+        noteProtocolProgress(context, type, outputIndex, contentIndex);
         return;
     }
     if (type == "response.output_item.added" || type == "response.output_item.done") {
         const Json item = event.value("item", Json::object());
+        const std::string itemType = stringField(item, "type");
+        if (outputIndex >= 0 && (itemType == "message" || itemType == "reasoning" ||
+                                 itemType == "function_call" || itemType == "custom_tool_call" ||
+                                 itemType == "web_search_call" || itemType == "tool_search_call"))
+            noteProtocolProgress(context, type, outputIndex);
         if (stringField(item, "type") == "function_call" && outputIndex >= 0) {
             PendingCall& call = context.calls[outputIndex];
             mergeCall(call, item);
             if (type == "response.output_item.done") call.complete = true;
             context.sawOutput = true;
-            context.lastModelProgress = std::chrono::steady_clock::now();
         }
         return;
     }
     if (type == "response.function_call_arguments.delta" && outputIndex >= 0) {
         PendingCall& call = context.calls[outputIndex];
-        if (!call.complete) call.arguments += stringField(event, "delta");
+        const std::string delta = stringField(event, "delta");
+        if (!call.complete && !delta.empty()) {
+            call.arguments += delta;
+            context.lastModelProgress = std::chrono::steady_clock::now();
+        }
         context.sawOutput = true;
-        context.lastModelProgress = std::chrono::steady_clock::now();
         return;
     }
     if (type == "response.function_call_arguments.done" && outputIndex >= 0) {
@@ -361,7 +419,13 @@ void handleEvent(StreamContext& context, const Json& event) {
         if (!full.empty() || call.arguments.empty()) call.arguments = full;
         call.complete = true;
         context.sawOutput = true;
-        context.lastModelProgress = std::chrono::steady_clock::now();
+        noteProtocolProgress(context, type, outputIndex);
+        return;
+    }
+    if (type == "response.web_search_call.in_progress" ||
+        type == "response.web_search_call.searching" ||
+        type == "response.web_search_call.completed") {
+        if (outputIndex >= 0) noteProtocolProgress(context, type, outputIndex);
         return;
     }
     if (type == "response.completed" || type == "response.incomplete" ||
@@ -389,11 +453,21 @@ void handleLine(StreamContext& context, const std::string& line) {
     if (event.is_object()) handleEvent(context, event);
 }
 
+std::size_t headerCallback(char*, std::size_t size, std::size_t count, void* user) {
+    auto& context = *static_cast<StreamContext*>(user);
+    if (count != 0 && size > SIZE_MAX / count) return 0;
+    const auto length = size * count;
+    // 响应头到达也是真实通信；只记时间，不保存可能带凭据的头字段。
+    if (length > 0) context.lastStreamActivity = std::chrono::steady_clock::now();
+    return context.cancel->load(std::memory_order_relaxed) ? 0 : length;
+}
+
 std::size_t writeCallback(char* bytes, std::size_t size, std::size_t count, void* user) {
     auto& context = *static_cast<StreamContext*>(user);
     if (count != 0 && size > SIZE_MAX / count) return 0;
     const std::size_t length = size * count;
     context.responseBytes += length;
+    if (length > 0) context.lastStreamActivity = std::chrono::steady_clock::now();
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
     constexpr std::size_t kMaxErrorBody = 64 * 1024;
     if (context.rawBody.size() < kMaxErrorBody)
@@ -404,17 +478,26 @@ std::size_t writeCallback(char* bytes, std::size_t size, std::size_t count, void
     return context.done ? 0 : length;
 }
 
-int progressCallback(void* user, curl_off_t, curl_off_t uploadTotal, curl_off_t uploadNow) {
+int progressCallback(void* user, curl_off_t, curl_off_t, curl_off_t, curl_off_t uploadNow) {
     auto& context = *static_cast<StreamContext*>(user);
     if (context.cancel->load(std::memory_order_relaxed)) return 1;
-    if (uploadTotal > 0 && uploadNow > context.uploadedBytes) {
-        context.uploadedBytes = uploadNow;
-        context.lastModelProgress = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    // 最后一个参数才是上传字节；下载/上传总量不能冒充本次传输增长。
+    if (uploadNow > context.uploadedBytes) {
+        context.lastStreamActivity = now;
+        // 请求体尚在实际上传时，服务端还未获得完整输入，不把这段生产性等待算作停滞。
+        context.lastModelProgress = now;
     }
+    context.uploadedBytes = uploadNow;
     if (context.inactivityTimeoutSeconds > 0 &&
-        std::chrono::steady_clock::now() - context.lastModelProgress >=
+        now - context.lastStreamActivity >=
             std::chrono::seconds(context.inactivityTimeoutSeconds)) {
         context.inactive = true;
+        return 1;
+    }
+    if (context.progressTimeoutSeconds > 0 &&
+        now - context.lastModelProgress >= std::chrono::seconds(context.progressTimeoutSeconds)) {
+        context.progressTimedOut = true;
         return 1;
     }
     return 0;
@@ -471,6 +554,7 @@ public:
             context.sink = &sink;
             context.cancel = &cancel;
             context.inactivityTimeoutSeconds = mConfig.inactivityTimeoutSeconds;
+            context.progressTimeoutSeconds = mConfig.progressTimeoutSeconds;
             char transportError[CURL_ERROR_SIZE] = {};
             curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, transportError);
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -490,6 +574,8 @@ public:
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
+            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &context);
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
             curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &context);
@@ -511,7 +597,15 @@ public:
             if (cancel.load(std::memory_order_relaxed))
                 return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
             if (context.inactive)
-                return MaiError::make(MaiErrorCode::Network, "model stream inactive");
+                return MaiError::make(MaiErrorCode::Network,
+                                      "model stream transport inactive: no data or keepalive for " +
+                                          std::to_string(mConfig.inactivityTimeoutSeconds) +
+                                          " seconds");
+            if (context.progressTimedOut)
+                return MaiError::make(MaiErrorCode::Network,
+                                      "model stream made no progress for " +
+                                          std::to_string(mConfig.progressTimeoutSeconds) +
+                                          " seconds");
             const bool transient =
                 transfer != CURLE_OK ? isRetryable(transfer) : status == 408 || status >= 500;
             if (transient && !context.sawOutput && attempt < mConfig.maxRetries) {

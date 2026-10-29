@@ -81,7 +81,7 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
         enterChild(in: app)
         let play = app.buttons["cloud-drive-play-" + mediaID]
         XCTAssertTrue(play.waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["cloud-drive-folder-upload-notice"].exists)
+        XCTAssertFalse(app.staticTexts["cloud-drive-folder-upload-notice"].exists)
         XCTAssertTrue(app.buttons["上传到根目录"].exists)
         let child = XCTAttachment(screenshot: app.screenshot())
         child.name = "ios-cloud-folder-child-media"

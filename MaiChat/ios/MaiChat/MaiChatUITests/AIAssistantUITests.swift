@@ -822,13 +822,16 @@ final class AIAssistantUITests: XCTestCase {
         revealed.lifetime = .keepAlways
         add(revealed)
         remove.tap()
-        XCTAssertTrue(app.buttons["删除文件"].waitForExistence(timeout: 5))
-        if app.buttons["取消"].exists { app.buttons["取消"].tap() }
-        else {
-            // Newer iOS presents this confirmation as an anchored popover;
-            // tapping its backdrop is the system's cancel interaction.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
-        }
+        let confirmation = app.alerts["从我的云盘删除这个文件？"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        XCTAssertEqual(confirmation.frame.midY, app.frame.midY,
+                       accuracy: app.frame.height * 0.1,
+                       "删除确认必须居中，不能锚到滚动页面顶部")
+        let centered = XCTAttachment(screenshot: app.screenshot())
+        centered.name = "cloud-drive-centered-delete-confirmation"
+        centered.lifetime = .keepAlways
+        add(centered)
+        confirmation.buttons["取消"].tap()
         XCTAssertTrue(image.exists, "取消删除后文件应保留")
         remove.tap()
         app.buttons["删除文件"].tap()

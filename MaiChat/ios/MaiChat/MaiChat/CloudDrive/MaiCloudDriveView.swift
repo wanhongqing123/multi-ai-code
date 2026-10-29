@@ -367,10 +367,6 @@ struct MaiCloudDriveView: View {
                         if model.currentFolderID != nil {
                             folderNavigation
                                 .id("cloud-drive-directory-navigation-top")
-                            Text("新文件会上传到根目录，可以让 AI 移入当前文件夹")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("cloud-drive-folder-upload-notice")
                         }
                         if model.availability == .unknown && model.listError.isEmpty {
                             ProgressView("正在连接云盘")
@@ -612,7 +608,7 @@ struct MaiCloudDriveView: View {
                 loadMore: { loadMorePreviewMedia(item.id) })
                 .ignoresSafeArea()
         }
-        .confirmationDialog("从我的云盘删除这个文件？",
+        .alert("从我的云盘删除这个文件？",
                             isPresented: Binding(get: { deletingID != nil },
                                                  set: { if !$0 { deletingID = nil } })) {
             if let id = deletingID {

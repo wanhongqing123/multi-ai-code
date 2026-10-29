@@ -4,6 +4,57 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testConversationBarsCoverBottomSafeAreaWithLongContent() throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--ai-ui-test", "--app-bars-layout-ui-test"]
+        app.launchEnvironment["MAICHAT_AI_TEST_ID"] = UUID().uuidString
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let image = XCTAttachment(screenshot: app.screenshot())
+            image.name = name
+            image.lifetime = .keepAlways
+            add(image)
+        }
+        func assertBottomCoverage(_ list: XCUIElement) {
+            XCTAssertTrue(list.waitForExistence(timeout: 10))
+            XCTAssertEqual(list.frame.maxY, app.frame.maxY, accuracy: 2,
+                           "Scrolling content must reach behind the home indicator area")
+        }
+        let peer = app.buttons["im-conversation-bars-peer-34"]
+        XCTAssertTrue(peer.waitForExistence(timeout: 15))
+        let list = app.collectionViews.firstMatch
+        assertBottomCoverage(list)
+        list.swipeUp()
+        list.swipeUp()
+        XCTAssertLessThan(app.buttons["我的"].frame.maxY, app.frame.maxY - 20,
+                          "Tab controls must remain above the home indicator")
+        capture("real-root-message-list-bottom-safe-area")
+        for _ in 0..<8 where !peer.isHittable { list.swipeDown() }
+        peer.tap()
+        let timeline = app.scrollViews["im-message-timeline"]
+        assertBottomCoverage(timeline)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "边缘聊天消息 79")).firstMatch.waitForExistence(timeout: 10))
+        timeline.swipeDown()
+        capture("real-root-chat-composer-bottom-safe-area")
+        app.buttons["返回会话列表"].tap()
+        app.buttons["创作中心"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "历史消息 79")).firstMatch.waitForExistence(timeout: 15))
+        let assistant = app.scrollViews.firstMatch
+        assertBottomCoverage(assistant)
+        assistant.swipeDown()
+        capture("real-root-assistant-composer-and-tab-safe-area")
+        XCTAssertTrue(app.textViews["ai-composer"].isHittable)
+        XCTAssertTrue(app.buttons["我的"].isHittable)
+        #else
+        throw XCTSkip("Uses isolated simulator state and the production RootView")
+        #endif
+    }
+
     @MainActor func testCurrentAppScreenshotUsesWindowWithoutScreenSharing() throws {
 #if targetEnvironment(simulator)
         let app = XCUIApplication()
@@ -622,14 +673,13 @@ final class AIAssistantUITests: XCTestCase {
         streaming.lifetime = .keepAlways
         add(streaming)
         app.buttons["cloud-drive-image-close"].tap()
-        let menu = app.buttons["cloud-drive-video-menu-123e4567-e89b-42d3-a456-426614174000"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        menu.tap()
+        let save = app.buttons["cloud-drive-video-menu-123e4567-e89b-42d3-a456-426614174000"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        save.tap()
         let saveMenu = XCTAttachment(screenshot: app.screenshot())
-        saveMenu.name = "cloud-drive-explicit-save-menu"
+        saveMenu.name = "cloud-drive-direct-save-progress"
         saveMenu.lifetime = .keepAlways
         add(saveMenu)
-        app.buttons["保存到相册"].tap()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         if springboard.alerts.firstMatch.waitForExistence(timeout: 2) {
             app.tap() // Trigger the first-use Photos interruption monitor.

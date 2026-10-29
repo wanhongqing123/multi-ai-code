@@ -259,7 +259,9 @@ struct MaiChatApp: App {
             Group {
                 #if targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") {
-                    if ProcessInfo.processInfo.arguments.contains("--ai-screen-frames-ui-test") {
+                    if ProcessInfo.processInfo.arguments.contains("--app-bars-layout-ui-test") {
+                        AppBarsLayoutUITestRoot()
+                    } else if ProcessInfo.processInfo.arguments.contains("--ai-screen-frames-ui-test") {
                         #if DEBUG
                         AIScreenFramesUITestRoot()
                         #else
@@ -431,6 +433,43 @@ struct MaiChatApp: App {
 }
 
 #if targetEnvironment(simulator)
+/// Exercise the production RootView and its real tab bar with content that
+/// reaches both system edges, rather than a short list or a placeholder bar.
+private struct AppBarsLayoutUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
+    @State private var prepared = false
+
+    var body: some View {
+        RootView()
+            .environmentObject(appState)
+            .onAppear {
+                guard !prepared else { return }
+                prepared = true
+                let owner = "app-bars-ui-test"
+                let contacts = (0..<35).map { index in
+                    RemoteIMContact(userID: "bars-peer-\(index)",
+                                    displayName: "边缘测试联系人 \(index)")
+                }
+                var messages = contacts.enumerated().map { index, contact in
+                    RemoteIMMessage(fromUserID: contact.userID, toUserID: owner,
+                        text: "列表滚动样本 \(index)", direction: .incoming, status: .sent,
+                        createdAt: Date(timeIntervalSince1970: Double(index)))
+                }
+                messages += (0..<80).map { index in
+                    RemoteIMMessage(fromUserID: "bars-peer-34", toUserID: owner,
+                        text: "边缘聊天消息 \(index)\n第二行内容", direction: .incoming,
+                        status: .sent, createdAt: Date(timeIntervalSince1970: Double(index + 100)))
+                }
+                appState.masterUserID = owner
+                appState.chatState = MasterChatState(ownerUserID: owner,
+                                                     contacts: contacts, messages: messages)
+                appState.hasCompletedInitialLogin = true
+                AIAssistantModel.shared.installHistoryUITestFixture()
+                AIAssistantModel.shared.historyLoaded = true
+            }
+    }
+}
+
 private struct AIAssistantUITestRoot: View {
     @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
 

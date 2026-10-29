@@ -524,6 +524,10 @@ struct ChatView: View {
                         activeGroup = nil
                     }
                 )
+                // Keep the native host over the home area. UIKit still gives
+                // its child pages the bottom safe inset; the tab background
+                // and scrolling content can now reach the window's edge.
+                .ignoresSafeArea(.container, edges: .bottom)
             }
         }
         // Keep the navigation canvas stable; only headers and composers use
@@ -1036,7 +1040,7 @@ private struct HeaderView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 54)
-        .remoteIMBarBackground(edges: .top)
+        .remoteIMBarBackground(edges: .top, opacity: RemoteIMStyle.conversationBarOpacity)
         .overlay(alignment: .bottom) {
             RemoteIMBarSeparator()
         }
@@ -1625,7 +1629,7 @@ private struct GroupChatDetailView: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 10)
         .frame(height: 58)
-        .remoteIMBarBackground(edges: .top)
+        .remoteIMBarBackground(edges: .top, opacity: RemoteIMStyle.conversationBarOpacity)
         .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
         .accessibilityIdentifier("im-group-header")
     }
@@ -1660,7 +1664,7 @@ private struct GroupChatDetailView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .foregroundStyle(.primary)
-        .remoteIMBarBackground(edges: .bottom)
+        .remoteIMBarBackground(edges: .bottom, opacity: RemoteIMStyle.conversationBarOpacity)
         .overlay(alignment: .top) { RemoteIMBarSeparator() }
     }
 
@@ -3209,7 +3213,7 @@ private struct ChatDetailHeader: View {
         .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 10)
-        .remoteIMBarBackground(edges: .top)
+        .remoteIMBarBackground(edges: .top, opacity: RemoteIMStyle.conversationBarOpacity)
         .overlay(alignment: .bottom) {
             RemoteIMBarSeparator()
         }
@@ -6837,7 +6841,7 @@ private struct ComposerView: View {
             replySuggestionsLoading = false
             replySuggestionError = nil
         }
-        .remoteIMBarBackground(edges: .bottom)
+        .remoteIMBarBackground(edges: .bottom, opacity: RemoteIMStyle.conversationBarOpacity)
         .overlay(alignment: .top) {
             RemoteIMBarSeparator()
         }

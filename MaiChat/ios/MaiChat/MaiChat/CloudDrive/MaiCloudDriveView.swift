@@ -364,9 +364,9 @@ struct MaiCloudDriveView: View {
                             sectionTitle("待上传")
                             ForEach(model.localTasks) { task in uploadCard(task) }
                         }
-                        folderNavigation
-                            .id("cloud-drive-directory-navigation-top")
                         if model.currentFolderID != nil {
+                            folderNavigation
+                                .id("cloud-drive-directory-navigation-top")
                             Text("新文件会上传到根目录，可以让 AI 移入当前文件夹")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
@@ -426,12 +426,15 @@ struct MaiCloudDriveView: View {
                     }
                 }
                 .padding(18)
+                .id("cloud-drive-root-top")
             }
             .onChange(of: model.currentFolderID) { _ in
-                scroll.scrollTo("cloud-drive-directory-navigation-top", anchor: .top)
+                scroll.scrollTo(model.currentFolderID == nil ? "cloud-drive-root-top" :
+                    "cloud-drive-directory-navigation-top", anchor: .top)
             }
             .onChange(of: appState.maiChatAccountID) { _ in
-                scroll.scrollTo("cloud-drive-directory-navigation-top", anchor: .top)
+                scroll.scrollTo(model.currentFolderID == nil ? "cloud-drive-root-top" :
+                    "cloud-drive-directory-navigation-top", anchor: .top)
             }
         }
         .background(Color(uiColor: .systemGroupedBackground))
@@ -820,15 +823,15 @@ struct MaiCloudDriveView: View {
                 ? "封面已加载" : "封面待加载")
             .accessibilityIdentifier("cloud-drive-play-\(media.id)")
             if !media.isImage {
-                Menu {
-                    Button("保存到相册", systemImage: "square.and.arrow.down") {
-                        saveVideo(media)
-                    }
-                    .disabled(savingID != nil)
+                Button {
+                    saveVideo(media)
                 } label: {
-                    Image(systemName: "ellipsis")
+                    Image(systemName: "arrow.down.to.line")
                         .frame(width: 44, height: 44)
                 }
+                .buttonStyle(.plain)
+                .disabled(savingID != nil)
+                .accessibilityLabel("保存到相册")
                 .accessibilityIdentifier("cloud-drive-video-menu-\(media.id)")
             }
         }

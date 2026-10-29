@@ -76,6 +76,8 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
         XCTAssertFalse(app.buttons["cloud-drive-play-" + mediaID].exists,
                        "根目录不能混入子目录文件")
         XCTAssertFalse(app.buttons["新建文件夹"].exists)
+        XCTAssertFalse(app.buttons["cloud-drive-folder-root"].exists,
+                       "根目录不重复显示蓝色我的云盘路径")
         enterChild(in: app)
         let play = app.buttons["cloud-drive-play-" + mediaID]
         XCTAssertTrue(play.waitForExistence(timeout: 20))
@@ -114,8 +116,9 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
             .waitForExistence(timeout: 20))
         XCTAssertFalse(app.staticTexts["云盘暂不可用"].exists)
         app.buttons["cloud-drive-folder-root"].tap()
-        XCTAssertTrue(app.buttons["cloud-drive-folder-root"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["cloud-drive-folder-root"].isHittable)
+        let returnedToRoot = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.buttons["cloud-drive-folder-root"])
+        XCTAssertEqual(XCTWaiter.wait(for: [returnedToRoot],timeout: 15),.completed)
         XCTAssertFalse(folder("空文件夹",in: app).exists)
         #else
         throw XCTSkip("仅运行于隔离模拟器，不修改真机云盘")
@@ -133,7 +136,7 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
             .waitForExistence(timeout: 20))
         app.buttons["cloud-folder-browse-navigation-race"].tap()
         XCTAssertTrue(app.staticTexts["目录切换未混入旧文件"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.buttons["cloud-drive-folder-root"].isHittable)
+        XCTAssertFalse(app.buttons["cloud-drive-folder-root"].exists)
         XCTAssertFalse(app.buttons["cloud-drive-play-123e4567-e89b-42d3-a456-426614174000"].exists)
         app.buttons["cloud-folder-browse-account-race"].tap()
         XCTAssertTrue(app.staticTexts["切号加载状态已恢复且无旧目录"].waitForExistence(timeout: 30))
@@ -141,7 +144,7 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
         XCTAssertFalse(folder("旅行资料",in: app).exists)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
             "cloud-drive-breadcrumb-")).firstMatch.exists)
-        XCTAssertTrue(app.buttons["cloud-drive-folder-root"].isHittable)
+        XCTAssertFalse(app.buttons["cloud-drive-folder-root"].exists)
         let switched = XCTAttachment(screenshot: app.screenshot())
         switched.name = "ios-cloud-folder-account-switch-root"
         switched.lifetime = .keepAlways

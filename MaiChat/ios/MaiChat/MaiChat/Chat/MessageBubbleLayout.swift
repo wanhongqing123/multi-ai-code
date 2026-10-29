@@ -669,6 +669,9 @@ final class ChatNavigationController: UINavigationController,
     private var cachedChats: [String: CachedChat] = [:]
     private var visitSequence: UInt64 = 0
     private let cachedChatLimit = 24
+#if DEBUG
+    private var lastRecordedWindowFrame: CGRect?
+#endif
     private(set) var arrival = ChatNavigationArrival()
     private var requestedID: String?
     private var requestedDetail: AnyView?
@@ -689,6 +692,22 @@ final class ChatNavigationController: UINavigationController,
         view.addGestureRecognizer(fullScreenBackGesture)
 
     }
+
+#if DEBUG
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard let window = view.window else { return }
+        let frame = view.convert(view.bounds, to: window)
+        guard frame != lastRecordedWindowFrame else { return }
+        lastRecordedWindowFrame = frame
+        AppDiagnosticLog.shared.record(level: .debug, category: "message-scroll",
+            event: "navigation-window-frame", fields: [
+                "max_y": String(format: "%.1f", frame.maxY),
+                "height": String(format: "%.1f", frame.height),
+                "window_height": String(format: "%.1f", window.bounds.height),
+                "safe_bottom": String(format: "%.1f", view.safeAreaInsets.bottom)])
+    }
+#endif
 
     func update(root: AnyView, detail: AnyView?, selectionID: String?,
                 onPop: @escaping () -> Void, animated: Bool = true) {

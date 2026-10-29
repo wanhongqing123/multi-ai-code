@@ -55,7 +55,8 @@ struct AIAssistantView: View {
     private var usesStandaloneUITestFixture: Bool {
         #if targetEnvironment(simulator)
         let arguments = ProcessInfo.processInfo.arguments
-        return arguments.contains("--ai-history-ui-test") ||
+        return arguments.contains("--app-bars-layout-ui-test") ||
+            arguments.contains("--ai-history-ui-test") ||
             arguments.contains("--ai-welcome-ui-test") ||
             arguments.contains("--ai-session-switch-ui-test") ||
             arguments.contains("--ai-browser-ui-test") ||
@@ -178,10 +179,10 @@ struct AIAssistantView: View {
                     .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
                     }
-                    .remoteIMBarBackground(edges: .bottom)
+                    .remoteIMBarBackground(opacity: RemoteIMStyle.conversationBarOpacity)
                     .overlay(alignment: .top) { RemoteIMBarSeparator() }
                 }
-                .background(Color(uiColor: .systemBackground))
+                .background(Color(uiColor: .systemBackground), ignoresSafeAreaEdges: [])
             }
             if showActions {
                 // 右上角操作面板只处理模型、权限与会话清理；
@@ -710,10 +711,10 @@ struct AIAssistantView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 20).frame(height: 60)
-                .remoteIMBarBackground(edges: .top)
+                .remoteIMBarBackground(edges: .top, opacity: RemoteIMStyle.conversationBarOpacity)
                 .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
             }
-        .background(Color(uiColor: .systemBackground))
+        .background(Color(uiColor: .systemBackground), ignoresSafeAreaEdges: [])
         .accessibilityIdentifier("ai-session-drawer")
     }
 }
@@ -1089,7 +1090,7 @@ private struct AIHeader: View {
         .overlay { Text("创作中心").font(.system(size: 18, weight: .bold)).allowsHitTesting(false) }
         .padding(.horizontal, 16).frame(height: 54)
         .foregroundStyle(.primary)
-        .remoteIMBarBackground(edges: .top)
+        .remoteIMBarBackground(edges: .top, opacity: RemoteIMStyle.conversationBarOpacity)
         .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
     }
 }

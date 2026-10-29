@@ -17,6 +17,7 @@ enum AppTab {
 
 extension RemoteIMStyle {
     static let barBackground = Color(uiColor: .systemBackground).opacity(0.9)
+    static let conversationBarOpacity = 0.97
     static let barSeparator = Color.primary.opacity(0.1)
 }
 
@@ -32,8 +33,8 @@ struct RemoteIMBarSeparator: View {
 extension View {
     /// A stable translucent color lets scrolling content show underneath.
     /// Only the background extends into system safe areas.
-    func remoteIMBarBackground(edges: Edge.Set = []) -> some View {
-        background(RemoteIMStyle.barBackground, ignoresSafeAreaEdges: edges)
+    func remoteIMBarBackground(edges: Edge.Set = [], opacity: Double = 0.9) -> some View {
+        background(Color(uiColor: .systemBackground).opacity(opacity), ignoresSafeAreaEdges: edges)
     }
 
     func remoteIMNavigationBarMaterial() -> some View {
@@ -632,7 +633,8 @@ struct RootView: View {
 
     private func offerNotificationPermissionIfNeeded() async {
 #if targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("--im-group-ui-test") ||
+        if ProcessInfo.processInfo.arguments.contains("--app-bars-layout-ui-test") ||
+            ProcessInfo.processInfo.arguments.contains("--im-group-ui-test") ||
             ProcessInfo.processInfo.arguments.contains("--im-group-activation-fail-ui-test") {
             return
         }
@@ -867,7 +869,9 @@ private struct CompactTabBar: View {
         .padding(.top, 10)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .remoteIMBarBackground(edges: .bottom)
+        .remoteIMBarBackground(edges: .bottom,
+            opacity: selectedTab == .messages || selectedTab == .assistant
+                ? RemoteIMStyle.conversationBarOpacity : 0.9)
         .overlay(alignment: .top) {
             RemoteIMBarSeparator()
         }

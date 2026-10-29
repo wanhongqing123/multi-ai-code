@@ -88,3 +88,14 @@
 - 产品提交 `61d2429783dfd0bebf8139e85b3cdec525185bab`，generic iOS Debug 构建退出0、深度签名核验通过，日志 `/private/tmp/maichat-ios135-background-device-build.log`，清单 `/private/tmp/maichat-ios135-background-candidate.json`。主文件91,856B、SHA-256 `222defeb92e0b933fe511fbffddcbf23ba87d1e5b52f3852b21fafd8dda546b2`；调试 dylib86,509,600B、SHA-256 `f0b08e98db58baae8e78f7a2ccd79db573713a6381aa142a56101a72f5e7af9f`。
 - 已覆盖安装到同一 iPhone14ProMax/iOS27.2，独立 apps 回读2.2.4(135)。安装路径 `/private/var/containers/Bundle/Application/878CBED9-82B5-404A-AD6E-523547BDC9CA/MaiChat.app/`，回执 `/private/tmp/maichat-ios135-background-install.json`、`...installed-app.json`；随后普通无参数启动成功，实际 executable 与安装路径一致，PID5932，回执 `...launch.json`。App自身日志 `/private/tmp/maichat-ios135-background-runtime.log` 确认 `2026-10-29T08:20:12.203Z app_version=2.2.4 build=135 ios=27.2 pid=5932`。本次未卸载或清理用户数据，未触发模型请求或系统共享面板。
 - 验证边界：135模拟器同操作和密集取帧通过、真机安装与正常启动已核对；135真机连续滚动的视觉尚未取得录像复核。此前真机 UI Automation 已明确在初始化阶段被权限阻止，本轮未重复同一失败初始化；也没有将模拟器画面称为真机验收。灰白分层的原因已证实，不能凭这些证据宣称穷尽了用户所有真机闪动情形。
+
+## 136：三个会话页面的底部安全区分层与云盘入口精简
+
+- 用户明确消息列表、好友聊天详情、创作中心存在透明/不透明分层，并要求减弱透出；云盘、好友列表效果满意，不能继续全局改色。现场消息列表图 `144115250159782623-1793262831-883741438.png` 的后方头像/文字在底栏可见，至约 y2690 后变成一段纯白，接近该机 home 安全区起点；只提高 opacity 不能修掉承载范围缺失。
+- 消息页同一个主底栏经 `AnyView` 放入 ChatNavigationHost 内部的 UIHostingController，135 实际原生滚动容器 window y62、height778、maxY840，距模拟器窗口874少34pt；云盘/好友列表的底栏直接由 Root inset 持有，因此表现不同。136仅将 portrait 的 ChatNavigationHost 延伸进 `.container` 的底部安全区，不改导航方法/转场/缓存；新日志 y62、height812、maxY874、bottom inset101.3，证实补到了窗口底部且保留了控件安全距离。
+- 创作中心内部 composer 的背景此前同样忽略 `.bottom`，越过自己的区域继续画到外层 RootTab/home，可能与 RootTab 的0.9背景叠至0.99；136取消该内层背景的底部延伸，页面/抽屉底色明确限于自身区域，仅RootTab负责窗口底部背景。
+- 透明度仅局部调整：消息列表/详情、创作中心的 header/composer/tab 改为0.97，内容透出从10%降至3%；云盘、好友列表、原生导航外观以及其他helper调用保持0.9。没有引入模糊或再修改滚动策略。
+- 新增模拟器隔离数据入口复用实际 RootView、ChatView、AIAssistantView 与真实 RootTabBar，装载35个联系人、80条聊天及80条AI记录；用于覆盖有内容滚到home后方的场景，补足此前短列表/占位底栏验证范围。只在Simulator显式测试参数下可达，不进入手机普通启动路径。`/private/tmp/maichat-ios136-safe-area.xcresult` **3/3 PASS，零跳过**：三页容器 maxY 与窗口底部一致、主Tab控件仍在home上方；IM键盘/最新/分页/返回通过；云盘长目录、根/父级返回及空目录恢复通过。
+- 已亲看 `/private/tmp/maichat-ios136-safe-area-attachments/` 的 `4F596CFD-1DD2-4C5E-AD83-9D5C34F45D4A.png`、`7937E796-5791-4726-9D50-5229F0FCBD83.png`、`3BA6C0A5-9F35-4047-916D-B77D7F2FF324.png`：三页长内容能在同一较淡底色后延续至屏幕底边，输入框/Tab区域无此前明显透度断带，按钮位置和文字清晰。录像 `/private/tmp/maichat-ios136-safe-area.mp4`；这些是模拟器证据。
+- 用户追加的云盘小改：根目录隐藏重复蓝色“我的云盘”路径整行，保留顶部标题；子目录继续保留根/祖先导航。将外层栈作为根滚顶锚点，避免隐藏路径后失去返回根目录的滚顶目标。视频行单项“保存到相册”菜单改为直接下载图标按钮，复用同一saveVideo、进度、取消/错误与44pt命中区；保留无障碍标签，屏幕不再弹一项大文字菜单。子目录截图 `DA7C4043-62CA-4399-B1C8-FD15C8D7DA77.png` 可见下载图标；没有新增移动端文件夹管理控件。
+- 真机版本/安装/启动和 DEBUG导航容器几何回执在构建后继续补齐；未把本轮模拟器长内容通过写为真机连续手势视觉已验收。

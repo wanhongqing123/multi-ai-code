@@ -35,9 +35,8 @@ private final class SpeechEngineHandle: @unchecked Sendable {
             let config = QCloudConfig(appId: credential.appId, secretId: credential.secretId,
                                       secretKey: credential.secretKey, token: credential.token,
                                       projectId: 0)
-            config.engineType = "16k_zh_en_2.0"
-            // 固定 V2 sentences 结果模式，与 Android 及后台的识别合同一致。
-            config.setApiParam("result_mod", value: NSNumber(value: 1))
+            // 普通引擎使用官方 standard SDK；V2 二进制会强制 result_mod=1，普通引擎拒绝该模式。
+            config.engineType = "16k_zh"
             config.enableDetectVolume = false
             config.endRecognizeWhenDetectSilence = false
             config.endRecognizeWhenDetectSilenceAutoStop = false
@@ -105,7 +104,6 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     private var firstTextUptime: TimeInterval?
     private var firstCallbackUptime: TimeInterval?
     private var textUpdateCount = 0
-    private var transcript = TencentASRV2Transcript()
     // 在会话开始时固定诊断字段，使迟到的 SDK 回调仍归属原会话。
     private var diagnosticFields: [String: String] = [:]
     private var stopRequestedUptime: TimeInterval?
@@ -173,7 +171,6 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         firstTextUptime = nil
         firstCallbackUptime = nil
         textUpdateCount = 0
-        transcript = TencentASRV2Transcript()
         liveText = ""
         isRecognizing = true
         let sdkStartBeganAt = ProcessInfo.processInfo.systemUptime
@@ -243,7 +240,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
                 try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled, let self, self.stopContinuation != nil,
                       self.isCurrentRecognizer(stoppingID) else { return }
-                // V2 的中间态在 stop 后仍可能修正；超时不能把部分文字当最终成功发送。
+                // stop 后的中间态仍可能修正；超时不能把部分文字当最终成功发送。
                 self.finish(.failure(SpeechRecognitionError.service("等待语音识别完成超时，请重试")),
                             sourceID: stoppingID, completion: "stop-timeout")
             }
@@ -258,16 +255,23 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     }
 
     nonisolated func realTimeRecognizer(
-        onRawResult recognizer: QCloudRealTimeRecognizer,
-        jsonData: String
+        onSliceRecognize recognizer: QCloudRealTimeRecognizer,
+        result: QCloudRealTimeResult
     ) {
-        let callbackUptime = ProcessInfo.processInfo.systemUptime
-        publish(
-            Result { try TencentASRV2Response.decode(jsonData) },
-            recognizerID: ObjectIdentifier(recognizer),
-            callbackUptime: callbackUptime,
-            callbackOnMainThread: Thread.isMainThread
-        )
+        publish(resultText(from: result), source: "slice",
+                recognizerID: ObjectIdentifier(recognizer),
+                callbackUptime: ProcessInfo.processInfo.systemUptime,
+                callbackOnMainThread: Thread.isMainThread)
+    }
+
+    nonisolated func realTimeRecognizer(
+        onSegmentSuccessRecognize recognizer: QCloudRealTimeRecognizer,
+        result: QCloudRealTimeResult
+    ) {
+        publish(resultText(from: result), source: "segment",
+                recognizerID: ObjectIdentifier(recognizer),
+                callbackUptime: ProcessInfo.processInfo.systemUptime,
+                callbackOnMainThread: Thread.isMainThread)
     }
 
     nonisolated func realTimeRecognizerDidFinish(
@@ -277,9 +281,10 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         let sourceID = ObjectIdentifier(recognizer)
         Task { @MainActor [weak self] in
             guard let self, self.isCurrentRecognizer(sourceID) else { return }
-            // V2 文本只消费 raw JSON；SDK 的空完成回调不覆盖最后一份服务端全文。
-            self.finish(.success(self.transcript.text), sourceID: sourceID,
-                        completion: "sdk-finished")
+            // 只有 SDK 明确完成才成功；空结束通知保留最后一份已收到的服务端全文。
+            let finalText = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.finish(.success(finalText.isEmpty ? self.liveText : finalText),
+                        sourceID: sourceID, completion: "sdk-finished")
         }
     }
 
@@ -359,10 +364,18 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         }
     }
 
+    /// standard SDK 在 recognizedText 内合并稳定句与当前句，宿主直接替换全文，避免重复追加。
+    private nonisolated func resultText(from result: QCloudRealTimeResult) -> String {
+        let fullText = result.recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fullText.isEmpty
+            ? result.text.trimmingCharacters(in: .whitespacesAndNewlines) : fullText
+    }
+
     // callbackUptime 是进入代理回调的时刻，不是网络接收时刻；
     // 若回调在主线程，SDK 内部排队时间已包含在内，需结合前台 run-loop 采样判断。
     private nonisolated func publish(
-        _ response: Result<TencentASRV2Response, Error>,
+        _ text: String,
+        source: String,
         recognizerID: ObjectIdentifier,
         callbackUptime: TimeInterval,
         callbackOnMainThread: Bool
@@ -370,19 +383,6 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         let enqueuedUptime = ProcessInfo.processInfo.systemUptime
         Task { @MainActor [weak self] in
             guard let self, self.isCurrentRecognizer(recognizerID) else { return }
-            do {
-                guard try self.transcript.apply(response.get()) else { return }
-            } catch {
-                self.finish(.failure(error), sourceID: recognizerID, completion: "raw-error")
-                return
-            }
-            let text = self.transcript.text
-            let source = "v2-raw"
-            defer {
-                if self.transcript.isFinal {
-                    self.finish(.success(text), sourceID: recognizerID, completion: "raw-final")
-                }
-            }
             let processedUptime = ProcessInfo.processInfo.systemUptime
             if self.firstCallbackUptime == nil {
                 self.firstCallbackUptime = callbackUptime
@@ -398,7 +398,8 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
             AppDiagnosticLog.shared.recordDuration(
                 .asrMainActorWait, since: enqueuedUptime, until: processedUptime
             )
-            guard self.liveText != text else { return }
+            // 静音空回包不是全文清空指令，保留已有稳定句；结束由 DidFinish 单独确认。
+            guard !text.isEmpty, self.liveText != text else { return }
             self.textUpdateCount += 1
             if !text.isEmpty, self.firstTextUptime == nil {
                 let now = ProcessInfo.processInfo.systemUptime
@@ -428,7 +429,7 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
     }
 
     /// 结束当前识别会话并完成等待中的转写结果。
-    /// 只回收匹配会话的资源；成功只来自 V2 final 或 SDK 明确完成，超时返回错误。
+    /// 只回收匹配会话的资源；成功只来自 SDK 明确完成，超时返回错误。
     private func finish(
         _ result: Result<String, Error>,
         sourceID: ObjectIdentifier? = nil,
@@ -488,7 +489,6 @@ final class TencentRealtimeSpeechRecognizer: NSObject, ObservableObject,
         recognizer = nil
         recognizerID = nil
         isRecognizing = false
-        transcript.cancel()
         stopTimeoutTask?.cancel()
         stopTimeoutTask = nil
         // 空闲时取消不能在下一次激活前排入 setActive(false)，

@@ -1,12 +1,14 @@
-# MaiChat 移动端实时 ASR V2 与登录 STS 预取（2026-10-30）
+# MaiChat 移动端实时 ASR 与登录 STS 预取（2026-10-30）
+
+> 2026-10-30 最新 iOS 方案已改用官方 standard SDK 和普通 `16k_zh` 引擎；以下 V2 内容记录此前状态，最终交付证据见文末。
 
 ## 范围、源码与交付状态
 
 - 用户要求移除 iOS 长期腾讯 ASR 密钥，改为 MaiChat 登录时领取后台签发的 STS 临时凭据；iOS、Android 统一使用腾讯实时语音识别 V2。
 - 入口为 iOS/Android 的 IM 与创作中心语音转文字。Desktop 没有此次 ASR 能力，也没有加入桌面 ASR 入口。
 - 实施时间：2026-10-29 至 2026-10-30，Asia/Shanghai；开发机为 macOS arm64。
-- 初始调查基线：`b275438b9fc40b299ded6a59c2218ba65a22dfce`；首轮修复提交：`aae043b87422bcf84b0a4a5ae8d9ceebeb8b6754`。下述真实 STS 临时 ID 校验修正位于该提交后的工作区，最终修复提交由统一提交执行者补充。
-- 本记录保存源码、假服务测试及构建证据，不表示已发布。生产部署状态、运行进程版本和最终发布产物由主执行者补充。
+- 初始调查基线：`b275438b9fc40b299ded6a59c2218ba65a22dfce`；首轮修复提交：`aae043b87422bcf84b0a4a5ae8d9ceebeb8b6754`；后台及 iOS 临时 ID 校验修正提交：`c6f41f4c66e12691e45487330b2bc4be53cdb21a`。
+- 后台已从 `c6f41f4c66e12691e45487330b2bc4be53cdb21a` 部署并通过下文控制面门禁；本记录不表示移动端已正式发布或真实 ASR 已验收。
 
 ## 用户操作与预期结果
 
@@ -80,11 +82,11 @@ V2 单句形态按 `sentence_id` 更新。中间态与稳定态均可被后续�
 
 ## 尚未验证及待补记录
 
-- 已由主执行者定点调用真实腾讯 STS 并确认成功返回 1800 秒临时凭据；随后发现本地 ID 格式校验误拒，详见后节。尚未调用真实 ASR，未验证真实识别鉴权、服务开通、额度或识别质量。
+- 新版生产签发器已成功领取并通过本地校验的 1800 秒真实 STS 临时凭据，后台已部署；已进行不发送音频的真实 V2 握手，返回资源/计费错误 4004，见下文。真实语音识别仍未通过。
 - 尚未以本次最终产物在 iOS/Android 真机上完成登录预取、长按识别、编辑/发送/取消和账号切换的完整体验验收；没有付费识别请求记录可作为验收依据。
 - iOS 已有最终 Debug Simulator 编译证据；正式签名设备产物、实际安装运行版本及真机操作结果另行记录。
 - 生产配置只读检查：主执行者已恢复 SSH，并确认现有服务的 ASR 三项长期配置存在且格式有效，未回传值；配置检查与后续 STS 定点调用均不能单独证明新接口已部署。
-- 生产部署：待主执行者补充部署提交、账号服务进程路径/版本、环境配置完整性、生产接口元数据核验、旧路由 404 及最终发布状态。此处不预先判定已部署或已发布。
+- 生产后台部署与运行版本已核验，见下节上线记录；已有账号实际登录领取、iPhone 语音操作及客户端最终发布状态继续由主执行者记录。
 
 ## 2026-10-30：真实 STS 临时 SecretId 被格式校验误拒
 
@@ -94,10 +96,21 @@ V2 单句形态按 `sentence_id` 更新。中间态与稳定态均可被后续�
 - 定点诊断确认 `Credentials`、`ExpiredTime` 的层级及字段类型正确，临时 ID/Key/Token 长度分别为 68/44/406，临时 ID/Key 不同于长期值；仅本地 ID 字符规则失败。Policy 编码、实时识别单项授权及有效期符合请求，进程没有代理配置。共进行了首次预检与获授权的一次诊断，两次均为 STS 控制面调用，没有循环重试或 ASR 音频请求。
 - 后台修正按 [STS Credentials 官方数据结构](https://cloud.tencent.com/document/product/1312/48198) 接受 8–1024 字节可打印 ASCII 临时 ID，保留永久配置校验，并加入符号、长度边界及空白/控制字符回归。修正后本机 STS 单元 6/6、账号/HTTP 合同 4/4 通过；日志 `/private/tmp/maichat-auth-sts-opaque-id-unit-test.log`、`/private/tmp/maichat-auth-sts-opaque-id-contract-test.log`。HTTP 合同用合成符号 ID 验证原样返回。
 - 预检终止后的原服务 PID 仍为 `118879`，工作目录 `/opt/maichat/releases/cloud-rename-20261028T155551Z-e321be48/auth`，健康接口 200 / `ok=true`。没有写入新 systemd override、重启或修改业务数据库，无需回滚。
-- 无凭据回执：本机 `/private/tmp/maichat-private-deploy-recovery/asr-deployment-receipt.json`，远端 `/var/backups/maichat/asr-sts-20261029T165010Z-aae043b87422/receipt.json`。诊断仅保留类型、长度、布尔及运行元数据，不保留或输出临时凭据值。
+- 首轮未切换的无凭据回执：远端 `/var/backups/maichat/asr-sts-20261029T165010Z-aae043b87422/receipt.json`。诊断仅保留类型、长度、布尔及运行元数据，不保留或输出临时凭据值。
 - iOS 现场源码只有非空校验，本身没有上述字母数字拒绝分支；同步统一为 8–1024 字节、仅 ASCII 33–126 的 opaque 标识，接受符号并拒绝空白、控制字符和非 ASCII。保留原值，由官方 SDK 处理 URL 编码，不改登录预取、缓存代际或录音逻辑。
 - 最小回归用独立合成的 68 字节含符号 ID，不使用真实凭据；补充 8/1024 字节合法边界及 7/1025 字节、空白、控制字符、非 ASCII 的拒绝检查。既有无网 Swift 凭据脚本已通过；生产凭据类型与实际已安装 V2 SDK 的 STS 构造 Swift 6 typecheck 已通过。本次客户端修正没有新增真实 STS 或 ASR 请求。
-- 修复后真实控制面复查、正式部署及更新产物由主执行者继续记录；修正本地校验不代表真实 ASR 已验收。
+- 修复后控制面与后台上线结果见下节；修正本地校验不代表真实 ASR 已验收。
+
+## 2026-10-30：修正后的账号服务生产上线
+
+- 完成时间：2026-10-30 01:06:15（Asia/Shanghai）。仅发布 iOS 联调所需账号后台；其他平台与 Release 工作按用户要求暂停。
+- 部署源码：`c6f41f4c66e12691e45487330b2bc4be53cdb21a`。独立归档 `services/auth` 与 `services/shared`，SHA256 为 `644a303922b2a3b25ce2328af3905bee8abeea5601855ac4470f506484afd786`；目标目录 `/opt/maichat/releases/asr-sts-20261029T170338Z-c6f41f4c66e1`，运行时回读 `SOURCE_COMMIT` 与该提交一致。
+- 切换前门禁：生产 Node `v22.23.0` 上 `npm ci --omit=dev` 成功，STS 单元 6/6、ASR 账号/HTTP 合同 4/4 通过。新版签发器额外执行一次明确授权的真实 `GetFederationToken`，校验通过，TTL 1800 秒、token 存在、临时 ID/Key 均不同于长期值。真实临时 ID 的非字母数字符号集合仅为 `-`，未输出值或片段。
+- 备份与切换：通过只读源连接做 SQLite 在线备份，产物 520192 字节；原 unit、四份既有 drop-in 及三份环境文件仅备份于远端私有目录。原环境配置与灰度设置保留，仅新增 `50-asr-sts.conf` 覆盖 `WorkingDirectory`，执行 daemon reload 并只重启 `maichat-auth.service`；未旋转长期密钥、未手动修改业务数据库。
+- 新进程：PID `121844`，状态 `active`，用户 `maichatauth`，systemd `WorkingDirectory` 与 `/proc/121844/cwd` 均为 `/opt/maichat/releases/asr-sts-20261029T170338Z-c6f41f4c66e1/auth`。健康接口 `http://127.0.0.1:9100/health` 返回 200 / `ok=true`。
+- 接口核验：本机 `/v1/asr/credential` 与公网 `https://ichat.life/api/v1/asr/credential` 在无登录凭据时均返回 401 / `Cache-Control: no-store`；对应旧 `asr/realtime-url` 路径均返回 404 / `no-store`。原账号 `/v1/auth/me` 未登录返回 401 / `no-store`，路由仍受会话保护。该检查没有发送真实 ASR 音频，也没有代替已有账号完整领取与识别验收。
+- 无凭据上线回执：本机 `/private/tmp/maichat-private-deploy-recovery/asr-deployment-receipt.json`；远端 `/var/backups/maichat/asr-sts-20261029T170338Z-c6f41f4c66e1/receipt.json`，状态 `deployed_and_verified`。生产定向日志及在线数据库备份位于同一远端私有目录，备份环境文件的值未回传。
+- 回滚入口：同目录 `rollback.py` 已准备。执行前校验此次新增 override 的 SHA256，再移除该 override、reload 并只重启账号服务，从而恢复原工作目录；数据库不自动倒退。上线门禁均通过，未执行回滚。
 
 ## 关联依据
 
@@ -107,3 +120,23 @@ V2 单句形态按 `sentence_id` 更新。中间态与稳定态均可被后续�
 - 腾讯 iOS V2 SDK：<https://cloud.tencent.com/document/product/1093/133355>
 - 腾讯 STS：<https://cloud.tencent.com/document/product/1312/48195>
 - ASR 授权粒度：<https://cloud.tencent.com/document/product/1093/48422>
+
+## 2026-10-30：iPhone 141 现场返回 4004
+
+- 物理 iPhone 回读版本 `2.2.4 (141)`，安装目录 `006E9243-539D-4FCF-9452-5CD4B433DC46/MaiChat.app`；正常启动 PID `7412`，执行路径与新安装产物一致。源码为 `c6f41f4c66e12691e45487330b2bc4be53cdb21a`。
+- 用户实际长按转文字返回 4004。后台使用同一生产配置签发的临时凭据，直连 `16k_zh_en_2.0` 做一次不发送音频的 WSS 握手，腾讯同样返回 4004，说明为资源包耗尽、需开通后付费或购买资源包。发送音频字节及应用帧均为 0；没有开通计费或购买。
+- [V2 官方错误码及引擎说明](https://cloud.tencent.com/document/product/1093/131127) 将 4004 定义为资源包耗尽，4002 另为鉴权失败。[计费总表](https://cloud.tencent.com/document/product/1093/35686) 列明普通实时语音识别每月 5 小时免费额度，而实时语音识别大模型 2.0 版无免费额度。用户截图所圈的为前一项。
+- 核对旧提交 `b275438b9fc40b299ded6a59c2218ba65a22dfce`：iOS `TencentSpeechRecognizer.swift` 使用 `config.engineType = "16k_zh"`；本次接入选择 `16k_zh_en_2.0`，对应新的计费项目。切换前没有完成这项资源/计费核对，不能将 STS 签发通过当作实际语音识别通过。
+- 安全握手证据 `/private/tmp/maichat-private-deploy-recovery/asr-no-audio-handshake.json`；手机安装、构建和启动凭证 `/private/tmp/maichat-ios141-device-build-receipt.json`。没有在文档保存任何凭据或签名 URL。
+- Nginx 的账号接口段关闭 access log，无法从访问日志证明手机自动预取的 HTTP 200；不将无日志当成没有请求的证据。
+- 当前阻碍为该引擎对应的腾讯资源/计费状态。没有改回旧引擎、修改付费设置、重装手机或恢复其他平台任务。
+
+## 2026-10-30：iOS 改用普通引擎并重新安装
+
+- 用户选择普通 `16k_zh` 引擎，并要求尽快安装 iOS App。后台 STS 临时凭据、登录预取、内存缓存和客户端直连腾讯保持不变。
+- 腾讯真实服务的无音频握手对照：`16k_zh` 加 `result_mod=1` 返回 4001，移除该参数返回 0。官方 V2 SDK 的设备 arm64 和模拟器二进制均在复制配置后强制写入 `result_mod=1`，公开配置接口不能关闭，相关证据 `/private/tmp/maichat-sdk-result-mod-analysis/result-mod-audit.json`。
+- iOS 使用官方 3.1.40 归档的 standard SDK，选择 `16k_zh`，不再发送 V2 专属参数。SDK 的 slice/segment 回调提供合并的全文；仅在 SDK 明确完成后提交，10 秒超时保留失败语境，取消不提交。SDK 来源及 SHA256 见 `MaiChat/ios/MaiChat/Vendor/TencentASR/UPSTREAM.md`。
+- 使用后台签发的真实 STS 临时凭据，向腾讯普通引擎发送一段 2 秒合成语音，返回 0、分片 0/1/2 和 final 1，完整识别“你好，测试成功。”；音频已删除。安全证据 `/private/tmp/maichat-private-deploy-recovery/standard-asr-synthetic-audio-result.json`。此验证覆盖真实服务与普通协议，不能替代 iPhone 麦克风操作。
+- `scripts/test-asr-credentials.swift`、实际 standard SDK Swift 6 类型检查通过；模拟器与 iPhone Debug 构建通过。模拟器正常 App 已安装启动，并由执行者查看登录页面截图 `/private/tmp/maichat-ios142-standard-simulator.png`。
+- iPhone 14 Pro Max 已安装并启动 `2.2.4 (142)`；设备回读 build 142，PID 7482，运行路径对应此次安装目录 `E39EF5D2-0E3A-46AC-8C48-76A87A3798D4/MaiChat.app`。产物签名核验通过，旧长期凭据值不在新二进制中；手机麦克风上的实际按住说话流程尚未由执行者验证。
+- Windows、Android 与公开 Release 仍按用户要求暂停；Android 工作区原有两份修改未参与本次 iOS 构建。

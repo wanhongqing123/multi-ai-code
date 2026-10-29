@@ -21,4 +21,13 @@
 - 用户提供的 AppKey 与专用 RAM Token 完成真实 NLS 握手；一次 2 秒合成普通话音频返回中间句、完整“你好，测试成功。”及任务完成，所有状态成功。音频已删除，证据 `/private/tmp/maichat-private-deploy-recovery/aliyun-nls-functional-audio-result.json`。此验证使用真实阿里服务但不代表 iOS SDK 录音已验收。
 - iOS SDK 在真实已安装头文件下通过 Swift 6 类型检查；纯状态及 PCM FIFO fixture、两家凭据刷新及账号隔离 fixture 通过。
 - 正常 iOS Simulator App 的 `testSpeechProviderSelectionSurvivesRelaunch` 1/1 通过，使用隔离假账号，验证默认腾讯、选阿里、重启后保留和切回腾讯；执行者查看设置页截图 `/private/tmp/maichat-ios143-settings-all-attachments/64A44A2C-AD00-48B5-9EAE-55132866FBC4.png`。
-- 生产账号服务更新、iPhone 143 安装启动和实际录音链路状态将在交付时补充；本地 fixture 不作为真实麦克风或生产 Token 领取的证明。
+- 生产账号服务及 iPhone 143 安装状态见下方；本地 fixture 不作为真实麦克风录音的证明。
+
+## 生产部署与 iPhone 安装
+
+- 账号服务已部署源码 `319deb6405d1685b4a5c2012985be59ede831a05`，PID `122880`、状态 active，工作目录与 `/proc` 及 `SOURCE_COMMIT` 一致。部署前完成生产 Node 依赖安装、18/18 定向测试与服务身份下的真实 Token 领取。
+- 已做 SQLite 在线备份和原 unit/环境配置私有备份；仅新增 systemd `60-nls.conf` 指向本次工作目录并加载 `/etc/maichat/nls-auth.env`，只重启账号服务。原 50 override、账号环境和灰度配置均保留。
+- 本机健康 200；公网与本机腾讯、阿里语音凭据接口未登录均 401/no-store，旧签名 URL 接口为 404/no-store。回执 `/private/tmp/maichat-private-deploy-recovery/nls-deployment-receipt.json`；远端备份目录含可移除本次 override 的 `rollback.py`。
+- iPhone 真机构建通过，`nuisdk.framework` 仅 arm64，App 深度签名检查通过且旧长期腾讯凭据未进入新二进制。设备回读 `2.2.4 (143)`，安装目录为 `EDF9A91B-EA12-4091-B8F4-F557D71C3D63/MaiChat.app`。
+- 设备锁屏导致系统拒绝远程启动（CoreDevice 10002，FBS Locked）；待解锁后验证启动。真实阿里 SDK 麦克风录音尚未在手机完成验收。
+- 另尝试独立的模拟器原生 SDK driver：编译与链接成功，但 `simctl spawn` 在 `--describe` 阶段被系统以 SIGKILL/137 终止，尚未初始化 SDK；没有领取凭据或发送音频。证据 `/private/tmp/maichat-aliyun-simulator-sdk-probe-20261030.json`。因此不能把直连云端测试和 SDK 类型检查当作 iOS SDK 端到端成功。

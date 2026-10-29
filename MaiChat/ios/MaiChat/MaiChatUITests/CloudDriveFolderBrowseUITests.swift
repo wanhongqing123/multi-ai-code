@@ -39,12 +39,18 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
     }
 
     @MainActor
+    private func breadcrumb(_ name: String, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@",
+            "cloud-drive-breadcrumb-",name)).firstMatch
+    }
+
+    @MainActor
     private func enterChild(in app: XCUIApplication) {
         let parent = revealFolder("旅行资料",in: app)
         parent.tap()
-        let up = app.buttons["cloud-drive-folder-up"]
-        XCTAssertTrue(up.waitForExistence(timeout: 15))
-        XCTAssertTrue(up.isHittable, "从长父目录进入长子目录后应回到导航顶部")
+        let parentPath = breadcrumb("旅行资料",in: app)
+        XCTAssertTrue(parentPath.waitForExistence(timeout: 15))
+        XCTAssertTrue(parentPath.isHittable, "从长父目录进入长子目录后应回到导航顶部")
         XCTAssertTrue(app.buttons["cloud-drive-folder-root"].isHittable)
         let child = revealFolder("桂山岛之旅",in: app)
         child.tap()
@@ -87,9 +93,15 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
             predicate: NSPredicate(format: "value BEGINSWITH %@", "video:ready"),object: counter)
         XCTAssertEqual(XCTWaiter.wait(for: [ready],timeout: 60),.completed)
         app.buttons["cloud-drive-image-close"].tap()
-        app.buttons["cloud-drive-folder-up"].tap()
-        XCTAssertTrue(app.buttons["cloud-drive-folder-up"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["cloud-drive-folder-up"].isHittable)
+        let parentPath = breadcrumb("旅行资料",in: app)
+        XCTAssertTrue(parentPath.waitForExistence(timeout: 15))
+        parentPath.tap()
+        let returnedToParent = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: breadcrumb("桂山岛之旅",in: app))
+        XCTAssertEqual(XCTWaiter.wait(for: [returnedToParent],timeout: 15),.completed)
+        XCTAssertTrue(parentPath.waitForExistence(timeout: 15))
+        XCTAssertTrue(parentPath.isHittable)
         XCTAssertFalse(play.exists)
         app.buttons["cloud-drive-folder-root"].tap()
         let empty = revealFolder("空文件夹",in: app)
@@ -127,7 +139,9 @@ final class CloudDriveFolderBrowseUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["切号加载状态已恢复且无旧目录"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.staticTexts["还没有图片或视频"].waitForExistence(timeout: 15))
         XCTAssertFalse(folder("旅行资料",in: app).exists)
-        XCTAssertFalse(app.buttons["cloud-drive-folder-up"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "cloud-drive-breadcrumb-")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["cloud-drive-folder-root"].isHittable)
         let switched = XCTAttachment(screenshot: app.screenshot())
         switched.name = "ios-cloud-folder-account-switch-root"
         switched.lifetime = .keepAlways

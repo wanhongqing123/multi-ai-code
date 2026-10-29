@@ -526,9 +526,9 @@ struct ChatView: View {
                 )
             }
         }
-        // The system status area belongs to the navigation header on both pages.
-        // Keep its white canvas stable while the detail owns only its content area.
-        .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
+        // The outer canvas owns status/home material. White message surfaces
+        // paint only their content area, leaving system safe areas translucent.
+        .background(RemoteIMStyle.barMaterial, ignoresSafeAreaEdges: [.top, .bottom])
         .task(id: activeContact?.userID) {
             guard let contact = activeContact else {
                 preparedContactID = nil
@@ -552,16 +552,18 @@ struct ChatView: View {
 
     private var conversationRoot: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 0) {
-                HeaderView(isActionsOpen: $isMessageActionsOpen)
-                ConversationListView(
+            ConversationListView(
                     activeContact: $activeContact,
                     activeGroup: $activeGroup,
                     searchTargetMessageID: $searchTargetMessageID
                 )
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    HeaderView(isActionsOpen: $isMessageActionsOpen)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
                 // 竖屏返回时页签随会话列表一同出现；横屏则留在左栏底部。
                 bottomBar
-            }
+                }
 
             if isMessageActionsOpen {
                 Color.black.opacity(0.001)
@@ -700,7 +702,7 @@ struct ChatAddFriendMenuUITestRoot: View {
             }
         }
         .environmentObject(appState)
-        .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
+        .background(RemoteIMStyle.panelBackground)
         .sheet(isPresented: $isShowingQRScanner, onDismiss: {
             guard let pendingScannedFriendID else { return }
             appState.newContactUserID = pendingScannedFriendID
@@ -1011,7 +1013,7 @@ private struct HeaderView: View {
         ZStack {
             Text("消息")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .foregroundStyle(.primary)
 
             HStack(spacing: 14) {
                 Spacer(minLength: 0)
@@ -1022,7 +1024,7 @@ private struct HeaderView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(RemoteIMStyle.textPrimary)
+                        .foregroundStyle(.primary)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
@@ -1034,9 +1036,9 @@ private struct HeaderView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 54)
-        .background(RemoteIMStyle.panelBackground)
+        .remoteIMBarBackground(edges: .top)
         .overlay(alignment: .bottom) {
-            Divider().background(RemoteIMStyle.border)
+            RemoteIMBarSeparator()
         }
     }
 }
@@ -1508,8 +1510,6 @@ private struct GroupChatDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 14) {
@@ -1589,9 +1589,9 @@ private struct GroupChatDetailView: View {
                     }
                 }
             }
-            composer
-        }
-        .background(RemoteIMStyle.panelBackground.ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) { header }
+            .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+        .background(RemoteIMStyle.panelBackground)
         .onAppear {
             if appState.selectedGroupID != group.groupID {
                 appState.selectGroup(groupID: group.groupID)
@@ -1618,15 +1618,15 @@ private struct GroupChatDetailView: View {
                     .lineLimit(1)
                 Text("\(currentGroup.memberCount) 位成员")
                     .font(.system(size: 12))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
         }
-        .foregroundStyle(RemoteIMStyle.textPrimary)
+        .foregroundStyle(.primary)
         .padding(.horizontal, 10)
         .frame(height: 58)
-        .background(RemoteIMStyle.panelBackground)
-        .overlay(alignment: .bottom) { Divider() }
+        .remoteIMBarBackground(edges: .top)
+        .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
         .accessibilityIdentifier("im-group-header")
     }
 
@@ -1637,7 +1637,7 @@ private struct GroupChatDetailView: View {
                 .font(.system(size: 16))
                 .padding(.horizontal, 13)
                 .padding(.vertical, 10)
-                .background(RemoteIMStyle.pageBackground,
+                .background(Color(uiColor: .secondarySystemBackground),
                             in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityIdentifier("im-group-draft")
                 .onSubmit(send)
@@ -1659,8 +1659,9 @@ private struct GroupChatDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(RemoteIMStyle.panelBackground)
-        .overlay(alignment: .top) { Divider() }
+        .foregroundStyle(.primary)
+        .remoteIMBarBackground(edges: .bottom)
+        .overlay(alignment: .top) { RemoteIMBarSeparator() }
     }
 
     private func send() {
@@ -2329,13 +2330,6 @@ private struct ChatDetailView: View {
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                ChatDetailHeader(
-                    contact: contact,
-                    activeContact: $activeContact,
-                    session: appState.remoteDesktop,
-                    showRemoteDesktop: showRemoteDesktop
-                )
                 MessageListView(
                     peerUserID: contact.userID,
                     messages: appState.visibleMessages(with: contact.userID),
@@ -2374,13 +2368,22 @@ private struct ChatDetailView: View {
                     }
                 )
                 .id(contact.userID)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    ChatDetailHeader(
+                        contact: contact,
+                        activeContact: $activeContact,
+                        session: appState.remoteDesktop,
+                        showRemoteDesktop: showRemoteDesktop
+                    )
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerView(
                     peerUserID: contact.userID,
                     isAttachmentPanelPresented: $isAttachmentPanelPresented,
                     draft: appState.draft,
                     transcriptionPresentation: transcriptionPresentation
                 )
-            }
+                }
             // 临时语音层不能参与聊天页的尺寸计算；作为同层 ZStack 子视图时，
             // 它的最小高度曾撑大消息列表，并在收起后破坏原有滚动位置。
             .overlay {
@@ -3153,12 +3156,12 @@ private struct ChatDetailHeader: View {
                     .frame(width: 34, height: 34)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(RemoteIMStyle.textPrimary)
+            .foregroundStyle(.primary)
             .accessibilityLabel("返回会话列表")
 
             Text(contact.displayName)
                 .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(RemoteIMStyle.textPrimary)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
@@ -3206,9 +3209,9 @@ private struct ChatDetailHeader: View {
         .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 10)
-        .background(RemoteIMStyle.panelBackground)
+        .remoteIMBarBackground(edges: .top)
         .overlay(alignment: .bottom) {
-            Divider().background(RemoteIMStyle.border)
+            RemoteIMBarSeparator()
         }
         .sheet(isPresented: $showRemoteDiagnostics) {
             RemoteDiagnosticsView(peer: contact, contacts: appState.chatState.contacts,
@@ -3472,6 +3475,7 @@ private struct MessageListView: View {
                 )
             }
             .modifier(MessageInitialScrollAnchor())
+            .accessibilityIdentifier("im-message-timeline")
             .scrollDismissesKeyboard(.interactively)
             .background(RemoteIMStyle.panelBackground)
             .overlay(alignment: .bottomTrailing) {
@@ -3651,6 +3655,10 @@ private struct MessageListView: View {
         if keyboardTransitionOpening == opening { return }
         keyboardTransitionOpening = opening
         let nearBottom = viewportState.nearBottomBeforeKeyboard(opening: opening)
+        AppDiagnosticLog.shared.record(level: .debug, category: "message-scroll",
+            event: "keyboard-intent", fields: ["page": "im", "opening": String(opening),
+                "near_bottom_before": String(nearBottom),
+                "returning": String(navigationArrival.isReturning)])
         keyboardFollowIntent = nearBottom
         if nearBottom { scrollIntent.followLatest() }
         else { scrollIntent.userDidScroll() }
@@ -3739,6 +3747,17 @@ private struct RemoteIMActivityBubble: View {
 }
 
 private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
+    final class MarkerView: UIView {
+        var onHierarchyChange: (() -> Void)?
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            onHierarchyChange?()
+        }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onHierarchyChange?()
+        }
+    }
     let onTap: (UIWindow?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -3746,7 +3765,7 @@ private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+        let view = MarkerView(frame: .zero)
         view.isUserInteractionEnabled = false
         scheduleInstallation(from: view, coordinator: context.coordinator)
         return view
@@ -3758,14 +3777,19 @@ private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        (view as? MarkerView)?.onHierarchyChange = nil
         coordinator.uninstall()
     }
 
     private func scheduleInstallation(from view: UIView, coordinator: Coordinator) {
-        DispatchQueue.main.async { [weak view, weak coordinator] in
-            guard let view, let coordinator else { return }
-            coordinator.install(from: view)
+        let retry = { [weak view, weak coordinator] in
+            DispatchQueue.main.async { [weak view, weak coordinator] in
+                guard let view, view.window != nil, let coordinator else { return }
+                coordinator.install(from: view)
+            }
         }
+        (view as? MarkerView)?.onHierarchyChange = retry
+        retry()
     }
 
     @MainActor
@@ -3796,6 +3820,13 @@ private struct ScrollViewKeyboardDismissInstaller: UIViewRepresentable {
             uninstall()
             nextScrollView.addGestureRecognizer(tapGesture)
             scrollView = nextScrollView
+            let windowFrame = nextScrollView.convert(nextScrollView.bounds, to: nextScrollView.window)
+            AppDiagnosticLog.shared.record(level: .debug, category: "message-scroll",
+                event: "bridge-installed", fields: ["kind": "keyboard-dismiss",
+                    "bounds_height": String(format: "%.1f", nextScrollView.bounds.height),
+                    "window_min_y": String(format: "%.1f", windowFrame.minY),
+                    "window_height": String(format: "%.1f", windowFrame.height),
+                    "clips_to_bounds": String(nextScrollView.clipsToBounds)])
         }
 
         func uninstall() {
@@ -6806,9 +6837,9 @@ private struct ComposerView: View {
             replySuggestionsLoading = false
             replySuggestionError = nil
         }
-        .background(RemoteIMStyle.panelBackground)
+        .remoteIMBarBackground(edges: .bottom)
         .overlay(alignment: .top) {
-            Divider().background(RemoteIMStyle.border)
+            RemoteIMBarSeparator()
         }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
@@ -6889,7 +6920,7 @@ private struct ComposerView: View {
                     .frame(width: 3, height: 26)
                 Text(replyQuoteTitle(quote))
                     .font(.system(size: 12))
-                    .foregroundStyle(RemoteIMStyle.textSecondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Button {
@@ -6900,13 +6931,13 @@ private struct ComposerView: View {
                         .frame(width: 30, height: 30)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(RemoteIMStyle.textSecondary)
+                .foregroundStyle(.secondary)
                 .accessibilityLabel("取消引用回复")
             }
             .padding(.leading, 9)
             .padding(.trailing, 4)
             .frame(height: 40)
-            .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 9))
+            .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
         }
     }
 
@@ -6973,12 +7004,12 @@ private struct ComposerView: View {
             Image(systemName: "plus")
                 .font(.system(size: 20, weight: .semibold))
                 .frame(width: 44, height: 44)
-                .background(Color.white, in: Circle())
+                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
                 .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .foregroundStyle(
-            canOpenAttachmentPanel ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary
+            canOpenAttachmentPanel ? Color.primary : Color.secondary
         )
         .disabled(!canOpenAttachmentPanel)
         .accessibilityLabel(isAttachmentPanelPresented ? "收起更多功能" : "展开更多功能")
@@ -7033,7 +7064,8 @@ private struct ComposerView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color(uiColor: .secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(
@@ -7220,7 +7252,7 @@ private struct ComposerView: View {
 
     private var textComposerPromptColor: Color {
         if isCancellingVoice { return .red }
-        return isPressingVoice ? RemoteIMStyle.blue : RemoteIMStyle.textSecondary
+        return isPressingVoice ? RemoteIMStyle.blue : Color.secondary
     }
 
     private func openPhotoPicker() async {
@@ -7959,7 +7991,7 @@ struct ComposerTextView: UIViewRepresentable {
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.font = ChatTypography.editor
-        textView.textColor = UIColor(RemoteIMStyle.textPrimary)
+        textView.textColor = .label
         textView.tintColor = UIColor(RemoteIMStyle.blue)
         textView.autocapitalizationType = .none
         textView.autocorrectionType = .no
@@ -8419,7 +8451,7 @@ private struct PressToTalkButton: View {
     var body: some View {
         Text(title)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(isEnabled ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(backgroundColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
@@ -8448,7 +8480,7 @@ private struct PressToTalkButton: View {
     private var backgroundColor: Color {
         if !isEnabled { return Color(.secondarySystemBackground) }
         if isCancelling { return Color.red.opacity(0.08) }
-        return isPressing ? RemoteIMStyle.blueSoft : Color.white
+        return isPressing ? Color.blue.opacity(0.16) : Color(uiColor: .secondarySystemBackground)
     }
 
     private var borderColor: Color {

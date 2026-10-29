@@ -2244,6 +2244,13 @@ final class AIAssistantUITests: XCTestCase {
         app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18190"
         app.launch()
 
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
         let titles = ["消息", "云盘", "创作中心", "好友列表", "我的"]
         let tabs = titles.map { app.buttons[$0] }
         for tab in tabs { XCTAssertTrue(tab.waitForExistence(timeout: 35)) }
@@ -2262,6 +2269,12 @@ final class AIAssistantUITests: XCTestCase {
         opened.lifetime = .keepAlways
         add(opened)
 
+        let timeline = app.scrollViews.firstMatch
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        timeline.swipeUp()
+        capture("normal-root-assistant-scroll-under-bars")
+        timeline.swipeDown()
+
         let editor = app.textViews["ai-composer"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         editor.tap()
@@ -2275,9 +2288,20 @@ final class AIAssistantUITests: XCTestCase {
 
         tabs[1].tap()
         XCTAssertTrue(app.staticTexts["我的云盘"].waitForExistence(timeout: 10))
+        capture("normal-root-cloud-navigation-and-tab-bars")
         tabs[0].tap()
+        capture("normal-root-message-list-bars")
         tabs[3].tap()
+        capture("normal-root-contacts-navigation-and-tab-bars")
         tabs[4].tap()
+        capture("normal-root-settings-navigation-and-tab-bars")
+        let settings = app.collectionViews.firstMatch
+        if settings.exists {
+            settings.swipeUp()
+        } else if app.tables.firstMatch.exists {
+            app.tables.firstMatch.swipeUp()
+        }
+        capture("normal-root-settings-scroll-under-bars")
         tabs[2].tap()
         XCTAssertTrue(editor.waitForExistence(timeout: 20))
         XCTAssertEqual(editor.value as? String, "切页后保留的草稿")
@@ -2526,6 +2550,12 @@ final class AIAssistantUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(latest.frame.minY, timeline.frame.minY - 2)
         XCTAssertLessThanOrEqual(latest.frame.maxY, timeline.frame.maxY + 2,
                                  "Opening the keyboard must keep the latest message visible")
+        XCTAssertLessThanOrEqual(latest.frame.maxY, editor.frame.minY,
+                                 "The latest message must remain above the translucent composer")
+        let typing = XCTAttachment(screenshot: app.screenshot())
+        typing.name = "assistant-latest-above-material-composer-and-keyboard"
+        typing.lifetime = .keepAlways
+        add(typing)
         timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
         let keyboardHidden = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"),
@@ -2740,12 +2770,27 @@ final class AIAssistantUITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "IM 历史消息"))
         XCTAssertLessThanOrEqual(renderedRows.count, 20,
                                  "未翻页的 IM 时间线只能排版最近一页")
+        let editor = app.textViews["message-composer-text-view"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let latestAboveComposer = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            latest.frame.maxY <= editor.frame.minY && latest.isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [latestAboveComposer], timeout: 5), .completed,
+                       "键盘弹出后最新消息不能被半透明输入栏挡住")
         let capture = XCTAttachment(screenshot: app.screenshot())
-        capture.name = "im-2544-stored-20-rendered-latest-visible"
+        capture.name = "im-latest-above-material-composer-and-keyboard"
         capture.lifetime = .keepAlways
         add(capture)
 
-        let timeline = app.scrollViews.element(boundBy: 0)
+        let timeline = app.scrollViews["im-message-timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5))
+        // Use the timeline's trailing padding, outside text, dates and media controls.
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.2)).tap()
+        let keyboardHidden = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardHidden], timeout: 5), .completed)
         let earlier = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2504")).firstMatch
         for _ in 0..<8 where !earlier.exists { timeline.swipeDown() }
@@ -2755,6 +2800,9 @@ final class AIAssistantUITests: XCTestCase {
         add(paged)
         XCTAssertTrue(earlier.waitForExistence(timeout: 5),
                       "到达已加载页顶部后应开放上一页")
+        app.buttons["返回会话列表"].tap()
+        XCTAssertTrue(conversation.waitForExistence(timeout: 5))
+        XCTAssertTrue(conversation.isHittable, "返回后会话列表应恢复交互")
     }
 
     @MainActor func testFastHistorySwipeWithExpandedHistory() throws {

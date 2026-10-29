@@ -88,26 +88,6 @@ struct AIAssistantView: View {
                     Divider()
                 }
                 VStack(spacing: 0) {
-                    // 标题和输入栏保持稳定；消息区只接收剩余的可用高度。
-                    // 播放器停靠或键盘弹出时不重建整页，也不清空已绘制的消息。
-                    AIHeader(
-                        openSessions: {
-                            composerFocusController.dismiss()
-                            isAttachmentPanelPresented = false
-                            showActions = false
-                            openSessionDrawer(wideLayout: wideLayout)
-                        },
-                        openActions: {
-                            composerFocusController.dismiss()
-                            isAttachmentPanelPresented = false
-                            showActions.toggle()
-                        },
-                        openVideoCircle: videoCircle.availability == .available ? {
-                            showActions = false
-                            videoCircle.presentation = .circle
-                        } : nil
-                    )
-                    Divider().overlay(Color.black.opacity(0.06))
                     if browser.isOpen && browser.ownerSessionID == model.selected &&
                         model.selectedRemote == nil {
                         AIAssistantBrowserPane(browser: browser)
@@ -139,6 +119,28 @@ struct AIAssistantView: View {
                         .frame(maxWidth: 900)
                         .frame(maxWidth: .infinity)
                     }
+                }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    AIHeader(
+                        openSessions: {
+                            composerFocusController.dismiss()
+                            isAttachmentPanelPresented = false
+                            showActions = false
+                            openSessionDrawer(wideLayout: wideLayout)
+                        },
+                        openActions: {
+                            composerFocusController.dismiss()
+                            isAttachmentPanelPresented = false
+                            showActions.toggle()
+                        },
+                        openVideoCircle: videoCircle.availability == .available ? {
+                            showActions = false
+                            videoCircle.presentation = .circle
+                        } : nil
+                    )
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
                     if !model.error.isEmpty {
                         HStack(alignment: .top) {
                             Image(systemName: "exclamationmark.circle")
@@ -175,6 +177,9 @@ struct AIAssistantView: View {
                     .equatable()
                     .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
+                    }
+                    .remoteIMBarBackground(edges: .bottom)
+                    .overlay(alignment: .top) { RemoteIMBarSeparator() }
                 }
                 .background(Color(uiColor: .systemBackground))
             }
@@ -633,29 +638,6 @@ struct AIAssistantView: View {
     /// 显示已存在的会话入口，并把点击操作交给模型先读取目标页再切换。
     /// 横屏固定侧栏、竖屏抽屉共用同一列表，删除操作必须确认目标已选中。
     private func sessionList(wideLayout: Bool) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Text("对话").font(.system(size: 20, weight: .bold))
-                Spacer()
-                Button {
-                    closeSessionDrawer()
-                    Task { await model.create() }
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 18, weight: .medium))
-                        .frame(width: 32, height: 32)
-                }
-                .disabled(model.isSubmitting || model.isCreatingConversation)
-                .accessibilityLabel("新对话")
-                if wideLayout {
-                    Button("收起") { showsWideSidebar = false }
-                        .font(.system(size: 14, weight: .medium))
-                }
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(RemoteIMStyle.textPrimary)
-            .padding(.horizontal, 20).frame(height: 60)
-            Divider().overlay(RemoteIMStyle.border)
             ScrollView {
                 LazyVStack(spacing: 16) {
                     VStack(spacing: 2) {
@@ -706,8 +688,31 @@ struct AIAssistantView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 16)
             }
-            .background(Color(uiColor: .systemBackground))
-        }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack(spacing: 16) {
+                    Text("对话").font(.system(size: 20, weight: .bold))
+                    Spacer()
+                    Button {
+                        closeSessionDrawer()
+                        Task { await model.create() }
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 18, weight: .medium))
+                            .frame(width: 32, height: 32)
+                    }
+                    .disabled(model.isSubmitting || model.isCreatingConversation)
+                    .accessibilityLabel("新对话")
+                    if wideLayout {
+                        Button("收起") { showsWideSidebar = false }
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 20).frame(height: 60)
+                .remoteIMBarBackground(edges: .top)
+                .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
+            }
         .background(Color(uiColor: .systemBackground))
         .accessibilityIdentifier("ai-session-drawer")
     }
@@ -1083,7 +1088,9 @@ private struct AIHeader: View {
         }
         .overlay { Text("创作中心").font(.system(size: 18, weight: .bold)).allowsHitTesting(false) }
         .padding(.horizontal, 16).frame(height: 54)
-        .background(Color(uiColor: .systemBackground))
+        .foregroundStyle(.primary)
+        .remoteIMBarBackground(edges: .top)
+        .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
     }
 }
 
@@ -2336,8 +2343,10 @@ struct AIVideoCircleUITestRoot: View {
 }
 
 struct AIImageFullscreenUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
     var body: some View {
         AIAssistantView()
+            .environmentObject(appState)
             .onAppear {
                 let image = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 500))
                     .image { context in
@@ -2360,6 +2369,7 @@ struct AIImageMixedUITestRoot: View {
     var body: some View {
         ZStack {
             AIAssistantView()
+                .environmentObject(appState)
             if let video = appState.agentVideoPresentation {
                 MaiFfplayVideoScreen(path: video.path, navigate: { direction in
                     guard let next = video.sequence.adjacent(direction) else { return false }
@@ -2462,8 +2472,10 @@ struct AITranscriptUITestRoot: View {
 }
 
 struct AIHistoryUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
     var body: some View {
         AIAssistantView()
+            .environmentObject(appState)
             .onAppear { AIAssistantModel.shared.installHistoryUITestFixture() }
     }
 }
@@ -2479,8 +2491,10 @@ struct AIWelcomeUITestRoot: View {
 }
 
 struct AISessionSwitchUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
     var body: some View {
         AIAssistantView()
+            .environmentObject(appState)
             .onAppear { AIAssistantModel.shared.installSessionSwitchUITestFixture() }
     }
 }
@@ -2501,15 +2515,19 @@ struct AIBrowserUITestRoot: View {
 #endif
 
 struct AIMediaDraftUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
     var body: some View {
         AIAssistantView()
+            .environmentObject(appState)
             .onAppear { AIAssistantModel.shared.installMediaDraftUITestFixture() }
     }
 }
 
 struct AIStreamTypingUITestRoot: View {
+    @StateObject private var appState = RemoteIMAppState(loadedSettings: .empty)
     var body: some View {
         AIAssistantView()
+            .environmentObject(appState)
             .onAppear { AIAssistantModel.shared.installStreamingTypingUITestFixture() }
     }
 }
@@ -2947,11 +2965,11 @@ private struct AIComposer: View, Equatable {
                     HStack {
                         Text("待发送附件")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(RemoteIMStyle.textSecondary)
+                            .foregroundStyle(.secondary)
                         if !snapshot.attachments.isEmpty {
                             Text("\(snapshot.attachments.count)")
                                 .font(.caption)
-                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .foregroundStyle(.secondary)
                         }
                         Spacer()
                         if isImportingCurrentSession {
@@ -3086,7 +3104,7 @@ private struct AIComposer: View, Equatable {
                         )
                         if draft.isEmpty {
                             Text(composerPrompt)
-                                .foregroundStyle(RemoteIMStyle.textSecondary)
+                                .foregroundStyle(.secondary)
                                 .font(ChatTypography.body.weight(isPressingVoice ? .semibold : .regular))
                                 .padding(.horizontal, 13)
                                 .padding(.vertical, 13)
@@ -3095,7 +3113,8 @@ private struct AIComposer: View, Equatable {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color(uiColor: .secondarySystemBackground),
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(snapshot.ready ? RemoteIMStyle.blue : RemoteIMStyle.border,
@@ -3129,9 +3148,10 @@ private struct AIComposer: View, Equatable {
                 } label: {
                     Image(systemName: snapshot.busy ? "stop.fill" : "plus")
                         .font(.system(size: snapshot.busy ? 16 : 20, weight: .semibold))
-                        .foregroundStyle(snapshot.busy ? Color.white : RemoteIMStyle.textPrimary)
+                        .foregroundStyle(snapshot.busy ? Color(uiColor: .systemBackground) : Color.primary)
                         .frame(width: 44, height: 44)
-                        .background(snapshot.busy ? Color.primary : Color.white, in: Circle())
+                        .background(snapshot.busy ? Color.primary : Color(uiColor: .secondarySystemBackground),
+                                    in: Circle())
                         .overlay(Circle().stroke(RemoteIMStyle.border, lineWidth: snapshot.busy ? 0 : 1))
                 }
                 .buttonStyle(.plain)
@@ -3193,8 +3213,6 @@ private struct AIComposer: View, Equatable {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-            .background(RemoteIMStyle.panelBackground)
-            .overlay(alignment: .top) { Divider().background(RemoteIMStyle.border) }
             .animation(.easeOut(duration: 0.18), value: isAttachmentPanelPresented)
             .photosPicker(
                 isPresented: $isPhotoPickerPresented,
@@ -4075,7 +4093,7 @@ private struct AITranscriptionButton: View {
     var body: some View {
         Text(title)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(isEnabled ? RemoteIMStyle.textPrimary : RemoteIMStyle.textSecondary)
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(backgroundColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
@@ -4101,7 +4119,7 @@ private struct AITranscriptionButton: View {
     private var backgroundColor: Color {
         if !isEnabled { return Color(uiColor: .secondarySystemBackground) }
         if isCancelling { return Color.red.opacity(0.08) }
-        return isPressing ? RemoteIMStyle.blueSoft : Color.white
+        return isPressing ? Color.blue.opacity(0.16) : Color(uiColor: .secondarySystemBackground)
     }
 
     private var borderColor: Color {

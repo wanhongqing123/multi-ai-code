@@ -39,8 +39,7 @@ struct ContactsView: View {
                     groupActionName: $groupActionName
                 )
                 .background(RemoteIMStyle.pageBackground.ignoresSafeArea())
-                .toolbarBackground(RemoteIMStyle.panelBackground, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
+                .remoteIMNavigationBarMaterial()
                 .task {
                     await appState.refreshAcceptedFriends()
                     await appState.refreshFriendRequests()

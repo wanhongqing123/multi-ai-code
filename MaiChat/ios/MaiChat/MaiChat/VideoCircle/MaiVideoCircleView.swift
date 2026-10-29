@@ -36,7 +36,83 @@ struct MaiVideoCircleView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if !errorText.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(errorText).foregroundStyle(.red)
+                            Button("重试") { Task { await reload() } }
+                        }
+                        .font(.subheadline)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.red.opacity(0.07),
+                                    in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    if !statusText.isEmpty {
+                        Text(statusText).font(.subheadline)
+                            .foregroundStyle(RemoteIMStyle.textPrimary)
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.blue.opacity(0.07),
+                                        in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    if isLoading && feed.isEmpty && mine.isEmpty && blocked.isEmpty {
+                        ProgressView("正在加载视频圈")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else if selectedPage == 0 {
+                        if feed.isEmpty && errorText.isEmpty {
+                            emptyState("还没有公开视频", symbol: "play.rectangle.on.rectangle")
+                        }
+                        ForEach(feed) { post in feedCard(post) }
+                        if nextCursor != nil {
+                            Button(isLoadingMore ? "加载中…" : "加载更多") {
+                                Task { await loadMore() }
+                            }
+                            .disabled(isLoadingMore)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .accessibilityIdentifier("video-circle-load-more")
+                        }
+                    } else if selectedPage == 1 {
+                        if mine.isEmpty && errorText.isEmpty {
+                            emptyState("还没有投稿", symbol: "film.stack")
+                        }
+                        ForEach(mine) { post in mineCard(post) }
+                        if mineCursor != nil {
+                            Button(isLoadingMoreMine ? "加载中…" : "加载更早作品") {
+                                Task { await loadMoreMine() }
+                            }
+                            .disabled(isLoadingMoreMine)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .accessibilityIdentifier("video-circle-mine-load-more")
+                        }
+                    } else {
+                        if blocked.isEmpty && errorText.isEmpty {
+                            emptyState("没有屏蔽的作者", symbol: "person.crop.circle")
+                        }
+                        ForEach(blocked) { author in
+                            HStack {
+                                Text(author.authorName)
+                                    .font(.system(size: 15, weight: .medium))
+                                Spacer()
+                                Button("取消屏蔽") {
+                                    Task { await unblock(authorID: author.authorId) }
+                                }
+                                .font(.subheadline)
+                            }
+                            .padding(15)
+                            .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                        in: RoundedRectangle(cornerRadius: 13))
+                            .accessibilityIdentifier("video-circle-blocked-\(author.authorId)")
+                        }
+                    }
+                }
+                .padding(18)
+            }
+            .id(selectedPage)
+            .refreshable { await reload() }
+            .safeAreaInset(edge: .top, spacing: 0) {
                 HStack(spacing: 0) {
                     pageButton("发现", page: 0)
                     pageButton("我的作品", page: 1)
@@ -45,88 +121,14 @@ struct MaiVideoCircleView: View {
                 .padding(4)
                 .background(Color(uiColor: .secondarySystemGroupedBackground),
                             in: RoundedRectangle(cornerRadius: 13))
-                .padding(.horizontal, 18).padding(.top, 12)
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if !errorText.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(errorText).foregroundStyle(.red)
-                                Button("重试") { Task { await reload() } }
-                            }
-                            .font(.subheadline)
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.red.opacity(0.07),
-                                        in: RoundedRectangle(cornerRadius: 14))
-                        }
-                        if !statusText.isEmpty {
-                            Text(statusText).font(.subheadline)
-                                .foregroundStyle(RemoteIMStyle.textPrimary)
-                                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.blue.opacity(0.07),
-                                            in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        if isLoading && feed.isEmpty && mine.isEmpty && blocked.isEmpty {
-                            ProgressView("正在加载视频圈")
-                                .frame(maxWidth: .infinity, minHeight: 200)
-                        } else if selectedPage == 0 {
-                            if feed.isEmpty && errorText.isEmpty {
-                                emptyState("还没有公开视频", symbol: "play.rectangle.on.rectangle")
-                            }
-                            ForEach(feed) { post in feedCard(post) }
-                            if nextCursor != nil {
-                                Button(isLoadingMore ? "加载中…" : "加载更多") {
-                                    Task { await loadMore() }
-                                }
-                                .disabled(isLoadingMore)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .accessibilityIdentifier("video-circle-load-more")
-                            }
-                        } else if selectedPage == 1 {
-                            if mine.isEmpty && errorText.isEmpty {
-                                emptyState("还没有投稿", symbol: "film.stack")
-                            }
-                            ForEach(mine) { post in mineCard(post) }
-                            if mineCursor != nil {
-                                Button(isLoadingMoreMine ? "加载中…" : "加载更早作品") {
-                                    Task { await loadMoreMine() }
-                                }
-                                .disabled(isLoadingMoreMine)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .accessibilityIdentifier("video-circle-mine-load-more")
-                            }
-                        } else {
-                            if blocked.isEmpty && errorText.isEmpty {
-                                emptyState("没有屏蔽的作者", symbol: "person.crop.circle")
-                            }
-                            ForEach(blocked) { author in
-                                HStack {
-                                    Text(author.authorName)
-                                        .font(.system(size: 15, weight: .medium))
-                                    Spacer()
-                                    Button("取消屏蔽") {
-                                        Task { await unblock(authorID: author.authorId) }
-                                    }
-                                    .font(.subheadline)
-                                }
-                                .padding(15)
-                                .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                            in: RoundedRectangle(cornerRadius: 13))
-                                .accessibilityIdentifier("video-circle-blocked-\(author.authorId)")
-                            }
-                        }
-                    }
-                    .padding(18)
-                }
-                .id(selectedPage)
-                .refreshable { await reload() }
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                .remoteIMBarBackground()
+                .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("视频圈")
             .navigationBarTitleDisplayMode(.inline)
+            .remoteIMNavigationBarMaterial()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("完成", action: close)
@@ -503,6 +505,7 @@ struct MaiVideoCirclePublishView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("发布到视频圈")
             .navigationBarTitleDisplayMode(.inline)
+            .remoteIMNavigationBarMaterial()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消", action: close).disabled(isPublishing)

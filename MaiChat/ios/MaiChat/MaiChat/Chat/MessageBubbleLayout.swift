@@ -204,6 +204,15 @@ final class MessageScrollViewportState {
 struct MessageScrollPositionReader: UIViewRepresentable {
     final class MarkerView: UIView {
         var onGeometryChange: (() -> Void)?
+        var onHierarchyChange: (() -> Void)?
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            onHierarchyChange?()
+        }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onHierarchyChange?()
+        }
         override var frame: CGRect {
             didSet { if frame != oldValue { onGeometryChange?() } }
         }
@@ -254,13 +263,20 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         install(view, context.coordinator)
         context.coordinator.requestBottomCorrection(bottomCorrectionRequest)
     }
-    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.uninstall() }
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        (view as? MarkerView)?.onHierarchyChange = nil
+        coordinator.uninstall()
+    }
 
     private func install(_ view: UIView, _ coordinator: Coordinator) {
-        DispatchQueue.main.async { [weak view, weak coordinator] in
-            guard let view else { return }
-            coordinator?.install(from: view)
+        let retry = { [weak view, weak coordinator] in
+            DispatchQueue.main.async { [weak view, weak coordinator] in
+                guard let view, view.window != nil else { return }
+                coordinator?.install(from: view)
+            }
         }
+        (view as? MarkerView)?.onHierarchyChange = retry
+        retry()
     }
 
     @MainActor
@@ -279,6 +295,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private var observations: [NSKeyValueObservation] = []
         private var lastNearBottom: Bool?
         private var previousViewportSize: CGSize?
+        private var previousAdjustedInsets: UIEdgeInsets?
         private var previousContentSize: CGSize?
         private var previousMarkerBottom: CGFloat?
         private var needsBoundaryCorrectionAfterLayoutChange = false
@@ -328,7 +345,10 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             var parent = view.superview
             while let candidate = parent, !(candidate is UIScrollView) { parent = candidate.superview }
             guard let next = parent as? UIScrollView else { return }
-            guard next !== scroll else { return }
+            if next === scroll {
+                updateMessageScrollPosition()
+                return
+            }
             uninstall()
             scroll = next
             contentMarker = view
@@ -352,8 +372,20 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 },
                 next.observe(\.bounds, options: [.new]) { [weak self] _, _ in
                     MainActor.assumeIsolated { self?.updateMessageScrollPosition() }
+                },
+                next.observe(\.adjustedContentInset, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.updateMessageScrollPosition() }
                 }
             ]
+            let windowFrame = next.convert(next.bounds, to: next.window)
+            AppDiagnosticLog.shared.record(level: .debug, category: "message-scroll",
+                event: "bridge-installed", fields: ["kind": "position",
+                    "bounds_height": String(format: "%.1f", next.bounds.height),
+                    "window_min_y": String(format: "%.1f", windowFrame.minY),
+                    "window_height": String(format: "%.1f", windowFrame.height),
+                    "clips_to_bounds": String(next.clipsToBounds),
+                    "inset_top": String(format: "%.1f", next.adjustedContentInset.top),
+                    "inset_bottom": String(format: "%.1f", next.adjustedContentInset.bottom)])
             updateMessageScrollPosition()
         }
 
@@ -367,6 +399,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
             contentMarker = nil
             lastNearBottom = nil
             previousViewportSize = nil
+            previousAdjustedInsets = nil
             previousContentSize = nil
             previousMarkerBottom = nil
             needsBoundaryCorrectionAfterLayoutChange = false
@@ -464,10 +497,15 @@ struct MessageScrollPositionReader: UIViewRepresentable {
         private func updateMessageScrollPosition() {
             guard let scroll, scroll.bounds.height > 0, !correctingViewport else { return }
             let firstMeasurement = previousViewportSize == nil
-            let viewportSize = CGSize(width: scroll.bounds.width.rounded(),
-                                      height: scroll.bounds.height.rounded())
-            let viewportChanged = previousViewportSize.map { $0 != viewportSize } ?? false
+            let insets = scroll.adjustedContentInset
+            let viewportSize = CGSize(
+                width: max(0, scroll.bounds.width - insets.left - insets.right).rounded(),
+                height: max(0, scroll.bounds.height - insets.top - insets.bottom).rounded())
+            let insetsChanged = previousAdjustedInsets.map { $0 != insets } ?? false
+            let viewportChanged = insetsChanged ||
+                (previousViewportSize.map { $0 != viewportSize } ?? false)
             previousViewportSize = viewportSize
+            previousAdjustedInsets = insets
             let contentSize = CGSize(width: scroll.contentSize.width.rounded(),
                                      height: scroll.contentSize.height.rounded())
             let contentChanged = previousContentSize.map { $0 != contentSize } ?? false
@@ -532,7 +570,7 @@ struct MessageScrollPositionReader: UIViewRepresentable {
                 scroll.adjustedContentInset.bottom
                 - scroll.contentOffset.y - scroll.bounds.height
             let nearBottom = remaining <= 60
-            onViewportMeasured?(scroll.contentSize.height, scroll.bounds.height,
+            onViewportMeasured?(scroll.contentSize.height, viewportSize.height,
                                 scroll.contentOffset.y, remaining, nearBottom)
             // 排版可能先改变内容尺寸、再改变视口；过渡期间只有用户主动滚动
             // 才能取消跟随最新消息的意图。
@@ -641,6 +679,8 @@ final class ChatNavigationController: UINavigationController,
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = .clear
+        listController.view.backgroundColor = .clear
         setNavigationBarHidden(true, animated: false)
         delegate = self
         interactivePopGestureRecognizer?.isEnabled = false
@@ -691,7 +731,7 @@ final class ChatNavigationController: UINavigationController,
             } else {
                 arrival = ChatNavigationArrival()
                 next = UIHostingController(rootView: AnyView(requestedDetail.environmentObject(arrival)))
-                next.view.backgroundColor = .systemBackground
+                next.view.backgroundColor = .clear
                 cachedChats[requestedID] = CachedChat(
                     controller: next, arrival: arrival, lastVisited: visitSequence)
             }

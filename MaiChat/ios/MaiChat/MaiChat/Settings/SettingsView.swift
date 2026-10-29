@@ -43,6 +43,7 @@ struct SettingsView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("我")
             .navigationBarTitleDisplayMode(.inline)
+            .remoteIMNavigationBarMaterial()
         }
     }
 }

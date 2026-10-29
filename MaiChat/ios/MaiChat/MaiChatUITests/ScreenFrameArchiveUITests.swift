@@ -51,7 +51,8 @@ final class ScreenFrameArchiveUITests: XCTestCase {
         XCTAssertTrue(app.buttons["清理未选图片"].exists)
         XCTAssertFalse(app.buttons["清理未选图片"].isEnabled,
                        "尚未加入草稿的勾选图片不能被清理操作悄悄删除")
-        app.staticTexts["ai-screen-frames-summary"].tap()
+        app.scrollViews["ai-screen-frames-grid"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.9)).tap()
         app.buttons["ai-screen-frames-close"].tap()
         XCTAssertTrue(app.buttons["screen-frames-fixture-open-from-b"].waitForExistence(timeout: 10))
 

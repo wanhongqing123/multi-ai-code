@@ -15,6 +15,66 @@ enum AppTab {
     case me
 }
 
+extension RemoteIMStyle {
+    static let barMaterial: Material = .thin
+    static let barSeparator = Color.primary.opacity(0.1)
+}
+
+struct RemoteIMBarSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(RemoteIMStyle.barSeparator)
+            .frame(height: 0.5)
+            .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    /// The bar keeps its safe-area layout while its material samples scrolling
+    /// content underneath. Only the background extends into system safe areas.
+    func remoteIMBarBackground(edges: Edge.Set = []) -> some View {
+        background(RemoteIMStyle.barMaterial, ignoresSafeAreaEdges: edges)
+    }
+
+    func remoteIMNavigationBarMaterial() -> some View {
+        toolbarBackground(RemoteIMStyle.barMaterial, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
+}
+
+@MainActor
+private enum RemoteIMBarAppearance {
+    private static var installed = false
+
+    static func install() {
+        guard !installed else { return }
+        installed = true
+        let navigation = UINavigationBarAppearance()
+        navigation.configureWithDefaultBackground()
+        navigation.backgroundEffect = UIBlurEffect(style: .systemThinMaterial)
+        navigation.backgroundColor = .clear
+        navigation.shadowColor = .separator
+        navigation.titleTextAttributes = [.foregroundColor: UIColor.label]
+        navigation.largeTitleTextAttributes = [.foregroundColor: UIColor.label]
+        let navigationBar = UINavigationBar.appearance()
+        navigationBar.isTranslucent = true
+        navigationBar.standardAppearance = navigation
+        navigationBar.scrollEdgeAppearance = navigation
+        navigationBar.compactAppearance = navigation
+        navigationBar.compactScrollEdgeAppearance = navigation
+
+        let tab = UITabBarAppearance()
+        tab.configureWithDefaultBackground()
+        tab.backgroundEffect = UIBlurEffect(style: .systemThinMaterial)
+        tab.backgroundColor = .clear
+        tab.shadowColor = .separator
+        let tabBar = UITabBar.appearance()
+        tabBar.isTranslucent = true
+        tabBar.standardAppearance = tab
+        tabBar.scrollEdgeAppearance = tab
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Environment(\.scenePhase) private var scenePhase
@@ -52,6 +112,10 @@ struct RootView: View {
     @State private var keyboardVisible = false
     @AppStorage("maichat.notification-preprompt-dismissed")
     private var notificationPermissionPromptDismissed = false
+
+    init() {
+        RemoteIMBarAppearance.install()
+    }
 
     var body: some View {
         GeometryReader { viewport in
@@ -104,6 +168,7 @@ struct RootView: View {
                         case .cloudDrive:
                             NavigationStack {
                                 MaiCloudDriveView()
+                                    .remoteIMNavigationBarMaterial()
                             }
                         case .assistant:
                             Color.clear
@@ -125,16 +190,18 @@ struct RootView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    // 消息页的底栏位于其导航根内；若改由外层条件插入，
-                    // 返回手势期间出现时机会滞后，并在清除选中项时改变两页尺寸。
-                    if selectedTab != .messages && selectedTab != .assistant &&
-                       activeChatContact == nil && activeChatGroup == nil {
-                        RootTabBar(
-                            selectedTab: $selectedTab,
-                            remoteDesktop: appState.remoteDesktop,
-                            openAssistant: openAssistant
-                        )
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        // Native lists extend behind this inset and keep their
+                        // last row reachable. Message navigation owns its tab
+                        // bar so interactive back gestures retain one layout.
+                        if selectedTab != .messages && selectedTab != .assistant &&
+                           activeChatContact == nil && activeChatGroup == nil {
+                            RootTabBar(
+                                selectedTab: $selectedTab,
+                                remoteDesktop: appState.remoteDesktop,
+                                openAssistant: openAssistant
+                            )
+                        }
                     }
                 }
             }
@@ -143,20 +210,20 @@ struct RootView: View {
             // 保留同一页面实例可避免回来时重新加载历史或遗失当前输入。
             if !appState.shouldShowInitialLogin &&
                 (selectedTab == .assistant || hasOpenedAssistant) {
-                VStack(spacing: 0) {
-                    AIAssistantView(isActive: selectedTab == .assistant)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if selectedTab == .assistant {
-                        RootTabBar(
-                            selectedTab: $selectedTab,
-                            remoteDesktop: appState.remoteDesktop,
-                            openAssistant: openAssistant
-                        )
+                AIAssistantView(isActive: selectedTab == .assistant)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if selectedTab == .assistant {
+                            RootTabBar(
+                                selectedTab: $selectedTab,
+                                remoteDesktop: appState.remoteDesktop,
+                                openAssistant: openAssistant
+                            )
+                        }
                     }
-                }
-                .opacity(selectedTab == .assistant ? 1 : 0)
-                .allowsHitTesting(selectedTab == .assistant)
-                .accessibilityHidden(selectedTab != .assistant)
+                    .opacity(selectedTab == .assistant ? 1 : 0)
+                    .allowsHitTesting(selectedTab == .assistant)
+                    .accessibilityHidden(selectedTab != .assistant)
             }
 
             if isShowingAddContact, !appState.shouldShowInitialLogin {
@@ -800,9 +867,9 @@ private struct CompactTabBar: View {
         .padding(.top, 10)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
-        .background(Color.white.ignoresSafeArea(.container, edges: .bottom))
+        .remoteIMBarBackground(edges: .bottom)
         .overlay(alignment: .top) {
-            Divider().background(Color(red: 0.855, green: 0.894, blue: 0.941))
+            RemoteIMBarSeparator()
         }
     }
 }
@@ -837,11 +904,11 @@ private struct TabButton: View {
                         .offset(x: 6, y: -2)
                 }
             }
-            .frame(width: 48, height: 40)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(selected ? accent : RemoteIMStyle.textSecondary.opacity(0.78))
+        .foregroundStyle(selected ? accent : Color.secondary)
         .accessibilityLabel(title)
         .accessibilityValue(accessibilityValue)
     }

@@ -643,16 +643,6 @@ struct MaiCloudDriveView: View {
 
     private var folderNavigation: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if model.currentFolderID != nil {
-                Button {
-                    Task { await model.browseParent() }
-                } label: {
-                    Label("返回上级", systemImage: "chevron.left")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minHeight: 36)
-                }
-                .accessibilityIdentifier("cloud-drive-folder-up")
-            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     Button("我的云盘") {

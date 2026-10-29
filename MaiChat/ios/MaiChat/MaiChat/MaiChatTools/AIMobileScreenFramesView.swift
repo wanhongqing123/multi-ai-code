@@ -31,62 +31,63 @@ struct AIMobileScreenFramesView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(isRecording ? "每 2 秒截取一张，停止后选择" : "本次截取 \(frames.count) 张，选择需要的图片")
-                        .font(.headline)
-                        .accessibilityIdentifier("ai-screen-frames-summary")
-                    Text("只将选中的图片加入原会话草稿，不会自动发送。还可添加 \(capacity) 张。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if batches.count > 1 {
-                        Menu {
-                            ForEach(batches) { saved in
-                                Button("\(Self.batchTime(saved)) · \(saved.frameCount) 张") { selectBatch(saved) }
-                            }
-                        } label: {
-                            Label("\(batch.map(Self.batchTime) ?? "本次截图") · 切换批次", systemImage: "clock")
-                                .font(.footnote)
-                        }
-                        .accessibilityIdentifier("ai-screen-frames-batches")
-                    }
-                    if let reason = batch?.finishReason, let message = Self.finishMessage(reason) {
-                        Text(message).font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if !error.isEmpty {
-                        HStack(alignment: .top) {
-                            Text(error).font(.footnote).foregroundStyle(.red)
-                            Spacer(minLength: 4)
-                            Button("重试") { revision += 1 }
-                        }
-                        .accessibilityIdentifier("ai-screen-frames-error")
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-                Divider()
-                if loading && frames.isEmpty {
-                    ProgressView("正在读取截图…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if frames.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "photo.on.rectangle.angled").font(.largeTitle)
-                            .foregroundStyle(RemoteIMStyle.blue)
-                        Text(isRecording ? "尚未截取画面" : "本次没有截取到图片").font(.headline)
-                        Text(isRecording ? "共享期间每 2 秒保存可用的新画面。" : "可以关闭此页后重新开启屏幕共享。")
+            ScrollView {
+                VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(isRecording ? "每 2 秒截取一张，停止后选择" : "本次截取 \(frames.count) 张，选择需要的图片")
+                            .font(.headline)
+                            .accessibilityIdentifier("ai-screen-frames-summary")
+                        Text("只将选中的图片加入原会话草稿，不会自动发送。还可添加 \(capacity) 张。")
                             .font(.footnote).foregroundStyle(.secondary)
-                        Button("刷新") { revision += 1 }
+                        if batches.count > 1 {
+                            Menu {
+                                ForEach(batches) { saved in
+                                    Button("\(Self.batchTime(saved)) · \(saved.frameCount) 张") { selectBatch(saved) }
+                                }
+                            } label: {
+                                Label("\(batch.map(Self.batchTime) ?? "本次截图") · 切换批次", systemImage: "clock")
+                                    .font(.footnote)
+                            }
+                            .accessibilityIdentifier("ai-screen-frames-batches")
+                        }
+                        if let reason = batch?.finishReason, let message = Self.finishMessage(reason) {
+                            Text(message).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        if !error.isEmpty {
+                            HStack(alignment: .top) {
+                                Text(error).font(.footnote).foregroundStyle(.red)
+                                Spacer(minLength: 4)
+                                Button("重试") { revision += 1 }
+                            }
+                            .accessibilityIdentifier("ai-screen-frames-error")
+                        }
                     }
-                    .padding().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityIdentifier("ai-screen-frames-empty")
-                } else {
-                    ScrollView {
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                    Divider()
+                    if loading && frames.isEmpty {
+                        ProgressView("正在读取截图…").frame(maxWidth: .infinity, minHeight: 200)
+                    } else if frames.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "photo.on.rectangle.angled").font(.largeTitle)
+                                .foregroundStyle(RemoteIMStyle.blue)
+                            Text(isRecording ? "尚未截取画面" : "本次没有截取到图片").font(.headline)
+                            Text(isRecording ? "共享期间每 2 秒保存可用的新画面。" : "可以关闭此页后重新开启屏幕共享。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Button("刷新") { revision += 1 }
+                        }
+                        .padding().frame(maxWidth: .infinity, minHeight: 240)
+                        .accessibilityIdentifier("ai-screen-frames-empty")
+                    } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 12)], spacing: 16) {
                             ForEach(Array(frames.enumerated()), id: \.element.id) { entry in
                                 frameTile(entry.element, index: entry.offset)
                             }
                         }.padding(16)
                     }
-                    .accessibilityIdentifier("ai-screen-frames-grid")
                 }
-                Divider()
+            }
+            .accessibilityIdentifier("ai-screen-frames-grid")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack {
                     Text("已选 \(selected.count) 张").font(.footnote)
                         .accessibilityIdentifier("ai-screen-frames-selection-count")
@@ -100,9 +101,13 @@ struct AIMobileScreenFramesView: View {
                     .buttonStyle(.borderedProminent).tint(RemoteIMStyle.blue)
                     .disabled(selected.isEmpty || selected.count > capacity || importing || isRecording)
                     .accessibilityIdentifier("ai-screen-frames-add")
-                }.padding(16)
+                }
+                .padding(16)
+                .remoteIMBarBackground(edges: .bottom)
+                .overlay(alignment: .top) { RemoteIMBarSeparator() }
             }
             .navigationTitle("屏幕截图").navigationBarTitleDisplayMode(.inline)
+            .remoteIMNavigationBarMaterial()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }

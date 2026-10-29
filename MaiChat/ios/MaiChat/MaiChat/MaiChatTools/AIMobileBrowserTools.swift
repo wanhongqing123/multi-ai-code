@@ -445,41 +445,94 @@ final class AIMobileBrowserTools: NSObject, ObservableObject, WKNavigationDelega
 
 struct AIAssistantBrowserPane: View {
     @ObservedObject var browser: AIMobileBrowserTools
+    @State private var headerHeight: CGFloat = 44
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "globe")
-                    .foregroundStyle(.blue)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(browser.pageTitle.isEmpty ? "网页" : browser.pageTitle)
-                        .font(.caption.weight(.semibold)).lineLimit(1)
-                    Text(browser.state.isEmpty ? browser.pageURL : browser.state)
-                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Button { browser.close() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("关闭网页")
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+        ZStack(alignment: .top) {
             if browser.isOpen {
-                BrowserWebView(browser: browser)
+                BrowserWebView(browser: browser, headerHeight: headerHeight)
                     .id(browser.generation)
             }
+            header
         }
         .background(Color(uiColor: .systemBackground))
         .overlay(Rectangle().stroke(Color.black.opacity(0.08), lineWidth: 1))
+        .onPreferenceChange(BrowserHeaderHeight.self) { height in
+            if height > 0, abs(headerHeight - height) > 0.5 { headerHeight = height }
+        }
     }
 
-    private struct BrowserWebView: UIViewRepresentable {
-        let browser: AIMobileBrowserTools
-
-        func makeUIView(context: Context) -> WKWebView {
-            browser.webView ?? WKWebView(frame: .zero)
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "globe")
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(browser.pageTitle.isEmpty ? "网页" : browser.pageTitle)
+                    .font(.caption.weight(.semibold)).lineLimit(1)
+                Text(browser.state.isEmpty ? browser.pageURL : browser.state)
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Button { browser.close() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("关闭网页")
         }
-        func updateUIView(_ view: WKWebView, context: Context) {}
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .remoteIMBarBackground()
+        .overlay(alignment: .bottom) { RemoteIMBarSeparator() }
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: BrowserHeaderHeight.self, value: geometry.size.height)
+            }
+        }
+    }
+
+    private struct BrowserHeaderHeight: PreferenceKey {
+        static var defaultValue: CGFloat { 0 }
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+    }
+
+    private struct BrowserWebView: UIViewControllerRepresentable {
+        let browser: AIMobileBrowserTools
+        let headerHeight: CGFloat
+
+        func makeUIViewController(context: Context) -> BrowserPageController {
+            BrowserPageController(page: browser.webView ?? WKWebView(frame: .zero),
+                                  headerHeight: headerHeight)
+        }
+        func updateUIViewController(_ controller: BrowserPageController, context: Context) {
+            controller.updateHeaderHeight(headerHeight)
+        }
+        static func dismantleUIViewController(_ controller: BrowserPageController, coordinator: ()) {
+            controller.restoreScrollAdjustment()
+        }
+    }
+
+    // The page fills the pane behind the SwiftUI material header. UIKit then
+    // adjusts the real web scroll view for the measured header safe area, so
+    // neither its first line nor its last line is covered or made unreachable.
+    private final class BrowserPageController: UIViewController {
+        private let page: WKWebView
+        private let previousAdjustment: UIScrollView.ContentInsetAdjustmentBehavior
+
+        init(page: WKWebView, headerHeight: CGFloat) {
+            self.page = page
+            previousAdjustment = page.scrollView.contentInsetAdjustmentBehavior
+            super.init(nibName: nil, bundle: nil)
+            updateHeaderHeight(headerHeight)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func loadView() {
+            view = page
+            page.scrollView.contentInsetAdjustmentBehavior = .always
+        }
+        func updateHeaderHeight(_ height: CGFloat) {
+            additionalSafeAreaInsets = UIEdgeInsets(top: max(0, height), left: 0, bottom: 0, right: 0)
+        }
+        func restoreScrollAdjustment() {
+            page.scrollView.contentInsetAdjustmentBehavior = previousAdjustment
+        }
     }
 }

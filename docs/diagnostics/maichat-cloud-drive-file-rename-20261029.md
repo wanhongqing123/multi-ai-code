@@ -84,4 +84,4 @@ root 随后独立回读生产源码哈希、服务健康和 canary 证据，均�
 - 禁止自动恢复整库快照，避免覆盖上线后的真实登录或媒体元数据；本次结构未变，没有恢复数据库的需要。
 - 本轮 Windows 没有重新构建或实机复验，不能用 Mac 结果代替 Windows 验收。
 - Mac Desktop 只验收独立构建产物，用户正在运行的 Desktop App 未替换，也没有为本轮发布 GitHub Release。
-- iOS rename 普通 API 和 Agent 宿主已在模拟器通过，但本轮真机 rename 工具尚未实测。不能宣称包含最终 rename、ScreenCapture 和目录浏览修正的合并 iOS App 已安装交付；相关真机与合包工作仍由对应任务继续完成。
+- iOS rename 普通 API 和 Agent 宿主已在模拟器通过，但本轮真机 rename 工具尚未实测。用户随后授权安装后，包含 rename、ScreenCapture 和目录浏览修正的 `a12184bc5` 合并 App 已覆盖安装并正常启动；设备路径、PID 与版本回读见 [截图与装机记录](maichat-ios-screen-sharing-panel-20261029.md)。UI runner 被系统自动化权限拦在初始化阶段，因此装机完成不代表本轮真机 rename 或目录 UI 已验收。

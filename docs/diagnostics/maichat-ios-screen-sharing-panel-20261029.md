@@ -46,3 +46,11 @@
 - 下一次手机操作应在双方约定的一个集中窗口内完成一次安装、正常云盘目录浏览和一次 current_app PNG 回读；不继续系统面板探索实验，不移动、改名或删除用户真实云盘文件。
 - 已准备 opt-in 的 `CloudDriveDeviceReadOnlySmokeUITests/testInstalledCloudFolderReadOnlyRoundTrip`，通过上述本地编译但尚未运行。它只启动正常 App 一次，进入约定的已有目录、等待首项图片解码/视频首帧、关闭预览并返回根目录；不操作账号或云盘数据。不能将“用例已编译”写成“真机已验收”。
 - 当前页面截图无法包含其他 App、系统界面或保证 GPU 视频画面；其他 App 的整屏共享仍由系统授权与用户切换控制。用户已确认手动点灰色空白收起面板，App 主动收起系统面板或自动退到后台本轮未实现。
+
+## 用户授权安装后的实际结果（2026-10-29）
+
+- 用户随后明确“安装到手机”，恢复本次集中安装窗口。安装前重新核对清单中主 Mach-O 与 dylib 的 SHA-256，以及签名、版本和源码差异；候选仍为上文 `a12184bc5` 的产品代码，后续 `52167d2e6` 仅更新本记录。
+- 首次使用预构建的单个只读用例交给 Xcode 安装并验收。runner 在进入产品用例前因 `Timed out while enabling automation mode` 初始化失败，xcodebuild exit 65。结果 `/private/tmp/maichat-ios-final-cloud-readonly-20261029.xcresult` 的 failure 属于 `MaiChatUITests-Runner (4130)`；没有执行文件夹、预览或截图的业务断言。不将基础设施失败写成产品回归，也不把它算作验收通过；没有重跑 UI 测试。
+- 随后直接以 `devicectl device install app` 覆盖安装已核对的同一候选，exit 0；安装回执 `/private/tmp/maichat-ios-final-direct-install.json`。未调用卸载或清理 App 数据。普通启动 exit 0、无测试参数，启动回执 `/private/tmp/maichat-ios-final-launch.json`。
+- 最终设备回读 Bundle 为 `com.kongshang.maichat`、版本 2.2.4 (131)，安装路径 `/private/var/containers/Bundle/Application/5B68B718-C3F2-4D5F-896A-541482DB78AC/MaiChat.app/`。实际启动 PID **4137** 的 executable 位于同一路径。App 自身日志 `2026-10-29T00:55:02.538Z` 记录 `app_version=2.2.4 build=131 ios=27.2 pid=4137`，随后的 `app-active` 为 `00:55:02.620Z`；证据 `/private/tmp/maichat-ios-final-installed-readback.json`、`/private/tmp/maichat-ios-final-runtime-20261029.log`。
+- 至此“安装并启动修正版”已完成。原生 UI 自动化权限仍阻止本轮页面验收，因此没有宣称真实云盘目录浏览、current_app PNG 或外部共享完整链路在该真机候选上通过。此前模拟器和 native 契约证据继续有效，真机未验证范围保留。

@@ -13,3 +13,7 @@
 - 已亲看 `/tmp/maichat-cloud-review.UdoiXU/cloud-empty.png`、`cloud-resume.png`、`cloud-folders-with-file.png`：空区收起；非空任务的文件名、继续与放弃保留；目录和媒体可见。日志同目录 `ctest.log`。
 - 执行该次测试的源文件 SHA256：`824dc8dd6fbae2a6eba3ad77f093b491b3e5535eac19cb38506c11335c7bd271`；测试程序 SHA256：`245ae882ebfb4b8e903267c111061407df4d2b8ee5d8ad7f6365a927ab147cb6`。
 - 测试不是最终统一安装包，未替换现装 App；最终版本与产物回读另行追加。Windows 构建未验证。
+
+## 统一构建记录
+
+修复提交 `6e97705d4d2bafd203a523dae3e8d4ab1a1a6388`，已推送 main。统一 Desktop **2.2.32** staging 完成签名和裸 PATH `--smoke`（exit 0）；主程序 SHA256 `fcda1b0186456ab12c6703877cc95e045df815559945d56d816c265eb7e2644d`。主执行者已查看上述修后截图。现装 2.2.31 尚未替换，具体产物与用户确认状态见 `maichat-model-stream-protocol-liveness-20261029.md` 的完成记录。

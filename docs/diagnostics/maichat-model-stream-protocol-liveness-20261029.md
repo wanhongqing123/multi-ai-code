@@ -41,3 +41,14 @@
 ## 构建交付
 
 源码修复与 Desktop 展示修复统一构建为 Desktop 2.2.32、iOS 2.2.4 (140)。精确修复提交、签名产物、安装与运行核对在完成后追加；在此之前不宣称用户正在运行修复版。
+
+### 完成记录
+
+- 精确修复提交：`6e97705d4d2bafd203a523dae3e8d4ab1a1a6388`，已推送 `origin/main`。全部源码、产品版本与上述测试所用修复一致；未提交改动仅为本文后续验收记录。
+- iOS 模拟器：iPhone 17 Pro / iOS 26.5，正常 App 2.2.4 (140)，启动 PID 20709；看过启动截图及完整 17.19 秒录屏的逐段联系图。首次建立隔离测试目录后进入消息页，假 IM 凭据显示已知 70402 错误，不能将此算作真实 IM 通过。未再次重复改名/密码 UI 回归，本轮只改共享模型流。截图 `/private/tmp/maichat-ios140-stream-startup.png`，录屏 `/private/tmp/maichat-ios140-stream-startup.mp4`。
+- iOS 真机：iPhone 14 Pro Max / iOS 27.2，普通无参数启动；安装信息独立回读 **2.2.4 (140)**，实际运行 PID **6853**，路径 `/private/var/containers/Bundle/Application/AB4A4E93-FEC1-4A05-B0E4-956AF7193BF7/MaiChat.app/MaiChat`。运行日志 `2026-10-29T13:43:26.148Z app_version=2.2.4 build=140 ios=27.2 launch=aa40f14a pid=6853`；构建签名 `codesign --verify --deep --strict` 通过，二进制中两种新错误均存在。
+- iOS 主程序 SHA256 `82621c937625474393d6d58b5ca65c1e39461e35890960da025117844a96c6d0`，Debug dylib SHA256 `098bb469eb2b3029a7d51a24c8c08343d44304006aa8900fa6cc91fec434fb99`。构建、候选、安装、Apps 回读、启动、运行日志证据在 `/private/tmp/maichat-ios140-stream-*`。
+- Mac：独立 staging `/Users/hongqingwan/OpenSource/multi-ai-code/MaiChat/desktop/dist/review-macos-20261029/MaiChat-macos-arm64/MaiChat.app`，**2.2.32**，主程序 62124288 B，SHA256 `fcda1b0186456ab12c6703877cc95e045df815559945d56d816c265eb7e2644d`。临时签名及 `codesign --verify --deep --strict` 通过；移除外部 Qt/DYLD 路径、裸 PATH 包内 `--smoke` **exit 0，2.556 秒**。日志回读 Qt 5.15.18、OpenSSL 3.5.9、实际 staging 执行路径及 PID 57181。QPDF LICENSE/NOTICE 随包存在。此检查只覆盖 macOS 27.2 ARM64，构建中现有 Graphics dylib 的最低系统版本高于主目标告警不构成本次旧系统验证。
+- Mac 当前 `/Applications/MaiChat.app` 仍为 2.2.31 / `3446aefa`、PID 13707。按仓库对运行中任务的约定，已询问用户何时退出并替换；确认前不重启其正在使用的程序。构建与独立 staging 通过不等于现装版本已更新。
+- Android：隔离 Debug **2.2.5 (237)** / `com.kongshang.maichat.isolated`，armeabi-v7a 与 arm64-v8a 两 ABI 重新编译本轮两个客户端并链接，assembleDebug 成功。APK SHA256 `9cbc1d7603aa81093901edcabd12c32f0d5f49ab0f187839a9fd2441ed43e66f`。源文件 SHA 与精确提交匹配；日志 `/tmp/maichat-android-stream-clocks-20261029.log`，完整产物清单 `/tmp/maichat-android-stream-clocks-20261029-artifacts.json`。当前 `adb devices -l` 没有连接设备，本轮未安装、启动或做 Android UI 验证。
+- 未跑真实供应商长时间推理、未产生付费调用；未构建 Windows、未发布新版 release。已验证的是隔离 SSE 边界、源码链接及上述平台构建/安装状态，不能由此推断供应商内部工作状态。

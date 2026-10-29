@@ -25,3 +25,7 @@
 ## 未验证边界
 
 未触发真实模型、未重启或替换现装 App，也未做 Windows 构建。用户当前运行的 2.2.31 尚未包含本修复。另一个 A1–A13 文本换行问题属于 Markdown 解析链，单独处理，不与本卡片故障混记。
+
+## 统一构建记录
+
+修复提交 `6e97705d4d2bafd203a523dae3e8d4ab1a1a6388`，已推送 main。统一 Desktop **2.2.32** staging 完成签名和裸 PATH `--smoke`（exit 0）；主程序 SHA256 `fcda1b0186456ab12c6703877cc95e045df815559945d56d816c265eb7e2644d`。主执行者已查看上述修后截图。现装 2.2.31 尚未替换，具体产物与用户确认状态见 `maichat-model-stream-protocol-liveness-20261029.md` 的完成记录。

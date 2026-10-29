@@ -742,14 +742,29 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         return credential
     }
 
+    /// 阿里云与腾讯共享账号身份校验，令牌只在当前登录代际内使用。
+    func aliyunASRCredential() async throws -> MaiChatAliyunASRCredential {
+        let identity = remoteDiagnosticsIdentity
+        guard hasUnifiedAccount else { throw MaiChatAuthError.sessionExpired }
+        let credential = try await accountAuth.aliyunASRCredential()
+        try Task.checkCancellation()
+        guard hasUnifiedAccount, remoteDiagnosticsIdentity == identity else {
+            throw MaiChatAuthError.identityMismatch
+        }
+        return credential
+    }
+
     /// 登录与有效会话恢复后立即预取；转写启动复用账号客户端中的缓存或同一领取任务。
     private func prefetchASRCredentialAfterLogin() {
         let identity = remoteDiagnosticsIdentity
         Task { @MainActor [weak self] in
             guard let self, self.hasUnifiedAccount,
                   self.remoteDiagnosticsIdentity == identity else { return }
-            // 凭据服务暂不可用不影响登录；不写页面错误，下次会话检查或长按时可重试。
-            _ = try? await self.asrCredential()
+            // 只预取当前选择的服务；凭据暂不可用不影响登录，长按时可重新领取。
+            switch SpeechRecognitionProvider.selected() {
+            case .tencent: _ = try? await self.asrCredential()
+            case .aliyun: _ = try? await self.aliyunASRCredential()
+            }
         }
     }
 

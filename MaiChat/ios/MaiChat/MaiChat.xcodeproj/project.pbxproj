@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6996899BF91F58CF5117B8A4 /* RealtimeSpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 212C484CFEC8D824343ED193 /* RealtimeSpeechRecognizer.swift */; };
+		BC44715B7739C748E453B804 /* AliyunSpeechTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2EE8714FB985188F6A07079 /* AliyunSpeechTranscript.swift */; };
+		AC8A7F80F5634FA8F86FE5C8 /* AliyunRealtimeSpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A146916AC8B530236EAA5708 /* AliyunRealtimeSpeechRecognizer.swift */; };
 		CB86796D266A41859B688E01 /* AccountCodeCooldown.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB86796D266A41859B688E02 /* AccountCodeCooldown.swift */; };
 		CB86796D266A41859B688E03 /* AccountCodeCooldownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB86796D266A41859B688E04 /* AccountCodeCooldownTests.swift */; };
 		6F03A9BA5D80FAE8B01671B8 /* ScreenFrameArchiveUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */; };
@@ -155,6 +158,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		212C484CFEC8D824343ED193 /* RealtimeSpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSpeechRecognizer.swift; sourceTree = "<group>"; };
+		F2EE8714FB985188F6A07079 /* AliyunSpeechTranscript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AliyunSpeechTranscript.swift; sourceTree = "<group>"; };
+		A146916AC8B530236EAA5708 /* AliyunRealtimeSpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AliyunRealtimeSpeechRecognizer.swift; sourceTree = "<group>"; };
 		CB86796D266A41859B688E02 /* AccountCodeCooldown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCodeCooldown.swift; sourceTree = "<group>"; };
 		CB86796D266A41859B688E04 /* AccountCodeCooldownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCodeCooldownTests.swift; sourceTree = "<group>"; };
 		22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenFrameArchiveUITests.swift; sourceTree = "<group>"; };
@@ -530,6 +536,9 @@
 			isa = PBXGroup;
 			children = (
 				FBE546568A0B3FFA1551D803 /* SpeechRecognizing.swift */,
+				212C484CFEC8D824343ED193 /* RealtimeSpeechRecognizer.swift */,
+				F2EE8714FB985188F6A07079 /* AliyunSpeechTranscript.swift */,
+				A146916AC8B530236EAA5708 /* AliyunRealtimeSpeechRecognizer.swift */,
 				E787240441066658C94A84DE /* TencentSpeechRecognizer.swift */,
 			);
 			path = Speech;
@@ -922,6 +931,9 @@
 				06A4AB7E2BF7C60D639D23CA /* SettingsView.swift in Sources */,
 				BF67EA97E4832C7CB516E18C /* SocialPhoneBindingView.swift in Sources */,
 				19E85AD53A94BD7E9DF9A1B5 /* SpeechRecognizing.swift in Sources */,
+				6996899BF91F58CF5117B8A4 /* RealtimeSpeechRecognizer.swift in Sources */,
+				BC44715B7739C748E453B804 /* AliyunSpeechTranscript.swift in Sources */,
+				AC8A7F80F5634FA8F86FE5C8 /* AliyunRealtimeSpeechRecognizer.swift in Sources */,
 				9D0563575F319BE5C4DEBEB6 /* TencentIMClient.swift in Sources */,
 				865303D314A23F16D52058CE /* TencentSpeechRecognizer.swift in Sources */,
 			);
@@ -1035,7 +1047,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 142;
+				CURRENT_PROJECT_VERSION = 143;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -1212,7 +1224,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 142;
+				CURRENT_PROJECT_VERSION = 143;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

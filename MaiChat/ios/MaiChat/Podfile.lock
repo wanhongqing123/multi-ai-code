@@ -1,4 +1,5 @@
 PODS:
+  - AliyunNUI (2.7.6)
   - onnxruntime-c (1.26.0-local)
   - QCloudRealTime (3.1.40)
   - TXIMSDK_Plus_iOS_XCFramework (9.0.7659)
@@ -7,6 +8,7 @@ PODS:
   - TXLiteAVSDK_TRTC/TRTC (13.4.21067)
 
 DEPENDENCIES:
+  - AliyunNUI (from `Vendor/AliyunNUI/AliyunNUI.podspec`)
   - onnxruntime-c (from `../../../MaiAgent/build/vendor/onnxruntime-ios-pods/onnxruntime-c`)
   - QCloudRealTime (from `Vendor/TencentASR/QCloudRealTime.podspec`)
   - TXIMSDK_Plus_iOS_XCFramework
@@ -17,6 +19,8 @@ SPEC REPOS:
     - TXIMSDK_Plus_iOS_XCFramework
 
 EXTERNAL SOURCES:
+  AliyunNUI:
+    :podspec: Vendor/AliyunNUI/AliyunNUI.podspec
   onnxruntime-c:
     :path: "../../../MaiAgent/build/vendor/onnxruntime-ios-pods/onnxruntime-c"
   QCloudRealTime:
@@ -25,11 +29,12 @@ EXTERNAL SOURCES:
     :podspec: https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec
 
 SPEC CHECKSUMS:
+  AliyunNUI: b24dfc54b9a9780a239d5741ac7c4899f16e4f58
   onnxruntime-c: 8cf5ffa046ef6eb471b031cd9065dfafc52a6bcd
   QCloudRealTime: bd3f4a6301d321cd55c94b3440d1af7e7d51def8
   TXIMSDK_Plus_iOS_XCFramework: 650f87c12836d2e29f42faca4a665e92047bdaca
   TXLiteAVSDK_TRTC: ab7fa7bce8e703cfd894de0effe18fa3321b850d
 
-PODFILE CHECKSUM: f260b8dcfed6a06eb3a67e0559848ef321fa087d
+PODFILE CHECKSUM: 3a2e314e52ac092db808332fccd31331f10872fd
 
 COCOAPODS: 1.16.2

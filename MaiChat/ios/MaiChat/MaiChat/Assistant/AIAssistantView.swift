@@ -2885,7 +2885,7 @@ private struct AIComposer: View, Equatable {
     let transcriptionPresentation: VoiceTranscriptionPresentation
     @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var isAttachmentPanelPresented: Bool
-    @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer()
+    @StateObject private var speechRecognizer = RealtimeSpeechRecognizer()
     @State private var draft = ""
     @State private var importing = false
     @ObservedObject private var music = MaiLocalMusicPlayer.shared
@@ -3976,8 +3976,10 @@ private struct AIComposer: View, Equatable {
         voiceStartTask = Task { @MainActor in
             do {
                 try await speechRecognizer.start(
-                    diagnosticFields: transcriptionPresentation.diagnosticFields
-                ) { try await appState.asrCredential() }
+                    diagnosticFields: transcriptionPresentation.diagnosticFields,
+                    tencentCredentialProvider: { try await appState.asrCredential() },
+                    aliyunCredentialProvider: { try await appState.aliyunASRCredential() }
+                )
                 return true
             } catch is CancellationError {
                 return false

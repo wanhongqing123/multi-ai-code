@@ -2,6 +2,85 @@
 import XCTest
 
 final class SocialLoginUITests: XCTestCase {
+    /// 在干净的模拟器安装中验证服务选择默认值及重启后的持久化；只使用本机假账号。
+    @MainActor func testSpeechProviderSelectionSurvivesRelaunch() async throws {
+        #if DEBUG && targetEnvironment(simulator)
+        continueAfterFailure = false
+        // 独立内存夹具使用专用端口，避免影响其他并发验收及其账号状态。
+        let environment = ProcessInfo.processInfo.environment
+        let authPort = environment["MAICHAT_ASR_UI_FIXTURE_AUTH_PORT"] ?? "18592"
+        let socketPort = environment["MAICHAT_ASR_UI_FIXTURE_SOCKET_PORT"] ?? "18593"
+        let modelPort = environment["MAICHAT_ASR_UI_FIXTURE_MODEL_PORT"] ?? "18594"
+        let base = "http://127.0.0.1:\(authPort)"
+        let statusURL = URL(string: base + "/test/status")!
+        let (statusData, statusResponse) = try await URLSession.shared.data(from: statusURL)
+        XCTAssertEqual((statusResponse as? HTTPURLResponse)?.statusCode, 200)
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: statusData) as? [String: Any])
+        XCTAssertTrue((status["macSessions"] as? [String] ?? []).contains("ses_mock_mac"),
+                      "需要独立的 Session sync 本机夹具")
+        let certificateURL = URL(string: base + "/test/cert")!
+        let (certificate, _) = try await URLSession.shared.data(from: certificateURL)
+
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = authPort
+        app.launchEnvironment["MAICHAT_LOCAL_UI_SOCKET_PORT"] = socketPort
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL_PORT"] = modelPort
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        defer { app.terminate() }
+
+        func openSettings() {
+            XCTAssertTrue(app.buttons["我的"].waitForExistence(timeout: 30))
+            if app.buttons["稍后"].exists { app.buttons["稍后"].tap() }
+            let imError = app.staticTexts.matching(NSPredicate(
+                format: "label CONTAINS %@", "IM 操作失败"
+            )).firstMatch
+            if imError.waitForExistence(timeout: 2) { imError.tap() }
+            app.buttons["我的"].tap()
+            let settings = app.buttons["设置"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 10))
+            settings.tap()
+        }
+
+        func assertProvider(_ expected: String, screenshot name: String) {
+            let picker = app.descendants(matching: .any)
+                .matching(identifier: "speech-recognition-provider").firstMatch
+            XCTAssertTrue(picker.waitForExistence(timeout: 10))
+            let label = picker.label + " " + (picker.value as? String ?? "")
+            XCTAssertTrue(label.contains(expected) || picker.staticTexts[expected].exists,
+                          "服务选择应显示 \(expected)，当前为 \(label)")
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        func selectProvider(_ title: String) {
+            let picker = app.descendants(matching: .any)
+                .matching(identifier: "speech-recognition-provider").firstMatch
+            picker.tap()
+            let option = app.buttons[title]
+            XCTAssertTrue(option.waitForExistence(timeout: 5))
+            option.tap()
+        }
+
+        app.launch()
+        openSettings()
+        assertProvider("腾讯云", screenshot: "speech-provider-default-tencent")
+        selectProvider("阿里云")
+        assertProvider("阿里云", screenshot: "speech-provider-aliyun-selected")
+        app.terminate()
+        app.launch()
+        openSettings()
+        assertProvider("阿里云", screenshot: "speech-provider-aliyun-after-relaunch")
+        selectProvider("腾讯云")
+        assertProvider("腾讯云", screenshot: "speech-provider-tencent-restored")
+        #else
+        throw XCTSkip("服务选择界面验收需要 Debug 模拟器构建")
+        #endif
+    }
+
     /// 正常登录页只接本机假短信，验证输入验证码与切换号码不会绕过或误用短信冷却。
     @MainActor func testNormalPhoneLoginRetainsSmsCooldownAfterChangingPhone() async throws {
         #if DEBUG && targetEnvironment(simulator)

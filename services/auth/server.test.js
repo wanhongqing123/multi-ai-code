@@ -5,6 +5,7 @@ const { createHash, randomBytes } = require('node:crypto');
 const test = require('node:test');
 const { createAuthService } = require('./service');
 const { openStore } = require('./store');
+const { createAliyunAsrCredentialIssuer } = require('./aliyun-asr-credential');
 const { createServer, start, requireDeviceSlotFromEnv,
   videoCircleFromEnv } = require('./server');
 
@@ -119,6 +120,60 @@ test('HTTP ASR STS responses require a session and never permit credential cachi
       headers: { authorization: `Bearer ${signedIn.body.access_token}` } });
     assert.equal(retired.status, 404);
     assert.equal(retired.headers.get('cache-control'), 'no-store');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    db.close();
+  }
+});
+
+test('HTTP Aliyun ASR returns only an authenticated NLS token with no-store', async () => {
+  const db = openStore(':memory:');
+  let smsCode = '';
+  let requests = 0;
+  const issuer = createAliyunAsrCredentialIssuer({ MAICHAT_NLS_APP_KEY: 'testOnlyNlsAppKey',
+    MAICHAT_NLS_ACCESS_KEY_ID: 'test-only-server-nls-ak-id',
+    MAICHAT_NLS_ACCESS_KEY_SECRET: 'test-only-server-nls-ak-secret' }, {
+    currentTime: () => 1_780_000_000_000,
+    createClient: () => ({ async request() {
+      ++requests;
+      return { Token: { Id: 'test-only-nls-temporary-token', ExpireTime: 1_780_086_400 } };
+    } })
+  });
+  const service = createAuthService({ db,
+    sms: { async send(_phone, code) { smsCode = code; } },
+    secret: 'test-only-auth-hmac-key-keep-on-server-123456',
+    imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
+    sdkAppId: 123456789, now: () => 1_780_000_000_000,
+    issueAliyunAsrCredential: issuer });
+  const challenge = await service.handle({ method: 'POST', path: '/v1/auth/sms/challenge',
+    body: { phone: '13900000001', age_confirmed_14_plus: true }, ip: '192.0.2.1' });
+  const signedIn = await service.handle({ method: 'POST', path: '/v1/auth/sms/verify',
+    body: { phone: '13900000001', challenge_id: challenge.body.challenge_id,
+      code: smsCode, device_slot: 'ios_phone', age_confirmed_14_plus: true } });
+  assert.equal(signedIn.statusCode, 200);
+  const server = createServer(service);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const endpoint = `http://127.0.0.1:${server.address().port}/v1/asr/aliyun-credential`;
+    const post = (token, body = {}) => fetch(endpoint, { method: 'POST',
+      headers: { 'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body) });
+    const unauthenticated = await post();
+    assert.equal(unauthenticated.status, 401);
+    assert.equal(unauthenticated.headers.get('cache-control'), 'no-store');
+    const invalid = await post(signedIn.body.access_token, { app_key: 'other-project' });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.headers.get('cache-control'), 'no-store');
+    assert.equal(requests, 0);
+    for (let index = 0; index < 2; ++index) {
+      const result = await post(signedIn.body.access_token);
+      assert.equal(result.status, 200);
+      assert.equal(result.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(await result.json(), { app_key: 'testOnlyNlsAppKey',
+        token: 'test-only-nls-temporary-token', expires_at: 1_780_086_400 });
+    }
+    assert.equal(requests, 1);
   } finally {
     await new Promise(resolve => server.close(resolve));
     db.close();

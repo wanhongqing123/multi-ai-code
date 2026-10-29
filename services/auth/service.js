@@ -1,5 +1,5 @@
 // 文件作用：处理 MaiChat 账号登录、会话、设备名额与受会话保护的凭据领取权限。
-// 模型密钥由独立凭据进程保管；腾讯 ASR 永久密钥只在服务端申请 STS，音频由客户端直连。
+// 模型密钥由独立凭据进程保管；ASR 长期密钥只在服务端换临时凭据，音频由客户端直连。
 'use strict';
 
 const { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } =
@@ -12,6 +12,7 @@ const { createVideoCircleService } = require('./video-circle-service');
 const { createCloudDriveService } = require('./cloud-drive-service');
 const { validAccountId, newAccountId } = require('./account-id');
 const { validAsrCredential } = require('./asr-credential');
+const { validAliyunAsrCredential } = require('./aliyun-asr-credential');
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -80,7 +81,7 @@ function passwordDevice(body, requireDeviceSlot = false) {
 
 function createAuthService(options) {
   const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
-    issueBailianCredential, issueAccountModelKeys, issueAsrCredential,
+    issueBailianCredential, issueAccountModelKeys, issueAsrCredential, issueAliyunAsrCredential,
     provisionTestImAccount } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
@@ -1102,27 +1103,32 @@ function createAuthService(options) {
       try { return json(200, await issueAccountModelKeys()); }
       catch { return json(503, { error: 'Main chat model keys are unavailable' }); }
     }
-    if (method === 'POST' && path === '/v1/asr/credential') {
+    if (method === 'POST' &&
+        (path === '/v1/asr/credential' || path === '/v1/asr/aliyun-credential')) {
       if (!session) return json(401, { error: 'Authentication required' });
       if (!body || typeof body !== 'object' || Array.isArray(body) ||
           Object.keys(request).length)
         return json(400, { error: 'ASR request parameters are not accepted' });
-      if (typeof issueAsrCredential !== 'function')
-        return json(503, { error: 'Speech recognition is unavailable' });
+      const aliyun = path === '/v1/asr/aliyun-credential';
+      const issue = aliyun ? issueAliyunAsrCredential : issueAsrCredential;
+      const validate = aliyun ? validAliyunAsrCredential : validAsrCredential;
+      const unavailable = aliyun ? 'Aliyun speech recognition is unavailable' :
+        'Speech recognition is unavailable';
+      if (typeof issue !== 'function') return json(503, { error: unavailable });
       const recent = (asrIssuanceTimes.get(session.user_id) || [])
         .filter(time => time > now() - MINUTE);
       if (recent.length >= 10)
         return json(429, { error: 'Speech recognition requests are too frequent' });
-      // Reserve before awaiting STS so parallel requests and upstream failures
-      // cannot bypass the per-account credential issuance limit.
+      // Providers share one account budget. Reserve before awaiting the provider
+      // so parallel requests and failures cannot bypass the issuance limit.
       recent.push(now());
       asrIssuanceTimes.set(session.user_id, recent);
       try {
-        const issued = await issueAsrCredential();
-        if (!validAsrCredential(issued, Math.floor(now() / 1000)))
+        const issued = await issue();
+        if (!validate(issued, Math.floor(now() / 1000)))
           throw new Error('Invalid ASR authorization');
         return json(200, issued);
-      } catch { return json(503, { error: 'Speech recognition is unavailable' }); }
+      } catch { return json(503, { error: unavailable }); }
     }
     if (method === 'GET' && path === '/v1/model/seedance-credential') {
       if (!session) return json(401, { error: 'Authentication required' });

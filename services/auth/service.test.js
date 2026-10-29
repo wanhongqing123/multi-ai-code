@@ -575,6 +575,69 @@ test('ASR STS failure and expired responses stay unavailable without exposing pr
   setup.db.close();
 });
 
+test('Aliyun ASR tokens require a current session and empty JSON while Tencent stays independent', async () => {
+  const credential = { app_key: 'testOnlyNlsAppKey', token: 'test-only-nls-token',
+    expires_at: 1_780_086_400 };
+  let calls = 0;
+  let invalid = false;
+  const setup = fixture({ issueAliyunAsrCredential: async () => {
+    ++calls;
+    if (invalid) throw new Error('private-aliyun-provider-message');
+    return credential;
+  } });
+  const path = '/v1/asr/aliyun-credential';
+  assert.equal((await setup.call('POST', path)).statusCode, 401);
+  const token = (await signInWithSms(setup)).body.access_token;
+  for (const body of [[], null, { app_key: 'other-project' }])
+    assert.equal((await setup.call('POST', path, body, token)).statusCode, 400);
+  assert.equal(calls, 0);
+  const result = await setup.call('POST', path, {}, token);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.body, credential);
+  invalid = true;
+  const failed = await setup.call('POST', path, {}, token);
+  assert.equal(failed.statusCode, 503);
+  assert.deepEqual(failed.body, { error: 'Aliyun speech recognition is unavailable' });
+  setup.advance(24 * 60 * 60 * 1000 + 1);
+  assert.equal((await setup.call('POST', path, {}, token)).statusCode, 401);
+  setup.db.close();
+
+  const tencent = fixture({ issueAsrCredential: async () => ({
+    app_id: '1234567890', secret_id: 'TMP-fake+/=_:1234567890',
+    secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
+    expires_at: 1_780_001_800
+  }) });
+  const other = (await signInWithSms(tencent)).body.access_token;
+  assert.equal((await tencent.call('POST', path, {}, other)).statusCode, 503);
+  assert.equal((await tencent.call('POST', '/v1/asr/credential', {}, other)).statusCode, 200);
+  tencent.db.close();
+});
+
+test('Aliyun ASR tokens share the account issuance budget and reserve concurrent requests', async () => {
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const setup = fixture({ issueAliyunAsrCredential: async () => {
+    await waiting;
+    return { app_key: 'testOnlyNlsAppKey', token: 'test-only-nls-token',
+      expires_at: 1_780_086_400 };
+  }, issueAsrCredential: async () => ({
+    app_id: '1234567890', secret_id: 'TMP-fake+/=_:1234567890',
+    secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
+    expires_at: 1_780_001_800
+  }) });
+  const token = (await signInWithSms(setup)).body.access_token;
+  for (let index = 0; index < 5; ++index)
+    assert.equal((await setup.call('POST', '/v1/asr/credential', {}, token)).statusCode, 200);
+  const pending = Array.from({ length: 5 }, () =>
+    setup.call('POST', '/v1/asr/aliyun-credential', {}, token));
+  assert.equal((await setup.call('POST', '/v1/asr/aliyun-credential', {}, token)).statusCode, 429);
+  release();
+  assert.ok((await Promise.all(pending)).every(response => response.statusCode === 200));
+  setup.advance(60_001);
+  assert.equal((await setup.call('POST', '/v1/asr/aliyun-credential', {}, token)).statusCode, 200);
+  setup.db.close();
+});
+
 test('one SMS login creates a stable account and a server-signed IM identity', async () => {
   const setup = fixture();
   const sent = await setup.call('POST', '/v1/auth/sms/challenge',

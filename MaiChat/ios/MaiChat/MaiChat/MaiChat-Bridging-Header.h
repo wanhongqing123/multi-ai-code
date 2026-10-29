@@ -18,3 +18,5 @@
 #include "../../../Network/MaiScreenFrameArchive.h"
 #include "../../../Media/MaiVideoCircleMark.h"
 #include "../../../SessionSync/MaiSessionSyncC.h"
+// 阿里 NUI 提供纯 Objective-C 接口；归档未提供 Swift module map，统一由桥接头公开。
+#import <nuisdk/NeoNui.h>

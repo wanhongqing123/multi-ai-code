@@ -78,6 +78,27 @@ private struct ASRCredentialTests {
                     "Fresh response was not cached")
         cache.clear()
         try require(cache.credential(for: 2, at: now) == nil, "Sign-out retained a credential")
+
+        // NLS 使用独立的 AppKey/Token 合同，但复用相同的过期和账号代际缓存规则。
+        let aliyunResponse = Data("""
+            {"app_key":"test-project-key","token":"test-nls-token","expires_at":2000}
+            """.utf8)
+        let aliyun = try decoder.decode(MaiChatAliyunASRCredential.self, from: aliyunResponse)
+        try require(aliyun.appKey == "test-project-key" && aliyun.token == "test-nls-token" &&
+                    aliyun.isReusable(at: now), "Valid NLS response was rejected")
+        let expiredAliyun = MaiChatAliyunASRCredential(appKey: "test-project-key",
+                                                        token: "test-nls-token", expiresAt: 1_090)
+        let malformedAliyun = MaiChatAliyunASRCredential(appKey: "test-project-key",
+                                                          token: "bad\nvalue", expiresAt: 2_000)
+        try require(!expiredAliyun.isReusable(at: now), "NLS refresh boundary was missed")
+        try require(!malformedAliyun.isReusable(at: now), "Malformed NLS token was accepted")
+        var aliyunCache = MaiChatAliyunASRCredentialCache()
+        try require(aliyunCache.store(aliyun, for: 3, currentSessionVersion: 3, at: now),
+                    "NLS credential was not cached")
+        try require(!aliyunCache.store(aliyun, for: 3, currentSessionVersion: 4, at: now),
+                    "Old NLS response crossed login generations")
+        try require(aliyunCache.credential(for: 4, at: now) == nil,
+                    "NLS cache crossed account generations")
         print("ASR credential contract, refresh and account isolation checks passed")
     }
 }

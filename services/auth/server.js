@@ -9,6 +9,7 @@ const { createBailianCredentialIssuer } = require('./bailian-credential');
 const { createSocialVerifiers } = require('./social-providers');
 const { createAccountModelKeyIssuer } = require('./account-model-keys');
 const { createAsrCredentialIssuer } = require('./asr-credential');
+const { createAliyunAsrCredentialIssuer } = require('./aliyun-asr-credential');
 const { createAdminServer } = require('./admin-server');
 const { createTencentFriendWriter, syncPendingFriendActions } = require('./tim-friend-sync');
 const { createTencentProfileWriter, syncPendingProfileActions } =
@@ -199,6 +200,7 @@ function start(env = process.env) {
     issueBailianCredential: createBailianCredentialIssuer(env),
     issueAccountModelKeys: createAccountModelKeyIssuer(env),
     issueAsrCredential: createAsrCredentialIssuer(env),
+    issueAliyunAsrCredential: createAliyunAsrCredentialIssuer(env),
     socialVerifiers: createSocialVerifiers(env),
     sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID),
     provisionTestImAccount: createTencentAccountProvisioner({

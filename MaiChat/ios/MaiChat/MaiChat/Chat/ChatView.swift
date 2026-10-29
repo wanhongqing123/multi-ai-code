@@ -6730,7 +6730,7 @@ private struct ComposerView: View {
     @ObservedObject var draft: RemoteIMDraftState
     let transcriptionPresentation: VoiceTranscriptionPresentation
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
-    @StateObject private var realtimeSpeechRecognizer = TencentRealtimeSpeechRecognizer()
+    @StateObject private var realtimeSpeechRecognizer = RealtimeSpeechRecognizer()
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
@@ -7489,9 +7489,11 @@ private struct ComposerView: View {
     private func startRealtimeTranscription() async -> Bool {
         let diagnosticFields = transcriptionPresentation.diagnosticFields
         do {
-            try await realtimeSpeechRecognizer.start(diagnosticFields: diagnosticFields) {
-                try await appState.asrCredential()
-            }
+            try await realtimeSpeechRecognizer.start(
+                diagnosticFields: diagnosticFields,
+                tencentCredentialProvider: { try await appState.asrCredential() },
+                aliyunCredentialProvider: { try await appState.aliyunASRCredential() }
+            )
             guard !Task.isCancelled else { return false }
             return true
         } catch is CancellationError {

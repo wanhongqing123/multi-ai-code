@@ -299,6 +299,11 @@ actor MaiChatAuthClient {
     private var asrCredentialTask: (
         sessionVersion: UInt64, id: UUID, task: Task<MaiChatASRCredential, Error>
     )?
+    // 阿里云 NLS Token 与腾讯 STS 分开缓存，共用同一账号代际和退出清理。
+    private var aliyunASRCredentialCache = MaiChatAliyunASRCredentialCache()
+    private var aliyunASRCredentialTask: (
+        sessionVersion: UInt64, id: UUID, task: Task<MaiChatAliyunASRCredential, Error>
+    )?
 
     private func mobileDeviceFields() async -> [String: Any] {
         let slot = await MainActor.run {
@@ -721,6 +726,61 @@ actor MaiChatAuthClient {
         }
     }
 
+    /// 登录预取和两处输入栏复用 NLS Token；不把阿里云长期 AccessKey 带到客户端。
+    func aliyunASRCredential() async throws -> MaiChatAliyunASRCredential {
+        guard accessToken != nil || !storedRefreshToken().isEmpty else {
+            throw MaiChatAuthError.sessionExpired
+        }
+        let version = sessionVersion
+        if let cached = aliyunASRCredentialCache.credential(for: version) { return cached }
+        let pending: (sessionVersion: UInt64, id: UUID, task: Task<MaiChatAliyunASRCredential, Error>)
+        if let existing = aliyunASRCredentialTask, existing.sessionVersion == version {
+            pending = existing
+        } else {
+            pending = (version, UUID(), Task {
+                try await self.requestAliyunASRCredential(expectedSessionVersion: version)
+            })
+            aliyunASRCredentialTask = pending
+        }
+        defer {
+            // 迟到的旧请求只能清理自己的任务，不能覆盖新账号的领取状态。
+            if aliyunASRCredentialTask?.id == pending.id { aliyunASRCredentialTask = nil }
+        }
+        let credential = try await pending.task.value
+        try Task.checkCancellation()
+        guard sessionVersion == version else { throw MaiChatAuthError.identityMismatch }
+        guard aliyunASRCredentialCache.store(
+            credential, for: version, currentSessionVersion: sessionVersion
+        ) else { throw MaiChatAuthError.invalidServerResponse }
+        return credential
+    }
+
+    private func requestAliyunASRCredential(
+        expectedSessionVersion: UInt64
+    ) async throws -> MaiChatAliyunASRCredential {
+        let token = try await currentAccessToken()
+        guard sessionVersion == expectedSessionVersion else {
+            throw MaiChatAuthError.identityMismatch
+        }
+        do {
+            return try await request(
+                "asr/aliyun-credential", method: "POST", body: [:], bearer: token
+            )
+        } catch MaiChatAuthError.requestFailed("Authentication required") {
+            guard sessionVersion == expectedSessionVersion else {
+                throw MaiChatAuthError.identityMismatch
+            }
+            accessToken = nil
+            let renewed = try await currentAccessToken()
+            guard sessionVersion == expectedSessionVersion else {
+                throw MaiChatAuthError.identityMismatch
+            }
+            return try await request(
+                "asr/aliyun-credential", method: "POST", body: [:], bearer: renewed
+            )
+        }
+    }
+
     func bailianCredentialIfAvailable() async throws -> MaiChatBailianCredential? {
         guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let token = try await currentAccessToken()
@@ -826,6 +886,9 @@ actor MaiChatAuthClient {
         asrCredentialCache.clear()
         asrCredentialTask?.task.cancel()
         asrCredentialTask = nil
+        aliyunASRCredentialCache.clear()
+        aliyunASRCredentialTask?.task.cancel()
+        aliyunASRCredentialTask = nil
     }
 
     func revokeServerSession(_ token: String) async {

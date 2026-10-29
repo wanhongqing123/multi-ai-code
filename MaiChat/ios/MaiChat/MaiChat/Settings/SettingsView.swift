@@ -260,6 +260,8 @@ private struct AvatarPhotoPicker: UIViewControllerRepresentable {
 private struct AccountSettingsView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @State private var isSwitchingPhone = false
+    @AppStorage(SpeechRecognitionProvider.defaultsKey) private var speechProvider =
+        SpeechRecognitionProvider.tencent.rawValue
 
     var body: some View {
         Form {
@@ -288,6 +290,15 @@ private struct AccountSettingsView: View {
                     }
                     .accessibilityIdentifier("account-deletion-entry")
                 }
+            }
+
+            Section("语音") {
+                Picker("语音识别服务", selection: $speechProvider) {
+                    ForEach(SpeechRecognitionProvider.allCases, id: \.rawValue) { provider in
+                        Text(provider.title).tag(provider.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("speech-recognition-provider")
             }
 
             Section("隐私与支持") {

@@ -1,4 +1,4 @@
-// 文件作用：定义账号 STS 临时凭据、进程内缓存与识别错误，隔离具体识别 SDK。
+// 文件作用：定义语音服务临时凭据、进程内缓存与识别错误，隔离具体识别 SDK。
 // 缓存绑定账号认证代际；具体 SDK 的会话与音频采集在实现类中。
 import Foundation
 
@@ -15,7 +15,7 @@ enum SpeechRecognitionError: LocalizedError {
 }
 
 /// 账号服务下发的腾讯 STS 临时凭据；只留在进程内存，音频由客户端直连腾讯。
-struct MaiChatASRCredential: Decodable, Sendable {
+struct MaiChatASRCredential: Decodable, Sendable, MaiChatExpiringASRCredential {
     let appId: String
     let secretId: String
     let secretKey: String
@@ -35,13 +35,31 @@ struct MaiChatASRCredential: Decodable, Sendable {
     }
 }
 
+/// 阿里云项目标识和短期 NLS Token；长期 AccessKey 始终只在账号服务端。
+struct MaiChatAliyunASRCredential: Decodable, Sendable, MaiChatExpiringASRCredential {
+    let appKey: String
+    let token: String
+    let expiresAt: Int
+
+    func isReusable(at date: Date = Date()) -> Bool {
+        // 服务端按真实 ExpireTime 管理有效期；不预设腾讯 STS 的 30 分钟时长。
+        (1...256).contains(appKey.utf8.count) && appKey.utf8.allSatisfy { (33...126).contains($0) } &&
+            (1...8192).contains(token.utf8.count) && token.utf8.allSatisfy { (33...126).contains($0) } &&
+            TimeInterval(expiresAt) > date.timeIntervalSince1970 + 90
+    }
+}
+
+protocol MaiChatExpiringASRCredential {
+    func isReusable(at date: Date) -> Bool
+}
+
 /// 缓存绑定账号认证代际；退出、重新登录和迟到的旧响应都不能复用上一轮凭据。
-struct MaiChatASRCredentialCache {
-    private var entry: (sessionVersion: UInt64, credential: MaiChatASRCredential)?
+struct MaiChatSpeechCredentialCache<Credential: MaiChatExpiringASRCredential> {
+    private var entry: (sessionVersion: UInt64, credential: Credential)?
 
     mutating func credential(
         for sessionVersion: UInt64, at date: Date = Date()
-    ) -> MaiChatASRCredential? {
+    ) -> Credential? {
         guard let entry, entry.sessionVersion == sessionVersion,
               entry.credential.isReusable(at: date) else {
             self.entry = nil
@@ -52,7 +70,7 @@ struct MaiChatASRCredentialCache {
 
     @discardableResult
     mutating func store(
-        _ credential: MaiChatASRCredential, for expectedSessionVersion: UInt64,
+        _ credential: Credential, for expectedSessionVersion: UInt64,
         currentSessionVersion: UInt64, at date: Date = Date()
     ) -> Bool {
         // 旧请求返回时不碰新账号已经保存的凭据。
@@ -64,3 +82,6 @@ struct MaiChatASRCredentialCache {
 
     mutating func clear() { entry = nil }
 }
+
+typealias MaiChatASRCredentialCache = MaiChatSpeechCredentialCache<MaiChatASRCredential>
+typealias MaiChatAliyunASRCredentialCache = MaiChatSpeechCredentialCache<MaiChatAliyunASRCredential>

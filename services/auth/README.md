@@ -35,6 +35,32 @@ STS 失败或返回失效证书时返回 503，不回退到旧证书；响应均
 [ASR 接口授权粒度](https://cloud.tencent.com/document/product/1093/48422)、
 [ASR 策略语法](https://cloud.tencent.com/document/product/1093/48423)。
 
+## 阿里云实时语音识别 Token（iOS）
+
+`POST /v1/asr/aliyun-credential` 校验现有账号 Bearer 会话和空 JSON 请求体，
+返回 `{app_key,token,expires_at}`，其中 `expires_at` 为 Unix 秒。iOS 登录成功或
+恢复有效会话后可预取，只在当前账号的内存保存 Token；识别时通过项目 AppKey 和
+Token 直连阿里云。账号服务只签发凭据，不转发音频或识别结果。
+
+后端专用配置为 `MAICHAT_NLS_APP_KEY`、`MAICHAT_NLS_ACCESS_KEY_ID`、
+`MAICHAT_NLS_ACCESS_KEY_SECRET`。缺失或格式无效时仅该接口返回 503，腾讯接口
+继续可用；不自动使用短信或 OSS 身份。AppKey 与签发 Token 的 AccessKey 必须
+属于同一阿里云账号，RAM 用户须具有 `nls:CreateToken` 权限。可按最小授权原则
+仅授予该 action、`Resource: "*"`，或使用包含该 action 的
+`AliyunNLSSpeechServiceAccess`；不能从“短信发送可用”推断 NLS 权限也可用。
+
+签发器使用官方 `@alicloud/pop-core` 1.8.0，向
+`https://nls-meta.cn-shanghai.aliyuncs.com` 发起 `2019-02-28` 版
+`CreateToken` RPC 请求。返回 NLS 语音 Token，不是 STS `SecurityToken`。
+有效期以供应商的 `Token.ExpireTime` 为准，后台在进程内缓存并在到期前 90 秒
+刷新，合并并发请求；失败不回退到旧 Token。接口与腾讯共用每账号每分钟 10 次
+请求额度，均返回 `Cache-Control: no-store`；无效会话返回 401，频率超限返回 429。
+
+部署先配置同账号项目与获授权的 NLS RAM 身份，再发布支持该接口的后端与 iOS。
+官方依据：[服务端为移动端下发 Token](https://help.aliyun.com/zh/isi/use-cases/how-to-securely-access-intelligent-speech-interaction-on-a-mobile-terminal)、
+[SDK 签发与有效期](https://help.aliyun.com/zh/isi/user-guide/obtain-an-access-token)、
+[NLS 语音服务权限](https://help.aliyun.com/zh/ram/developer-reference/aliyunnlsspeechserviceaccess)。
+
 ## AI 视频圈控制面（默认关闭）
 
 代码提供账号绑定的待审核／已公开／撤回状态、登录用户列表和短时播放入口、
@@ -264,6 +290,7 @@ Workspace。切换 Workspace 时必须指定已存在 Session 的 ID 和绝对�
 | `GET /v1/model/api-keys` | 有效 Bearer 会话；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
 | `GET /v1/media/authorize` | 有效 Bearer 会话；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
 | `POST /v1/asr/credential` | 有效 Bearer 会话且空 JSON 请求体；返回 `{app_id,secret_id,secret_key,token,expires_at}`，其中 `app_id` 为数字字符串，凭据仅允许实时识别，30 分钟有效。两端登录后预取并仅在内存缓存；未配置、上游失败或无效凭据返回 503，无效会话返回 401；每账号每分钟最多 10 次。 |
+| `POST /v1/asr/aliyun-credential` | 有效 Bearer 会话且空 JSON 请求体；返回 `{app_key,token,expires_at}`，iOS 使用 NLS Token 直接访问阿里云。到期时间沿用供应商 `ExpireTime`；配置缺失或上游异常为 503，与腾讯接口共用每账号每分钟 10 次额度。 |
 | `GET /v1/friend/my-qr` | 有效 Bearer 会话；将 MaiChat `account_id` 编入好友二维码，不含手机号或凭据。 |
 | `POST /v1/friends/resolve` | 有效 Bearer 会话，传 `{account}`（MaiChat ID 或精确手机号）；返回 MaiChat `account_id`、昵称与当前 `im_user_id`；每账号每小时最多 20 次。 |
 | `POST /v1/friends/requests` | 有效 Bearer 会话，传 `{account}`；创建待确认的 MaiChat 好友申请，同一发起人每小时最多 20 次。 |

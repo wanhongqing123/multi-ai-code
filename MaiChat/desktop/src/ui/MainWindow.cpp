@@ -2,6 +2,7 @@
 // 主要入口：event、updateWindowChromeBackground、closeEvent、eventFilter。
 // 直接依赖：diagnostics/PerformanceLog.h、model/ContactGroups.h、model/MessageNotification.h、model/MessageQuote.h；实现与这些接口协作。
 #include "ui/MainWindow.h"
+#include "app/DesktopPasswordChangeRequests.h"
 #include "diagnostics/PerformanceLog.h"
 
 #include <QMenu>
@@ -1822,6 +1823,12 @@ MainWindow::MainWindow(
                 clock->elapsed(), false);
           });
   performanceTimer->start();
+  passwordChangeRequests_ = new DesktopPasswordChangeRequests(this, this);
+  QPointer<MainWindow> passwordWindow(this);
+  app_.setPasswordChangeHandler([passwordWindow](const QJsonObject& arguments) {
+    return passwordWindow && passwordWindow->passwordChangeRequests_ ?
+        passwordWindow->passwordChangeRequests_->request(arguments) : QJsonObject{};
+  });
   buildUi();
   applyStyle();
   const AgentController::ModelConfig replyModel = loadAgentModelConfig(modelApiKeys_);
@@ -1915,6 +1922,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::prepareForAccountDisconnect(std::function<void()> completion) {
   accountDisconnectPending_ = true;
+  if (passwordChangeRequests_) passwordChangeRequests_->cancelForAccountChange();
   ++videoCircleProbeGeneration_;
   videoCircleAvailable_ = false;
   ++cloudDriveProbeGeneration_;
@@ -2953,6 +2961,18 @@ void MainWindow::buildUi() {
     });
   });
   settingsPanelLayout->addWidget(nicknameRow);
+  auto* passwordRow = createSettingsRow(QStringLiteral("登录密码"),
+      new QLabel(QStringLiteral("安全表单"), settingsPanel),
+      QStringLiteral("修改后其他设备会退出登录，此电脑保持登录。"));
+  settingsPasswordButton_ = new QPushButton(QStringLiteral("修改"), passwordRow);
+  settingsPasswordButton_->setObjectName(QStringLiteral("settingsPasswordButton"));
+  settingsPasswordButton_->setProperty("settingsRowButton", true);
+  settingsPasswordButton_->setEnabled(false);
+  qobject_cast<QHBoxLayout*>(passwordRow->layout())->addWidget(settingsPasswordButton_);
+  connect(settingsPasswordButton_, &QPushButton::clicked, this, [this] {
+    if (passwordChangeRequests_) passwordChangeRequests_->open();
+  });
+  settingsPanelLayout->addWidget(passwordRow);
   auto *logoutValue = new QLabel(QStringLiteral("当前电脑"), settingsPanel);
   auto *logoutRow = createSettingsRow(
       QStringLiteral("桌面登录"), logoutValue,
@@ -4499,6 +4519,7 @@ void MainWindow::setFriendQrProvider(std::function<void(FriendQrCompletion)> pro
 }
 
 void MainWindow::setMaiChatAccountIdProvider(std::function<QString()> provider) {
+  if (passwordChangeRequests_) passwordChangeRequests_->cancelForAccountChange();
   maiChatAccountIdProvider_ = std::move(provider);
   refreshSettings();
 }
@@ -4512,6 +4533,16 @@ void MainWindow::setMaiChatNicknameUpdater(
     std::function<void(const QString&, RemoteIMCompletion)> updater) {
   maiChatNicknameUpdater_ = std::move(updater);
   if (settingsNicknameButton_) settingsNicknameButton_->setEnabled(bool(maiChatNicknameUpdater_));
+}
+
+void MainWindow::setMaiChatPasswordSetter(
+    std::function<void(const QString&, std::function<void(const QString&)>)> setter,
+    std::function<QString()> sessionIdentity) {
+  const bool available = bool(setter) && bool(sessionIdentity);
+  passwordChangeRequests_->setHandlers(
+      [this] { return maiChatAccountIdProvider_ ? maiChatAccountIdProvider_() : QString(); },
+      std::move(sessionIdentity), std::move(setter));
+  if (settingsPasswordButton_) settingsPasswordButton_->setEnabled(available);
 }
 
 void MainWindow::setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator) {

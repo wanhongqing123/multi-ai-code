@@ -190,13 +190,21 @@ if ($ffmpegEnabled) {
 # RVM 的 ONNX Runtime 通过 LoadLibraryW 动态加载，windeployqt 不会发现它。
 # 与 CMake 的资产开关一致：仅在 FFmpeg/OpenCV 和官方 Windows 运行时齐备时打包。
 $repositoryRoot = (Resolve-Path (Join-Path $projectRoot '..\..')).Path
-$quircLicense = Join-Path $exeDir 'ThirdPartyLicenses\QUIRC_LICENSE'
-if (-not (Test-Path -LiteralPath $quircLicense)) {
-    throw "QR 解码库许可缺失：$quircLicense"
+# ZIP 和安装器只读取 staging；CMake 放在构建目录的静态库许可也必须显式带入。
+$licenseTargetDir = Join-Path $staging 'ThirdPartyLicenses'
+New-Item -ItemType Directory -Force $licenseTargetDir | Out-Null
+foreach ($licenseName in 'QUIRC_LICENSE', 'QPDF_LICENSE.txt', 'QPDF_NOTICE.md') {
+    $licenseSource = Join-Path $exeDir "ThirdPartyLicenses\$licenseName"
+    if (-not (Test-Path -LiteralPath $licenseSource -PathType Leaf)) {
+        throw "第三方许可缺失：$licenseSource"
+    }
+    $licenseTarget = Join-Path $licenseTargetDir $licenseName
+    Copy-Item -LiteralPath $licenseSource -Destination $licenseTarget -Force
+    if ((Get-FileHash -LiteralPath $licenseTarget -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $licenseSource -Algorithm SHA256).Hash) {
+        throw "第三方许可复制校验失败：$licenseTarget"
+    }
 }
-$quircLicenseTarget = Join-Path $staging 'ThirdPartyLicenses\QUIRC_LICENSE'
-New-Item -ItemType Directory -Force (Split-Path -Parent $quircLicenseTarget) | Out-Null
-Copy-Item -LiteralPath $quircLicense -Destination $quircLicenseTarget -Force
 $rvmSourceModel = Join-Path $repositoryRoot 'MaiAgent\models\rvm_mobilenetv3_fp32.onnx'
 $ortSourceRuntime = Join-Path $repositoryRoot 'MaiAgent\build\vendor\onnxruntime-windows-x64\onnxruntime.dll'
 $ortSourceProvider = Join-Path $repositoryRoot 'MaiAgent\build\vendor\onnxruntime-windows-x64\onnxruntime_providers_shared.dll'

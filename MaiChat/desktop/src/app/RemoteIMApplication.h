@@ -5,6 +5,7 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QSet>
@@ -87,6 +88,9 @@ public:
     void setNicknameUpdater(
         std::function<void(const QString&, RemoteIMCompletion)> updater);
     bool updateNickname(const QString& nickname, RemoteIMCompletion completion);
+    // 只传 open/status 和请求 ID；安全表单普通入口不接收任何密码参数。
+    void setPasswordChangeHandler(std::function<QJsonObject(const QJsonObject&)> handler);
+    QJsonObject requestPasswordChange(const QJsonObject& arguments);
     const QSet<QString>& acceptedFriendIds() const { return acceptedFriendIds_; }
     bool isAcceptedFriend(const QString& imUserId) const {
         return !accountFriendOperations_.list || acceptedFriendIds_.contains(imUserId);
@@ -175,6 +179,7 @@ private:
     FriendAccountResolver friendAccountResolver_;
     AccountFriendOperations accountFriendOperations_;
     std::function<void(const QString&, RemoteIMCompletion)> nicknameUpdater_;
+    std::function<QJsonObject(const QJsonObject&)> passwordChangeHandler_;
     QSet<QString> acceptedFriendIds_;
     QHash<QString, QString> friendAccountByImId_;
     QHash<QString, QString> friendDisplayByImId_;

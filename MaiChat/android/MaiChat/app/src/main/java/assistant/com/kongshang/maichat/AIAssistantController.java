@@ -418,7 +418,8 @@ public final class AIAssistantController {
                 response[0] = hostToolFailure(safeMessage(failure));
             }
         };
-        if (tool.startsWith("mobile_") || tool.equals("generate_pdf")
+        // 私有 PDF 密码桥自行做短时 UI 调度；不让通用桥阻塞主线程等待用户输入。
+        if (tool.startsWith("mobile_") || tool.equals("generate_pdf") || tool.equals("pdf_password_request")
             || tool.equals("maichat_create_group") || tool.equals("maichat_get_group_messages")
             || tool.equals("maichat_send_group_text")) {
             if (Looper.myLooper() == Looper.getMainLooper())

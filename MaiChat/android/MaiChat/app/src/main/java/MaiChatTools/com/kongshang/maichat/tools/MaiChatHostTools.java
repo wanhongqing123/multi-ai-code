@@ -22,6 +22,7 @@ public final class MaiChatHostTools {
     private final MobileBrowserTools browser;
     private final MaiChatIMTools im;
     private final MobileSshTools ssh;
+    private final MobilePdfPasswordRequests pdfPasswords;
 
     public MaiChatHostTools(MainActivity activity, RemoteIMSessionController session) {
         this.activity = activity;
@@ -34,9 +35,11 @@ public final class MaiChatHostTools {
         this.browser = new MobileBrowserTools(activity);
         this.im = new MaiChatIMTools(activity, session);
         this.ssh = new MobileSshTools(activity);
+        this.pdfPasswords = new MobilePdfPasswordRequests(activity, session);
     }
 
     public void onDestroy() {
+        pdfPasswords.onDestroy();
         MaiCloudDriveAgentTools.cancelAll(activity);
         browser.onDestroy();
         photos.onDestroy();
@@ -49,8 +52,11 @@ public final class MaiChatHostTools {
     }
 
     public MobileBrowserTools browser() { return browser; }
+    public MobilePdfPasswordRequests pdfPasswords() { return pdfPasswords; }
 
     public Object execute(String tool, JSONObject arguments) throws Exception {
+        // 仅原生加密 provider 可调用，未注册为模型工具；密码不会进入普通工具结果。
+        if (tool.equals("pdf_password_request")) return pdfPasswords.execute(arguments);
         if (tool.equals("mobile_browser")) return browser.execute(arguments);
         if (tool.equals("mobile_export_diagnostics"))
             return activity.exportDiagnosticsForAgent();

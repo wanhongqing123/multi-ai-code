@@ -8,6 +8,16 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public class AuthTerminalErrorTest {
+    @Test public void passwordChangeRequiresActualBooleanConfirmation() throws Exception {
+        org.junit.Assert.assertFalse(MaiChatAuthClient.passwordSetConfirmed(new org.json.JSONObject()));
+        org.junit.Assert.assertFalse(MaiChatAuthClient.passwordSetConfirmed(
+            new org.json.JSONObject().put("password_set", "true")));
+        org.junit.Assert.assertFalse(MaiChatAuthClient.passwordSetConfirmed(
+            new org.json.JSONObject().put("password_set", false)));
+        assertTrue(MaiChatAuthClient.passwordSetConfirmed(
+            new org.json.JSONObject().put("password_set", true)));
+    }
+
     @Test public void deviceSlotRequiredShowsUpgradeMessage() {
         MaiChatAuthClient.SessionTerminatedException error =
             MaiChatAuthClient.terminalSessionError(401, "DEVICE_SLOT_REQUIRED");

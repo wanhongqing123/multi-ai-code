@@ -81,6 +81,8 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var systemNotificationCenter = RemoteIMSystemNotificationCenter.shared
     @ObservedObject private var videoCircle = MaiVideoCircleModel.shared
+    @ObservedObject private var passwordRequests = AIAccountPasswordRequests.shared
+    @ObservedObject private var pdfPasswordRequests = AIPdfPasswordRequests.shared
     @State private var selectedTab: AppTab = {
         #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.arguments.contains(
@@ -464,6 +466,11 @@ struct RootView: View {
         .onChange(of: appState.masterUserID) { _ in
             clearSelectedChatForAccountChange()
         }
+        .onChange(of: appState.remoteDiagnosticsIdentity) { _ in
+            // 安全表单绑定打开时账号；切号必须关闭旧表单，不把状态或密码带入新账号。
+            passwordRequests.cancelForAccountChange()
+            pdfPasswordRequests.cancelAll()
+        }
         .onChange(of: appState.maiChatAccountID) { _ in
             clearSelectedChatForAccountChange()
             Task { await AIMobileScreenCapture.shared.stop() }
@@ -541,6 +548,30 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: appState.errorMessage)
+        // PDF 密码只在本机 sheet 内输入；私有回调一次性取走，Root 不读取或序列化密码。
+        .sheet(item: Binding(get: { pdfPasswordRequests.presentation }, set: { request in
+            if request == nil, let current = pdfPasswordRequests.presentation {
+                pdfPasswordRequests.dismissed(current.id)
+            }
+        })) { request in
+            NavigationStack { AIPdfPasswordView(request: request) }
+                .environmentObject(appState)
+        }
+        // 普通设置页与工具复用同一 SecureField 表单；这里只路由展示，不接触密码内容。
+        .sheet(item: Binding(get: { passwordRequests.presentation }, set: { request in
+            if request == nil, let current = passwordRequests.presentation {
+                passwordRequests.dismissed(current.id)
+            }
+        })) { request in
+            NavigationStack { AccountPasswordView(request: request) }
+                .environmentObject(appState)
+        }
+        .onAppear { passwordRequests.presenterActive = true }
+        .onDisappear {
+            passwordRequests.presenterActive = false
+            passwordRequests.cancelForAccountChange()
+            pdfPasswordRequests.cancelAll()
+        }
         .sheet(isPresented: $isShowingCreateGroup, onDismiss: {
             if let pendingCreatedGroup {
                 activeChatContact = nil

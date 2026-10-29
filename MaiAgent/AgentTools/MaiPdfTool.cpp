@@ -16,6 +16,13 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiPathGuard.h"
+#include "MaiIdGenerator.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace {
 
@@ -28,6 +35,34 @@ constexpr std::size_t kMaxRenderedHtmlBytes = 20u * 1024 * 1024;
 struct MaiMarkdownHtmlOutput {
     std::string html;
     bool isTooLarge = false;
+};
+
+// 只有密码保护路径使用私有中间目录；明文从不写到用户最终指定的文件名。
+// renderer 返回、失败或取消后统一移除本次目录；不触碰调用者已有的输出。
+class MaiPdfPlaintextStage final {
+public:
+    ~MaiPdfPlaintextStage() {
+        if (!mDirectory.isEmpty()) MaiFileSystem::removeRecursively(mDirectory);
+    }
+
+    bool create(const MaiFilePath& parent) {
+        const auto directory = parent.append(
+            MaiFilePath::fromUtf8(".maichat-pdf-source-" + MaiIdGenerator::generate("tmp")));
+#if defined(_WIN32)
+        if (!CreateDirectoryW(directory.value().c_str(), nullptr)) return false;
+#else
+        if (mkdir(directory.value().c_str(), 0700) != 0) return false;
+#endif
+        mDirectory = directory;
+        return true;
+    }
+
+    MaiFilePath file() const {
+        return mDirectory.append(MaiFilePath::fromUtf8("render.pdf"));
+    }
+
+private:
+    MaiFilePath mDirectory;
 };
 
 void appendMarkdownHtml(const MD_CHAR* chunk, MD_SIZE length, void* context) {
@@ -109,7 +144,8 @@ bool isValidUtf8(const std::string& text) {
 
 class MaiPdfTool final : public MaiTool {
 public:
-    explicit MaiPdfTool(MaiPdfRenderer renderer) : mRenderer(std::move(renderer)) {}
+    MaiPdfTool(MaiPdfRenderer renderer, MaiPdfPasswordProvider passwordProvider)
+        : mRenderer(std::move(renderer)), mPasswordProvider(std::move(passwordProvider)) {}
 
     std::string name() const override {
         return "generate_pdf";
@@ -121,14 +157,17 @@ public:
         return "Generate an A4 PDF directly from Markdown content in one call. Use headings, "
                "lists, tables, and inline formatting. Images must be embedded as base64 data "
                "URLs; external resources are unsupported. The output must be a new .pdf file "
-               "in a location accessible to this host.";
+               "in a location accessible to this host. Set password_protected=true to ask the "
+               "user for an opening password in a private native form. Never ask for or place "
+               "the password in chat or tool arguments.";
     }
 
     std::string parametersSchema() const override {
         // content 是完整 UTF-8 Markdown 正文；output_path 是尚不存在的 PDF 文件路径。
         return R"({"type":"object","properties":{)"
                R"("content":{"type":"string","description":"UTF-8 Markdown to render as the PDF body"},)"
-               R"("output_path":{"type":"string","description":"Absolute or relative path for a new .pdf file"}},)"
+               R"("output_path":{"type":"string","description":"Absolute or relative path for a new .pdf file"},)"
+               R"("password_protected":{"type":"boolean","description":"Ask for an opening password in a private native form; do not include any password here"}},)"
                R"("required":["content","output_path"],"additionalProperties":false})";
     }
 
@@ -155,8 +194,12 @@ public:
                                 arguments["content"].is_string();
         const bool hasLegacySource = arguments.is_object() && arguments.contains("source_path") &&
                                      arguments["source_path"].is_string();
-        if (!arguments.is_object() || arguments.size() != 2 || hasContent == hasLegacySource ||
-            !arguments.contains("output_path") || !arguments["output_path"].is_string()) {
+        const bool hasProtection =
+            arguments.is_object() && arguments.contains("password_protected");
+        if (!arguments.is_object() || arguments.size() != (hasProtection ? 3 : 2) ||
+            (hasProtection && !arguments["password_protected"].is_boolean()) ||
+            hasContent == hasLegacySource || !arguments.contains("output_path") ||
+            !arguments["output_path"].is_string()) {
             return MaiToolResult::failure(MaiErrorCode::InvalidInput,
                                           "generate_pdf requires content and output_path strings");
         }
@@ -221,27 +264,73 @@ public:
         if (directoryError.hasError())
             return MaiToolResult::failure(directoryError.code(), directoryError.message());
 
+        const bool protectedPdf = arguments.value("password_protected", false);
+        MaiPdfEncryptionOptions protection;
+        MaiPdfPlaintextStage plaintext;
+        MaiFilePath renderedPath = outputPath;
+        if (protectedPdf) {
+            if (!mPasswordProvider)
+                return MaiToolResult::failure(
+                    MaiErrorCode::NotConfigured,
+                    "Private PDF password entry is unavailable on this host");
+            try {
+                auto password = mPasswordProvider(context.cancel);
+                if (!password)
+                    return MaiToolResult::failure(password.error().code(),
+                                                  password.error().code() == MaiErrorCode::Canceled
+                                                      ? "PDF password entry was canceled"
+                                                      : "Private PDF password entry failed");
+                protection.userPassword = std::move(password.value());
+            } catch (...) {
+                // 私有表单异常也可能带用户输入，不把原生异常文本回传模型。
+                return MaiToolResult::failure(MaiErrorCode::Internal,
+                                              "Private PDF password entry failed");
+            }
+            if (context.isCanceled())
+                return MaiToolResult::failure(MaiErrorCode::Canceled,
+                                              "PDF generation was canceled");
+            if (!plaintext.create(outputPath.dirName()))
+                return MaiToolResult::failure(MaiErrorCode::Internal,
+                                              "Private PDF staging directory could not be created");
+            renderedPath = plaintext.file();
+        }
+
         MaiToolResult result;
         try {
-            result = mRenderer(html, output, context.cancel);
-        } catch (const std::exception& error) {
-            if (MaiFileSystem::exists(outputPath)) MaiFileSystem::removeFile(outputPath);
-            return MaiToolResult::failure(MaiErrorCode::Internal,
-                                          std::string("PDF renderer failed: ") + error.what());
+            result = mRenderer(html, renderedPath.toUtf8(), context.cancel);
+        } catch (const std::exception&) {
+            if (MaiFileSystem::exists(renderedPath)) MaiFileSystem::removeFile(renderedPath);
+            return MaiToolResult::failure(MaiErrorCode::Internal, "PDF renderer failed");
         }
         if (result.hasError() || context.isCanceled()) {
-            if (MaiFileSystem::exists(outputPath)) MaiFileSystem::removeFile(outputPath);
+            if (MaiFileSystem::exists(renderedPath)) MaiFileSystem::removeFile(renderedPath);
             if (result.hasError()) return result;
             return MaiToolResult::failure(MaiErrorCode::Canceled, "PDF generation was canceled");
         }
         std::uint64_t pdfBytes = 0;
         std::string header;
-        if (!MaiFileSystem::fileSize(outputPath, pdfBytes) || pdfBytes < 8 ||
-            pdfBytes > kMaxPdfBytes || MaiFileSystem::readFile(outputPath, header, 8).hasError() ||
+        if (!MaiFileSystem::fileSize(renderedPath, pdfBytes) || pdfBytes < 8 ||
+            pdfBytes > kMaxPdfBytes ||
+            MaiFileSystem::readFile(renderedPath, header, 8).hasError() ||
             header.compare(0, 5, "%PDF-") != 0) {
-            if (MaiFileSystem::exists(outputPath)) MaiFileSystem::removeFile(outputPath);
+            if (MaiFileSystem::exists(renderedPath)) MaiFileSystem::removeFile(renderedPath);
             return MaiToolResult::failure(MaiErrorCode::Internal,
                                           "the PDF renderer did not produce a valid PDF file");
+        }
+        if (protectedPdf) {
+            const auto encrypted =
+                maiEncryptPdfFile(renderedPath, outputPath, protection, context.cancel);
+            if (!encrypted)
+                return MaiToolResult::failure(encrypted.error().code(),
+                                              encrypted.error().message());
+            // 普通 API 已完成原子提交，此后不因晚到的取消删除已加密的最终文件。
+            return MaiToolResult::success(json{
+                {"path", outputName},
+                {"mime_type", "application/pdf"},
+                {"bytes", encrypted.value().bytes},
+                {"password_protected", true},
+                {"preview_hint", "Open this file in a PDF reader that supports password entry."}}
+                                              .dump());
         }
         return MaiToolResult::success(json{
             {"path", outputName},
@@ -251,11 +340,13 @@ public:
 
 private:
     MaiPdfRenderer mRenderer;
+    MaiPdfPasswordProvider mPasswordProvider;
 };
 
 }  // namespace
 
-std::unique_ptr<MaiTool> makeMaiPdfTool(MaiPdfRenderer renderer) {
+std::unique_ptr<MaiTool> makeMaiPdfTool(MaiPdfRenderer renderer,
+                                        MaiPdfPasswordProvider passwordProvider) {
     if (!renderer) return nullptr;
-    return std::make_unique<MaiPdfTool>(std::move(renderer));
+    return std::make_unique<MaiPdfTool>(std::move(renderer), std::move(passwordProvider));
 }

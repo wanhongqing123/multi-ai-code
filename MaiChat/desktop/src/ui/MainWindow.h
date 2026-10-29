@@ -62,6 +62,7 @@ class QPixmap;
 class ImagePreviewDialog;
 class VideoCircleDialog;
 class CloudDriveDialog;
+class DesktopPasswordChangeRequests;
 struct MaiCloudVod;
 
 class MainWindow final : public QMainWindow {
@@ -96,6 +97,10 @@ public:
     void setMaiChatNicknameProvider(std::function<QString()> provider);
     void setMaiChatNicknameUpdater(
         std::function<void(const QString&, RemoteIMCompletion)> updater);
+    // Settings 与 Agent 共用本地表单；setter 只调用普通鉴权 API，不经过工具协议。
+    void setMaiChatPasswordSetter(
+        std::function<void(const QString&, std::function<void(const QString&)>)> setter,
+        std::function<QString()> sessionIdentity);
     AgentController* activeAgentController() const { return agentController_; }
     void setSessionSyncCoordinator(DesktopSessionSyncCoordinator* coordinator);
     bool openDockedVideo(const QString& path, const QStringList& playlist = {},
@@ -435,6 +440,8 @@ private:
     QLabel* settingsAccountValue_ = nullptr;
     QLabel* settingsNicknameValue_ = nullptr;
     QPushButton* settingsNicknameButton_ = nullptr;
+    QPushButton* settingsPasswordButton_ = nullptr;
+    DesktopPasswordChangeRequests* passwordChangeRequests_ = nullptr;
     QPushButton* settingsLogoutButton_ = nullptr;
     QScrollArea* messageScroll_ = nullptr;
     QSplitterHandle* messageComposerHandle_ = nullptr;

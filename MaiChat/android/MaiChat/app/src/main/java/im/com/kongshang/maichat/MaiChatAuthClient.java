@@ -220,7 +220,9 @@ public final class MaiChatAuthClient {
     }
 
     // 只有显式开启的 Debug 模拟器连接本机假账号服务；普通调试和发布包使用正式地址。
+    // 普通 JVM 合同测试没有 Android 设备指纹；缺失值不能触发空指针或被当作模拟器。
     private static final String BASE_URL = BuildConfig.DEBUG && BuildConfig.USE_LOCAL_UI_AUTH &&
+        Build.FINGERPRINT != null &&
         (Build.FINGERPRINT.contains("sdk_gphone") || Build.FINGERPRINT.contains("generic"))
         ? "http://10.0.2.2:18190/v1/" : "https://ichat.life/api/v1/";
     private static final String KEY_ALIAS = "MaiChat.PhoneAuth.Refresh";
@@ -365,6 +367,23 @@ public final class MaiChatAuthClient {
             .put("new_password", newPassword)
             .put("age_confirmed_14_plus", ageConfirmed));
         return adopt(request("auth/password/reset", "POST", body, ""));
+    }
+
+    /** 普通鉴权入口；密码仅由本地安全表单传入，不经过 Agent 参数、输出或日志。 */
+    public synchronized void setPassword(String password, String expectedAccountId) throws Exception {
+        if (expectedAccountId == null || expectedAccountId.isEmpty() ||
+            !expectedAccountId.equals(accountId()))
+            throw new IOException("登录账号已变化，请重新打开密码页");
+        JSONObject result = authenticatedRequest("auth/password/set", "POST",
+            new JSONObject().put("new_password", password), expectedAccountId);
+        // 服务端明确确认才算完成，防止 2xx 空结果被工具误报成密码已修改。
+        if (!expectedAccountId.equals(accountId()) || !passwordSetConfirmed(result))
+            throw new IOException("密码修改未获确认，请重试");
+    }
+
+    static boolean passwordSetConfirmed(JSONObject result) {
+        // optBoolean 会把字符串 "true" 也转成成功；鉴权写入必须得到真正的 JSON 布尔确认。
+        return Boolean.TRUE.equals(result.opt("password_set"));
     }
 
     public synchronized DesktopRequestInfo desktopRequestInfo(String requestId) throws Exception {
@@ -657,7 +676,14 @@ public final class MaiChatAuthClient {
 
     private JSONObject authenticatedRequest(String path, String method, JSONObject body)
         throws Exception {
+        return authenticatedRequest(path, method, body, null);
+    }
+
+    private JSONObject authenticatedRequest(String path, String method, JSONObject body,
+        String expectedAccountId) throws Exception {
         String bearer = currentAccessToken();
+        // 敏感写入在刷新令牌之后、每次实际发送之前仍校验原账号，不能只在表单打开时检查。
+        requireExpectedAccount(expectedAccountId);
         try { return request(path, method, body, bearer); }
         catch (SessionTerminatedException failure) {
             handleSessionTerminated(failure);
@@ -666,12 +692,18 @@ public final class MaiChatAuthClient {
             if (!String.valueOf(failure.getMessage()).startsWith("登录已过期")) throw failure;
             accessToken = "";
             bearer = currentAccessToken();
+            requireExpectedAccount(expectedAccountId);
             try { return request(path, method, body, bearer); }
             catch (SessionTerminatedException terminated) {
                 handleSessionTerminated(terminated);
                 throw terminated;
             }
         }
+    }
+
+    private void requireExpectedAccount(String expectedAccountId) throws IOException {
+        if (expectedAccountId != null && !expectedAccountId.equals(accountId()))
+            throw new IOException("登录账号已变化，请重新打开密码页");
     }
 
     synchronized String sessionSyncAccessToken() throws Exception {
@@ -789,6 +821,8 @@ public final class MaiChatAuthClient {
             case "Phone or password is incorrect": return "手机号或密码错误";
             case "Account or password is incorrect": return "账号或密码错误";
             case "Invalid login request": return "账号或密码格式不正确";
+            case "Password must be 15-128 characters": return "密码须为 15–128 个字符";
+            case "Sign in again before changing the password": return "请重新登录后再修改密码";
             case "Invalid nickname": return "昵称格式不符合要求";
             case "Please wait before trying again": return "登录尝试过多，请稍后再试";
             case "Authentication required": return "登录已过期，请重新登录";

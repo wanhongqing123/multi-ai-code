@@ -195,6 +195,10 @@ int main(int argc, char* argv[]) {
         auth.fetchFriendQr(std::move(completion));
     });
     window.setMaiChatAccountIdProvider([&auth] { return auth.maiChatAccountId(); });
+    window.setMaiChatPasswordSetter(
+        [&auth](const QString& password, DesktopAuthClient::PasswordCompletion completion) {
+            auth.setPassword(password, std::move(completion));
+        }, [&auth] { return auth.authenticatedSessionIdentity(); });
     window.setVideoCircleAccessProvider(auth.videoCircleAccessProvider());
     window.setMaiChatNicknameProvider([&auth] { return auth.nickname(); });
     remoteIM.setNicknameUpdater([&auth](const QString& nickname,

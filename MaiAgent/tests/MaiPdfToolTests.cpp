@@ -7,6 +7,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <json.hpp>
 
@@ -69,7 +70,7 @@ void test_generates_pdf_directly_from_markdown() {
         });
     const MaiToolResult result = tool->execute(
         R"({"content":"# Report\n\n| Item | Result |\n| --- | --- |\n| Build | **Passed** |\n\n<sc)"
-            R"(ript>alert(1)</script>","output_path":"report.pdf"})",
+        R"(ript>alert(1)</script>","output_path":"report.pdf"})",
         workspace.context());
     CHECK(!result.hasError());
     const auto artifact = nlohmann::json::parse(result.output(), nullptr, false);
@@ -179,19 +180,15 @@ void test_only_accepts_embedded_markdown_images() {
             if (error) return MaiToolResult::failure(error.code(), error.message());
             return MaiToolResult::success("rendered");
         });
-    CHECK(
-        tool->execute(
-                R"pdf({"content":"![image](https://example.com/image.png)",)pdf"
-                    R"pdf("output_path":"external.pdf"})pdf",
-                workspace.context())
-            .hasError());
+    CHECK(tool->execute(R"pdf({"content":"![image](https://example.com/image.png)",)pdf"
+                        R"pdf("output_path":"external.pdf"})pdf",
+                        workspace.context())
+              .hasError());
     CHECK(renderCalls == 0);
-    CHECK(
-        !tool->execute(
-                 R"pdf({"content":"![image](data:image/png;base64,iVBORw0KGgo=)",)pdf"
-                     R"pdf("output_path":"embedded.pdf"})pdf",
-                 workspace.context())
-             .hasError());
+    CHECK(!tool->execute(R"pdf({"content":"![image](data:image/png;base64,iVBORw0KGgo=)",)pdf"
+                         R"pdf("output_path":"embedded.pdf"})pdf",
+                         workspace.context())
+               .hasError());
     CHECK(renderCalls == 1);
 }
 
@@ -238,6 +235,79 @@ void test_rejects_invalid_utf8_and_renderer_exceptions() {
     CHECK(renderCalls == 1);
 }
 
+// 私有输入与 Agent 参数分离；渲染期间最终路径不存在，成功只公布已加密的文件。
+void test_private_password_generation_and_cancel() {
+    MaiPdfWorkspace workspace(false);
+    const std::string fixturePassword = "Public-Pdf-Test-2026!";
+    int promptCalls = 0;
+    int renderCalls = 0;
+    auto renderer = [&](const std::string&, const std::string& output, const std::atomic<bool>*) {
+        ++renderCalls;
+        CHECK(!MaiFileSystem::exists(workspace.path("protected.pdf")));
+        CHECK(output != workspace.path("protected.pdf").toUtf8());
+        std::string pdf = "%PDF-1.7\n";
+        const std::vector<std::string> objects{
+            "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>"};
+        std::vector<std::size_t> offsets;
+        for (std::size_t index = 0; index < objects.size(); ++index) {
+            offsets.push_back(pdf.size());
+            pdf += std::to_string(index + 1) + " 0 obj\n" + objects[index] + "\nendobj\n";
+        }
+        const auto xref = pdf.size();
+        pdf += "xref\n0 4\n0000000000 65535 f \n";
+        for (const auto offset : offsets) {
+            char line[32]{};
+            std::snprintf(line, sizeof(line), "%010llu 00000 n \n",
+                          static_cast<unsigned long long>(offset));
+            pdf += line;
+        }
+        pdf +=
+            "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n" + std::to_string(xref) + "\n%%EOF\n";
+        const auto error = MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output), pdf);
+        return error ? MaiToolResult::failure(error.code(), error.message())
+                     : MaiToolResult::success("rendered");
+    };
+    auto tool = makeMaiPdfTool(renderer, [&](const std::atomic<bool>*) -> MaiResult<std::string> {
+        ++promptCalls;
+        return fixturePassword;
+    });
+    CHECK(tool->parametersSchema().find("password_protected") != std::string::npos);
+    CHECK(tool->parametersSchema().find("\"password\":") == std::string::npos);
+    CHECK(
+        tool->execute(
+                R"({"content":"Report","output_path":"protected.pdf","password":"must-not-be-accepted"})",
+                workspace.context())
+            .hasError());
+    CHECK(promptCalls == 0 && renderCalls == 0);
+    const auto result = tool->execute(
+        R"({"content":"Report","output_path":"protected.pdf","password_protected":true})",
+        workspace.context());
+    CHECK(!result.hasError());
+    CHECK(result.output().find(fixturePassword) == std::string::npos);
+    CHECK(promptCalls == 1 && renderCalls == 1);
+    CHECK(MaiFileSystem::exists(workspace.path("protected.pdf")));
+    auto canceled =
+        makeMaiPdfTool(renderer, [](const std::atomic<bool>*) -> MaiResult<std::string> {
+            return {MaiErrorCode::Canceled, "private input canceled"};
+        });
+    CHECK(canceled
+              ->execute(
+                  R"({"content":"Report","output_path":"cancel.pdf","password_protected":true})",
+                  workspace.context())
+              .error()
+              .code() == MaiErrorCode::Canceled);
+    CHECK(renderCalls == 1 && !MaiFileSystem::exists(workspace.path("cancel.pdf")));
+    auto absent = makeMaiPdfTool(renderer);
+    CHECK(absent
+              ->execute(
+                  R"({"content":"Report","output_path":"absent.pdf","password_protected":true})",
+                  workspace.context())
+              .error()
+              .code() == MaiErrorCode::NotConfigured);
+    CHECK(renderCalls == 1 && !MaiFileSystem::exists(workspace.path("absent.pdf")));
+}
+
 }  // namespace
 
 int main() {
@@ -248,6 +318,7 @@ int main() {
     test_only_accepts_embedded_markdown_images();
     test_rejects_missing_or_invalid_renderer_output();
     test_rejects_invalid_utf8_and_renderer_exceptions();
+    test_private_password_generation_and_cancel();
     if (failures == 0) std::printf("PDF tool tests passed\n");
     return failures == 0 ? 0 : 1;
 }

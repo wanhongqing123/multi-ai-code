@@ -53,6 +53,8 @@ final class MaiChatIMTools {
         if (session == null || session.requiresLogin())
             throw new IllegalStateException("MaiChat 尚未登录");
         switch (tool) {
+            // 密码不经过宿主 JSON：只打开与设置页共用的表单，或读原账号绑定的状态。
+            case "maichat_change_password": return activity.passwordChangeRequestForAgent(arguments);
             case "maichat_list_contacts": return hostListContacts(arguments);
             case "maichat_request_friend": return hostRequestFriend(arguments);
             case "maichat_set_nickname": return hostSetNickname(arguments);

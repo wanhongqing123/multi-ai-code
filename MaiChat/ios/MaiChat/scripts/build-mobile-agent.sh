@@ -26,11 +26,21 @@ hosted_link_dir="$DERIVED_FILE_DIR/MobileAgentAdapter-${PLATFORM_NAME}-graphics"
 mkdir -p "$hosted_link_dir"
 cp "$hosted_source" "$hosted_link_dir/libmaichat_ffplay_hosted.dylib"
 archive_list=()
+# 独立核心配置可能留下后备 JPEG 归档；产品已有 OpenCV JPEG 时不把旧后备再合入，
+# 防止一个 App archive 携带两份同名 libjpeg 实现。qpdf 的 CMake 链接也只选择这一份。
+has_opencv_jpeg=false
+if find "$agent_build" -name 'liblibjpeg-turbo.a' -type f -print -quit | /usr/bin/grep -q .; then
+  has_opencv_jpeg=true
+fi
 while IFS= read -r archive; do archive_list+=("$archive"); done < <(
   find "$agent_build" -name '*.a' -type f \
     ! -path '*/vendor/ffmpeg-build/install/*' \
     ! -path '*/vendor/ffmpeg-build/vendor-build/*' \
-    ! -path '*/vendor/ffmpeg-build/vendor-install/*'
+    ! -path '*/vendor/ffmpeg-build/vendor-install/*' \
+    | while IFS= read -r archive; do
+        if [[ "$has_opencv_jpeg" == true && "$archive" == */libmai_pdf_jpeg_fallback.a ]]; then continue; fi
+        printf '%s\n' "$archive"
+      done
 )
 for codec in libdav1d.a libx264.a libmp3lame.a; do
   archive_list+=("$agent_build/vendor/ffmpeg-build/vendor-install/lib/$codec")
@@ -48,6 +58,11 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${FRAMEWORKS_FOLDER_PATH:-}" ]]; then
   fi
 fi
 if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" ]]; then
+  # PDF 引擎以静态库进入 App，同时随包保留其许可与署名。
+  pdf_licenses="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/ThirdPartyLicenses"
+  mkdir -p "$pdf_licenses"
+  cp "$repo_dir/MaiAgent/third_party/qpdf/LICENSE.txt" "$pdf_licenses/QPDF_LICENSE.txt"
+  cp "$repo_dir/MaiAgent/third_party/qpdf/NOTICE.md" "$pdf_licenses/QPDF_NOTICE.md"
   effect_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentGraphics"
   mkdir -p "$effect_bundle"
   cp "$repo_dir/MaiAgent/Graphics/data/"*.effect "$effect_bundle/"

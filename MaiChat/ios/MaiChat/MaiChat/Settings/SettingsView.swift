@@ -467,22 +467,137 @@ private struct SafetyReportsView: View {
     }
 }
 
-private struct AccountPasswordView: View {
+/// 只保存展示状态和账号身份，不保存密码。普通设置页与 Agent 入口共用下方安全表单，
+/// 工具只打开/查询 request，避免把新密码写入工具参数、对话历史或诊断日志。
+@MainActor
+final class AIAccountPasswordRequests: ObservableObject {
+    static let shared = AIAccountPasswordRequests()
+
+    struct Request: Identifiable {
+        let id: UUID
+        let accountIdentity: String
+    }
+    private struct Record {
+        let request: Request
+        var status = "opening"
+        var opened = false
+        var errorCode: String?
+    }
+
+    @Published private(set) var presentation: Request?
+    var presenterActive = false
+    private var records: [UUID: Record] = [:]
+    private var order: [UUID] = []
+
+    func open(appState: RemoteIMAppState) throws -> [String: Any] {
+        guard appState.hasUnifiedAccount else { throw MaiChatAuthError.sessionExpired }
+        guard presenterActive, UIApplication.shared.applicationState == .active else {
+            throw PasswordRequestError.unavailable
+        }
+        let identity = appState.remoteDiagnosticsIdentity
+        if let pending = presentation, pending.accountIdentity == identity {
+            return try status(id: pending.id, appState: appState)
+        }
+        cancelForAccountChange()
+        let request = Request(id: UUID(), accountIdentity: identity)
+        records[request.id] = Record(request: request)
+        order.append(request.id)
+        // 状态只在本进程短期查询，不落磁盘；限制数量也避免长期账号请求状态积累。
+        while order.count > 20 { records.removeValue(forKey: order.removeFirst()) }
+        presentation = request
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            guard records[request.id]?.status == "opening" else { return }
+            update(request.id, status: "failed", errorCode: "unavailable")
+            if presentation?.id == request.id { presentation = nil }
+        }
+        return try status(id: request.id, appState: appState)
+    }
+
+    func status(id: UUID, appState: RemoteIMAppState) throws -> [String: Any] {
+        guard appState.hasUnifiedAccount, let record = records[id],
+              record.request.accountIdentity == appState.remoteDiagnosticsIdentity else {
+            throw PasswordRequestError.notFound
+        }
+        var output: [String: Any] = ["request_id": id.uuidString.lowercased(),
+            "opened": record.opened, "status": record.status, "changed": record.status == "changed"]
+        if let code = record.errorCode { output["error_code"] = code }
+        return output
+    }
+
+    func didAppear(_ id: UUID, appState: RemoteIMAppState) {
+        guard var record = records[id],
+              appState.hasUnifiedAccount,
+              record.request.accountIdentity == appState.remoteDiagnosticsIdentity else {
+            cancelForAccountChange()
+            return
+        }
+        // SwiftUI 的展示请求可能排队；必须页面真正出现后才报告正在等待用户输入。
+        record.opened = true
+        record.status = "awaiting_user"
+        record.errorCode = nil
+        records[id] = record
+    }
+
+    func update(_ id: UUID, status: String, errorCode: String? = nil) {
+        guard var record = records[id], record.status != "changed" else { return }
+        record.status = status
+        record.errorCode = errorCode
+        records[id] = record
+    }
+
+    func dismissed(_ id: UUID) {
+        // 已发送的 HTTP 不能靠关闭页面撤回；保持在途状态，不能误报已取消。
+        guard records[id]?.status != "submitting" else { return }
+        if let record = records[id], record.status == "opening" || record.status == "awaiting_user" {
+            update(id, status: "canceled", errorCode: "canceled")
+        }
+        if presentation?.id == id { presentation = nil }
+    }
+
+    func cancelForAccountChange() {
+        for id in order where records[id]?.status == "submitting" {
+            // 换号允许收起旧页，但旧请求结果未知，绝不能声称它已取消或未修改。
+            update(id, status: "failed", errorCode: "identity_changed")
+        }
+        for id in order where records[id]?.status == "opening" || records[id]?.status == "awaiting_user" {
+            update(id, status: "canceled", errorCode: "identity_changed")
+        }
+        presentation = nil
+    }
+
+    enum PasswordRequestError: Error { case unavailable, notFound }
+}
+
+/// 密码仅停留在本地 SecureField 与普通鉴权调用中；关闭/成功会清空，绝不回传给 Agent。
+struct AccountPasswordView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
+    @Environment(\.dismiss) private var dismiss
+    var request: AIAccountPasswordRequests.Request? = nil
     @State private var password = ""
     @State private var confirmation = ""
     @State private var isSaving = false
     @State private var message: String?
+    @State private var accountIdentity: String?
+
+    private var isValid: Bool {
+        let count = password.unicodeScalars.count
+        return (15...128).contains(count) && password.utf8.count <= 512 && password == confirmation
+    }
 
     var body: some View {
         Form {
             Section {
                 SecureField("新密码", text: $password)
                     .textContentType(.newPassword)
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("account-password-new")
                 SecureField("再次输入新密码", text: $confirmation)
                     .textContentType(.newPassword)
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("account-password-confirm")
             } footer: {
-                Text("至少 15 个字符；修改密码前须在最近 10 分钟内登录。")
+                Text("密码须为 15–128 个字符；修改前须在最近 10 分钟内登录。保存后其他设备需重新登录，当前设备保持登录。")
             }
             if let message {
                 Text(message).foregroundStyle(.secondary)
@@ -490,21 +605,64 @@ private struct AccountPasswordView: View {
             Button(isSaving ? "保存中…" : "保存密码") {
                 Task { await save() }
             }
-            .disabled(isSaving || password.count < 15 || password != confirmation)
+            .disabled(isSaving || !isValid)
+            .accessibilityIdentifier("account-password-save")
         }
         .navigationTitle("登录密码")
+        .navigationBarBackButtonHidden(isSaving)
+        .toolbar {
+            if request != nil {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                        .disabled(isSaving)
+                        .accessibilityIdentifier("account-password-close")
+                }
+            }
+        }
+        .interactiveDismissDisabled(isSaving)
+        .onAppear {
+            accountIdentity = request?.accountIdentity ?? appState.remoteDiagnosticsIdentity
+            if let request { AIAccountPasswordRequests.shared.didAppear(request.id, appState: appState) }
+        }
+        .onDisappear {
+            password = ""
+            confirmation = ""
+            if let request { AIAccountPasswordRequests.shared.dismissed(request.id) }
+        }
     }
 
     private func save() async {
+        // 两次点击可能在 SwiftUI 更新 disabled 前入队；在普通入口再挡一次重复提交。
+        guard !isSaving else { return }
         isSaving = true
+        // 输入阶段可取消；提交阶段不是可撤回操作，明确标记且禁用关闭/重复提交。
+        if let request { AIAccountPasswordRequests.shared.update(request.id, status: "submitting") }
         defer { isSaving = false }
         do {
-            try await appState.setAccountPassword(password)
+            // 固定进入页面时的账号；await 中切号后不能把旧页成功状态写进新账号。
+            guard let accountIdentity else { throw MaiChatAuthError.identityMismatch }
+            try await appState.setAccountPassword(password, expectedIdentity: accountIdentity)
             password = ""
             confirmation = ""
             message = "密码已保存"
+            if let request {
+                AIAccountPasswordRequests.shared.update(request.id, status: "changed")
+                // 一次 request 对应一次提交；成功收起工具表单，下次 open 创建新请求。
+                dismiss()
+            }
         } catch {
-            message = error.localizedDescription
+            // 不回传任意底层错误文本或请求体；工具仅得到固定分类，密码仍只在表单内。
+            let reauth: Bool
+            if case MaiChatAuthError.requestFailed("Sign in again before changing the password") = error {
+                reauth = true
+            } else if case MaiChatAuthError.sessionExpired = error { reauth = true }
+            else { reauth = false }
+            message = reauth ? "请重新登录后再修改密码" : "密码修改尚未确认，请检查账号和网络后重试"
+            if let request {
+                AIAccountPasswordRequests.shared.update(request.id,
+                    status: reauth ? "reauth_required" : "failed",
+                    errorCode: reauth ? "reauth_required" : "failed")
+            }
         }
     }
 }

@@ -6,6 +6,9 @@ import MaiChatCore
 import SwiftUI
 import UserNotifications
 import UIKit
+#if DEBUG && targetEnvironment(simulator)
+import PDFKit
+#endif
 
 @MainActor
 final class IOSBackgroundActivityKeeper {
@@ -420,6 +423,18 @@ struct MaiChatApp: App {
     @ViewBuilder private var appContent: some View {
         if let appState = bootstrap.appState {
             RootView().environmentObject(appState)
+                .overlay(alignment: .topTrailing) {
+                    #if DEBUG && targetEnvironment(simulator)
+                    // 仅显式模拟器验收旗标添加控制探针；仍走普通 bootstrap、账号登录和真实 Root，
+                    // 不创建替代页面、不注入密码，也不进入真机或 Release 路径。
+                    if ProcessInfo.processInfo.arguments.contains("--password-tool-ui-test") {
+                        PasswordToolUITestProbe().environmentObject(appState)
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("--pdf-security-ui-test") {
+                        PdfSecurityUITestProbe().environmentObject(appState)
+                    }
+                    #endif
+                }
         } else if let error = bootstrap.errorMessage {
             VStack(spacing: 12) {
                 Text("加载失败")
@@ -431,6 +446,128 @@ struct MaiChatApp: App {
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+/// 只持有请求 UUID 和宿主的安全状态；测试密码仍由 XCTest 输入正常 SecureField，
+/// 探针不知道密码，也不向工具 JSON、诊断日志或模型请求写入密码。
+private struct PasswordToolUITestProbe: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @State private var requestID: String?
+    @State private var output = "idle"
+    @State private var busy = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Button("打开密码工具") { Task { await run(action: "open") } }
+                    .accessibilityIdentifier("password-tool-open")
+                Button("查询状态") { Task { await run(action: "status") } }
+                    .disabled(requestID == nil)
+                    .accessibilityIdentifier("password-tool-status")
+            }
+            .disabled(busy || !appState.hasUnifiedAccount)
+            Text("密码工具状态")
+                .font(.caption2)
+                .accessibilityIdentifier("password-tool-output")
+                .accessibilityValue(output)
+        }
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.trailing, 8)
+    }
+
+    private func run(action: String) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        var arguments: [String: String] = ["action": action]
+        if action == "status", let requestID { arguments["request_id"] = requestID }
+        guard let data = try? JSONSerialization.data(withJSONObject: arguments),
+              let encoded = String(data: data, encoding: .utf8) else { return }
+        let result = await AIMobileHostToolProvider.shared.execute(
+            name: "maichat_change_password", argumentsJSON: encoded)
+        guard let raw = result.output, let bytes = raw.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              Set(value.keys).isSubset(of: ["request_id", "opened", "status", "changed", "error_code", "message"]),
+              let id = value["request_id"] as? String, UUID(uuidString: id) != nil else {
+            // 未知字段不能进入探针状态；固定失败标记也让 UI 契约测试直接失败而非吞掉泄漏。
+            output = "invalid-password-tool-response"
+            return
+        }
+        requestID = id
+        output = raw
+    }
+}
+
+/// 实际 UIKit 排版→同一个安全输入页→普通 C ABI 加密→PDFKit 独立打开验证。
+/// 密码只在异步函数局部变量中使用；探针状态仅保存布尔结果和测试输出路径。
+private struct PdfSecurityUITestProbe: View {
+    @EnvironmentObject private var appState: RemoteIMAppState
+    @ObservedObject private var model = AIAssistantModel.shared
+    @State private var busy = false
+    @State private var result = "idle"
+
+    var body: some View {
+        VStack {
+            Button("测试 PDF 保护") { Task { await run() } }
+                .disabled(busy || !appState.hasUnifiedAccount || model.workspacePath.isEmpty)
+                .accessibilityIdentifier("pdf-security-run")
+            Text("PDF 保护结果").font(.caption2)
+                .accessibilityIdentifier("pdf-security-output")
+                .accessibilityValue(result)
+        }
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.trailing, 8)
+    }
+
+    private func run() async {
+        guard !busy else { return }
+        busy = true
+        result = "running"
+        defer { busy = false }
+        let directory = URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+            .appendingPathComponent("pdf-protection-ui-\(UUID().uuidString)", isDirectory: true)
+        let source = directory.appendingPathComponent("source.pdf")
+        let output = directory.appendingPathComponent("protected.pdf")
+        defer { try? FileManager.default.removeItem(at: source) }
+        func publish(_ fields: [String: Any]) {
+            guard let data = try? JSONSerialization.data(withJSONObject: fields),
+                  let text = String(data: data, encoding: .utf8) else { return }
+            result = text
+        }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let metadata = try MaiPdfRenderer.render(html:
+                "<html><body><h1>MaiChat PDF</h1><p>private fixture content</p></body></html>", output: source)
+            guard let sourceDocument = PDFDocument(url: source), sourceDocument.pageCount > 0 else {
+                publish(["status": "failed", "stage": "native-render"]); return
+            }
+            let sourcePages = sourceDocument.pageCount
+            let password = try await AIPdfPasswordRequests.shared.requestPassword(appState: appState)
+            _ = try await MaiPdfSecurity.encrypt(source: source, output: output, password: password)
+            guard let document = PDFDocument(url: output), document.isLocked else {
+                publish(["status": "failed", "stage": "not-locked"]); return
+            }
+            let wrongPassword = password == "deliberately-wrong" ? "another-wrong" : "deliberately-wrong"
+            guard !document.unlock(withPassword: wrongPassword), document.isLocked,
+                  document.unlock(withPassword: password),
+                  document.string?.contains("private fixture content") == true else {
+                publish(["status": "failed", "stage": "independent-reader"]); return
+            }
+            publish(["status": "passed", "locked_without_password": true,
+                     "wrong_password_rejected": true, "content_readable": true,
+                     "path": output.path, "source_pages": sourcePages,
+                     "encrypted_pages": document.pageCount, "renderer_pages": metadata["pages"] ?? 0])
+        } catch is CancellationError {
+            publish(["status": "canceled", "output_exists": FileManager.default.fileExists(atPath: output.path)])
+        } catch {
+            // 不保存底层异常或密码；任何阶段失败都只输出固定无凭据分类。
+            publish(["status": "failed", "stage": "pdf-operation"])
+        }
+    }
+}
+#endif
 
 #if targetEnvironment(simulator)
 /// Exercise the production RootView and its real tab bar with content that

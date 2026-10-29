@@ -244,6 +244,7 @@ add_library(maichat_mobile STATIC
   ../Media/MaiImageEncode.cpp
   ../Media/MaiVideoCircleMark.cpp
   ../MaiChatTools/MaiCloudDriveTools.cpp
+  ../MaiChatTools/MaiChangePasswordTool.cpp
   ../MaiChatTools/MaiQrCode.cpp
   ../MaiChatTools/MaiSessionSchedule.cpp
   ../MaiChatTools/MaiSessionScheduleTools.cpp

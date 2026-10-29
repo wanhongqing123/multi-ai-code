@@ -189,6 +189,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
     @Published var hasCompletedInitialLogin = false
     @Published private(set) var hasUnifiedAccount = false
+    // 真实登录 adopt 的代际独立于聊天/历史重建；同账号重新认证也要使旧安全表单失效。
+    // 令牌后台刷新不经过 finishAccountLogin，不推进此值，也不会重建页面或清空草稿。
+    @Published private var accountAuthenticationGeneration: UInt64 = 0
     @Published var presenceStatusByUserID: [String: RemoteIMPresenceStatus] = [:]
     @Published private(set) var pendingFriendRequests: [RemoteIMFriendRequest] = []
     @Published private(set) var acceptedFriendIMIDs: Set<String> = []
@@ -702,8 +705,16 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         try await finishAccountLogin(session)
     }
 
-    func setAccountPassword(_ password: String) async throws {
+    func setAccountPassword(_ password: String, expectedIdentity: String? = nil) async throws {
+        // 普通设置页和 Agent 打开的页均绑定进入时的账号；密码本身不进入 Agent 协议。
+        let identity = expectedIdentity ?? remoteDiagnosticsIdentity
+        guard hasUnifiedAccount, remoteDiagnosticsIdentity == identity else {
+            throw MaiChatAuthError.identityMismatch
+        }
         try await accountAuth.setPassword(password)
+        guard hasUnifiedAccount, remoteDiagnosticsIdentity == identity else {
+            throw MaiChatAuthError.identityMismatch
+        }
     }
 
     func setMaiChatNickname(_ nickname: String) async throws {
@@ -939,6 +950,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
 
     private func finishAccountLogin(_ session: MaiChatAuthSession) async throws {
+        // 所有调用点均在 password/SMS/social/bind/reset 成功 adopt 后进入，普通 refresh 不调用此处。
+        // 在首次 await 前推进，让旧账号密码/PDF request 即刻失效；不触发整套聊天状态重置。
+        accountAuthenticationGeneration &+= 1
         let credential = try await accountAuth.credentialIfAvailable(
             expectedUserID: session.user.imUserId
         )
@@ -2409,7 +2423,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     var remoteDiagnosticsIdentity: String {
         """
         \(chatState.ownerUserID)|\(historyAccountGeneration)|\(accountRebuildRequestGeneration)\
-        |\(chatHistorySDKAppID ?? 0)
+        |\(chatHistorySDKAppID ?? 0)|\(accountAuthenticationGeneration)
         """
     }
 

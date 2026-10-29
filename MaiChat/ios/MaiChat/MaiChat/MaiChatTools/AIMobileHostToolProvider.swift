@@ -52,6 +52,29 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "maichat_change_password":
+            // 密码不属于 Agent 参数/历史：宿主只打开本地安全页或查询无凭据状态。
+            guard Set(arguments.keys).isSubset(of: ["action", "request_id"]),
+                  let action = arguments["action"] as? String,
+                  let appState, appState.hasUnifiedAccount else {
+                return .failure(code: "invalid_input", message: "sign in and use open or status")
+            }
+            do {
+                let output: [String: Any]
+                if action == "open", arguments["request_id"] == nil {
+                    output = try AIAccountPasswordRequests.shared.open(appState: appState)
+                } else if action == "status", let raw = arguments["request_id"] as? String,
+                          let id = UUID(uuidString: raw) {
+                    output = try AIAccountPasswordRequests.shared.status(id: id, appState: appState)
+                } else {
+                    return .failure(code: "invalid_input", message: "invalid password form request")
+                }
+                return Self.jsonSuccess(output)
+            } catch AIAccountPasswordRequests.PasswordRequestError.notFound {
+                return .failure(code: "not_found", message: "password form request is unavailable for this account")
+            } catch {
+                return .failure(code: "not_configured", message: "open MaiChat in the foreground and sign in first")
+            }
         case "mobile_retain_screen_frame":
             return await retainScreenFrame(arguments)
         case "mobile_start_screen_share", "mobile_stop_screen_share", "mobile_capture_screen":
@@ -191,6 +214,7 @@ final class AIMobileHostToolProvider {
         case "mobile_compose_sms": return composeSMS(arguments)
         case "mobile_decode_text": return decodeLegacyText(arguments)
         case "generate_pdf": return generatePDF(arguments)
+        case "pdf_password_request": return pdfPasswordRequest(arguments)
         case "mobile_list_photos": return await listPhotos(arguments)
         case "mobile_list_albums": return await listAlbums()
         case "mobile_read_photo": return await readPhoto(arguments)

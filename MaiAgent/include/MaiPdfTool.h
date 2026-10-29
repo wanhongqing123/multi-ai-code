@@ -8,6 +8,7 @@
 #include <string>
 
 #include "MaiTool.h"
+#include "MaiPdfDocumentTools.h"
 
 // PDF 排版由宿主提供：桌面用 Qt，移动端用各自系统的 HTML 打印能力。
 //
@@ -20,4 +21,7 @@ using MaiPdfRenderer =
                                 const std::atomic<bool>* cancel)>;
 
 // renderer 为空时不注册工具。生成动作会写文件，因此遵循普通写工具的审批策略。
-std::unique_ptr<MaiTool> makeMaiPdfTool(MaiPdfRenderer renderer);
+// passwordProvider 仅处理 password_protected=true 的私有输入，不把密码放入模型参数或结果。
+// 未提供时普通 PDF 不受影响；请求密码保护则明确返回 NotConfigured，绝不退回明文。
+std::unique_ptr<MaiTool> makeMaiPdfTool(MaiPdfRenderer renderer,
+                                        MaiPdfPasswordProvider passwordProvider = {});

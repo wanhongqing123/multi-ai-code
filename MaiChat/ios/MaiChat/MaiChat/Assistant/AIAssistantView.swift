@@ -179,6 +179,7 @@ struct AIAssistantView: View {
                     .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
                     }
+                    // RootTab 独占 home 安全区；composer 只画自身，不能再次向底部叠加半透明层。
                     .remoteIMBarBackground(opacity: RemoteIMStyle.conversationBarOpacity)
                     .overlay(alignment: .top) { RemoteIMBarSeparator() }
                 }

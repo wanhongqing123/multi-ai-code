@@ -3,6 +3,7 @@
 // test_media_only_prompt_has_no_placeholder_text、test_mixed_media_prompt_is_one_message。
 // 检查可观察结果而非实现细节。
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -238,6 +239,13 @@ static void test_session_workspace_tool_effective_next_turn() {
     const std::string target = MaiFileSystem::temporaryDirectory().toUtf8();
     CHECK(agent.submit(MaiSendPrompt{current, "Start"}));
     CHECK(agent.isBusy(current));
+    // isBusy 只说明 worker 已登记，不保证它已读取本轮工作区。先等真实模型请求到达，
+    // 再验证修改不会影响已经发出的请求，避免把线程调度时序当成下一轮生效的契约。
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (observed->requestCount() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(observed->requestCount() == 1);
     const MaiToolResult switched = workspaceTool->execute(
         nlohmann::json{{"session_id", current}, {"workspace_path", target}}.dump(), context);
     CHECK(!switched.hasError());

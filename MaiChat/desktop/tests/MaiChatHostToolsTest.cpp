@@ -36,7 +36,7 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
   registerMaiChatHostTools(registry, app);
 
   for (const char *name :
-       {"maichat_list_contacts", "maichat_request_friend", "maichat_set_nickname",
+       {"maichat_list_contacts", "maichat_request_friend", "maichat_set_nickname", "maichat_change_password",
         "maichat_list_conversations",
         "maichat_get_messages", "maichat_search_messages",
         "maichat_get_unread_summary", "maichat_send_text", "maichat_send_media",
@@ -45,6 +45,7 @@ void MaiChatHostToolsTest::registersMaiChatReadAndWriteTools() {
     QVERIFY2(registry.find(name) != nullptr, name);
   }
   QVERIFY(!registry.find("maichat_list_contacts")->requiresApproval("{}"));
+  QVERIFY(!registry.find("maichat_change_password")->requiresApproval(R"({"action":"open"})"));
   QVERIFY(registry.find("maichat_request_friend")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_set_nickname")->requiresApproval("{}"));
   QVERIFY(registry.find("maichat_set_nickname")->requiresPerCallApproval("{}"));

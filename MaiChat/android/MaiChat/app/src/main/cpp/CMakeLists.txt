@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_subdirectory(../../../../../../MobileAgentAdapter mobile)
 add_library(maichat_agent SHARED MaiAgentJni.cpp MaiChatAuthJni.cpp
+  MaiPdfSecurityJni.cpp
   MaiChatAttachmentDownloadJni.cpp MaiCloudDriveJni.cpp MaiCloudVodJni.cpp MaiGraphicsViewJni.cpp
   MaiSessionSyncJni.cpp MaiVideoCircleJni.cpp
   media/MaiImageDecodeJni.cpp media/MaiFfplayJni.cpp

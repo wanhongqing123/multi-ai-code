@@ -100,7 +100,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -142,6 +145,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     private static final String EXTRA_NOTIFICATION_PEER = "notification-peer-user-id";
 
     private RemoteIMSessionController session;
+    // 与普通设置共用表单；这里只保存无凭据请求状态，密码不进入 Agent 桥或持久化草稿。
+    private final MaiAccountPasswordRequests passwordRequests = new MaiAccountPasswordRequests();
+    private AlertDialog passwordDialog;
+    private String passwordRequestId;
+    private String passwordRequestIdentity;
     private MaiChatHostTools maiChatHostTools;
     private Consumer<Boolean> pendingScreenShare;
     private RemoteIMMediaStore mediaStore;
@@ -322,6 +330,9 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         createMessageNotificationChannel();
         showInitialLogin = session.requiresLogin();
         render();
+        // 仅显式 Debug Intent 验收普通 PDF API；默认无入口，不影响真实会话或账号密码。
+        com.kongshang.maichat.tools.MobilePdfSecurityAcceptance.installIfRequested(
+            this, maiChatHostTools.pdfPasswords(), mediaExecutor);
         handleNotificationIntent(getIntent());
         handleLocalSocialIntent(getIntent());
         if (!session.requiresLogin()) requestNotificationPermissionIfNeeded();
@@ -416,6 +427,8 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     @Override
     protected void onDestroy() {
         destroyed = true;
+        passwordRequests.cancelActive("identity_changed");
+        if (passwordDialog != null) passwordDialog.dismiss();
         if (cloudDriveDialog != null && cloudDriveDialog.isShowing()) cloudDriveDialog.dismiss();
         socialUiHandler.removeCallbacks(socialBindingTick);
         pendingGalleryAction = null;
@@ -847,6 +860,11 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
     // 切换页面时同步 Agent 前后台状态与输入草稿，避免重建页面时丢失原有会话内容。
     private void render() {
         if (destroyed) return;
+        // 账号/登录代际变化立即清空并收起旧密码页；在途 HTTP 结果未知，不能说已取消。
+        if (passwordDialog != null && !session.passwordChangeIdentity().equals(passwordRequestIdentity)) {
+            passwordRequests.cancelActive("identity_changed");
+            passwordDialog.dismiss();
+        }
         if (videoDialog != null && cloudPlayerStreams.containsKey(videoDialog) &&
             !cloudPlayerOwner.equals(MaiChatAuthClient.shared(this).accountId()))
             videoDialog.dismiss();
@@ -3682,6 +3700,159 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         dialog.show();
     }
 
+    /** 普通 UI 入口与 Agent 共用安全表单，返回值只有展示状态，不包含任何密码内容。UI 线程调用。 */
+    public JSONObject openAccountPasswordForm() throws JSONException {
+        if (Looper.myLooper() != Looper.getMainLooper() || !isHostToolForeground() || session.requiresLogin())
+            throw new IllegalStateException("请先登录后在前台打开密码页");
+        final String identity = session.passwordChangeIdentity();
+        if (passwordDialog != null && !identity.equals(passwordRequestIdentity)) {
+            passwordRequests.cancelActive("identity_changed");
+            passwordDialog.dismiss();
+        }
+        final String id = passwordRequests.open(identity);
+        if (passwordDialog != null && passwordDialog.isShowing()) return passwordRequests.status(id, identity);
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(22), dp(12), dp(22), dp(8));
+        EditText password = new EditText(this);
+        EditText confirmation = new EditText(this);
+        EditText[] fields = {password, confirmation};
+        for (EditText field : fields) {
+            field.setSingleLine(true);
+            field.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            // 不写 Activity 保存状态或普通草稿；系统密码管理器仍可通过原生输入框工作。
+            field.setSaveEnabled(false);
+            if (Build.VERSION.SDK_INT >= 26) field.setAutofillHints("newPassword");
+            form.addView(field, match(dp(56)));
+        }
+        password.setHint("新密码");
+        password.setContentDescription("新密码");
+        confirmation.setHint("再次输入新密码");
+        confirmation.setContentDescription("再次输入新密码");
+        TextView help = MaiChatTheme.label(this,
+            "密码须为 15–128 个字符；修改前须在最近 10 分钟内登录。保存后其他设备需重新登录，当前设备保持登录。",
+            13, MaiChatTheme.SECONDARY);
+        form.addView(help, matchWrap());
+        TextView result = MaiChatTheme.label(this, "", 13, MaiChatTheme.RED);
+        form.addView(result, matchWrap());
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("登录密码")
+            .setView(form).setNegativeButton("取消", (ignored, which) -> {})
+            .setPositiveButton("保存密码", null).create();
+        passwordDialog = dialog;
+        passwordRequestId = id;
+        passwordRequestIdentity = identity;
+        final boolean[] saving = {false};
+        dialog.setOnShowListener(ignored -> {
+            passwordRequests.visible(id, identity);
+            Button save = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            save.setEnabled(false);
+            TextWatcher watcher = new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+                @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+                @Override public void afterTextChanged(Editable value) {
+                    save.setEnabled(!saving[0] && MaiAccountPasswordRequests.isValidPassword(
+                        password.getText().toString(), confirmation.getText().toString()));
+                }
+            };
+            password.addTextChangedListener(watcher);
+            confirmation.addTextChangedListener(watcher);
+            save.setOnClickListener(view -> {
+                if (saving[0] || !MaiAccountPasswordRequests.isValidPassword(
+                    password.getText().toString(), confirmation.getText().toString())) return;
+                if (!identity.equals(session.passwordChangeIdentity())) {
+                    passwordRequests.cancelActive("identity_changed");
+                    dialog.dismiss();
+                    return;
+                }
+                // HTTP 在途不可由关闭页撤回；显式 submitting，禁止关闭和重复提交，不增加确认弹窗。
+                saving[0] = true;
+                passwordRequests.submitting(id, identity);
+                dialog.setCancelable(false);
+                dialog.setCanceledOnTouchOutside(false);
+                save.setEnabled(false);
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
+                for (EditText field : fields) field.setEnabled(false);
+                result.setText("正在保存…");
+                session.setAccountPassword(password.getText().toString(), identity, error -> {
+                    if (!identity.equals(session.passwordChangeIdentity()) || destroyed) return;
+                    String errorCode = error == null ? null :
+                        "请重新登录后再修改密码".equals(error) ? "reauth_required" : "failed";
+                    passwordRequests.finished(id, identity, errorCode);
+                    if (!dialog.isShowing()) return;
+                    saving[0] = false;
+                    if (error == null) {
+                        dialog.dismiss();
+                        toast("密码已保存");
+                        return;
+                    }
+                    dialog.setCancelable(true);
+                    dialog.setCanceledOnTouchOutside(true);
+                    dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
+                    for (EditText field : fields) field.setEnabled(true);
+                    save.setEnabled(true);
+                    result.setText(error);
+                });
+            });
+        });
+        dialog.setOnDismissListener(ignored -> {
+            // 无论设置页还是工具页，退出都清空输入，不把密码带入下次展示或系统保存状态。
+            password.setText("");
+            confirmation.setText("");
+            passwordRequests.dismiss(id);
+            if (passwordDialog == dialog) {
+                passwordDialog = null;
+                passwordRequestId = null;
+                passwordRequestIdentity = null;
+            }
+        });
+        allowKeyboardLocation = false;
+        dialog.show();
+        return passwordRequests.status(id, identity);
+    }
+
+    /** 工具桥只提交无凭据的 open/status。等待 UI 调度，不等待用户输入或 HTTP，避免占住 Agent。 */
+    public JSONObject passwordChangeRequestForAgent(JSONObject arguments) throws Exception {
+        java.util.Iterator<String> keys = arguments.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!key.equals("action") && !key.equals("request_id"))
+                throw new IllegalArgumentException("密码只能在本机安全输入页填写");
+        }
+        Object rawAction = arguments.opt("action");
+        if (!(rawAction instanceof String)) throw new IllegalArgumentException("需要 open 或 status");
+        final String action = (String) rawAction;
+        final String id;
+        if (action.equals("open") && !arguments.has("request_id")) id = null;
+        else if (action.equals("status") && arguments.opt("request_id") instanceof String) {
+            String value = arguments.getString("request_id");
+            id = UUID.fromString(value).toString();
+            if (!id.equalsIgnoreCase(value)) throw new IllegalArgumentException("请求 ID 格式不正确");
+        } else throw new IllegalArgumentException("需要 open 或 status");
+        AtomicReference<JSONObject> output = new AtomicReference<>();
+        AtomicReference<Exception> failure = new AtomicReference<>();
+        AtomicBoolean abandoned = new AtomicBoolean();
+        CountDownLatch ready = new CountDownLatch(1);
+        Runnable task = () -> {
+            try {
+                if (abandoned.get()) return;
+                if (destroyed || session.requiresLogin()) throw new IllegalStateException("请先登录 MaiChat");
+                output.set(action.equals("open") ? openAccountPasswordForm() :
+                    passwordRequests.status(id, session.passwordChangeIdentity()));
+            } catch (Exception error) { failure.set(error); }
+            finally { ready.countDown(); }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) task.run();
+        else runOnUiThread(task);
+        if (!ready.await(5, TimeUnit.SECONDS)) {
+            abandoned.set(true);
+            throw new IllegalStateException("密码输入页暂时不可用，请回到 App 后重试");
+        }
+        if (failure.get() != null) throw failure.get();
+        return output.get();
+    }
+
     private void renderSettings() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout page = new LinearLayout(this);
@@ -3715,6 +3886,14 @@ public final class MainActivity extends Activity implements RemoteIMSessionContr
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(dp(8), dp(8));
         statusParams.setMargins(dp(7), 0, 0, 0);
         connectionRow.addView(statusDot(), statusParams);
+        Button password = secondaryButton("设置或修改登录密码");
+        LinearLayout.LayoutParams passwordParams = match(dp(48));
+        passwordParams.setMargins(0, dp(14), 0, 0);
+        page.addView(password, passwordParams);
+        password.setOnClickListener(view -> {
+            try { openAccountPasswordForm(); }
+            catch (Exception failure) { toast("请先登录后在前台打开密码页"); }
+        });
         Button friendCode = secondaryButton("我的好友二维码");
         LinearLayout.LayoutParams friendCodeParams = match(dp(48));
         friendCodeParams.setMargins(0, dp(14), 0, 0);

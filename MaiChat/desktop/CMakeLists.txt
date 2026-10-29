@@ -469,10 +469,13 @@ add_library(remote_im_desktop_app
   src/app/RemoteIMApplication.cpp
   src/MaiChatTools/MaiChatHostTools.h
   src/MaiChatTools/MaiChatHostTools.cpp
+  ../MaiChatTools/MaiChangePasswordTool.h
+  ../MaiChatTools/MaiChangePasswordTool.cpp
   src/app/VideoCoverImage.h
   src/app/VideoCoverImage.cpp
 )
-target_include_directories(remote_im_desktop_app PUBLIC src)
+target_include_directories(remote_im_desktop_app PUBLIC src PRIVATE ../MaiChatTools
+  ../../MaiAgent/third_party/nlohmann)
 # Qt5::Gui：视频封面要用 QImage/QPainter 画（并在 Windows 上把系统缩略图的 HBITMAP
 # 转成 QImage）。remote_im_core 保持无 GUI 依赖，封面这层留在应用层。
 target_link_libraries(remote_im_desktop_app PUBLIC remote_im_core Qt5::Gui maiagent
@@ -488,6 +491,10 @@ endif()
 
 add_library(remote_im_desktop_ui
   resources/resources.qrc
+  src/app/DesktopPasswordChangeRequests.h
+  src/app/DesktopPasswordChangeRequests.cpp
+  src/ui/PasswordChangeDialog.h
+  src/ui/PasswordChangeDialog.cpp
   src/ui/AppMessageDialog.h
   src/ui/AppMessageDialog.cpp
   src/ui/AppTextInputDialog.h
@@ -628,14 +635,26 @@ if(WIN32)
       "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quirc/LICENSE"
-      "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses/QUIRC_LICENSE")
+      "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses/QUIRC_LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/qpdf/LICENSE.txt"
+      "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses/QPDF_LICENSE.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/qpdf/NOTICE.md"
+      "$<TARGET_FILE_DIR:maichat>/ThirdPartyLicenses/QPDF_NOTICE.md")
 elseif(APPLE)
   add_custom_command(TARGET maichat POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quirc/LICENSE"
-      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QUIRC_LICENSE")
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QUIRC_LICENSE"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/qpdf/LICENSE.txt"
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QPDF_LICENSE.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/qpdf/NOTICE.md"
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QPDF_NOTICE.md")
 endif()
 if(WIN32)
   # GUI 子系统（/SUBSYSTEM:WINDOWS）：不加时 exe 是控制台程序，双击启动会先弹一个
@@ -822,6 +841,8 @@ add_library(maichat_agent
   src/agent/DesktopAccountModelClient.cpp
   src/MaiChatTools/DesktopPdfRenderer.h
   src/MaiChatTools/DesktopPdfRenderer.cpp
+  src/MaiChatTools/DesktopPdfPasswordPrompt.h
+  src/MaiChatTools/DesktopPdfPasswordPrompt.cpp
   src/agent/AgentChatPanel.h
   src/agent/AgentChatPanel.cpp
   src/agent/RemoteAgentPanel.h
@@ -1056,6 +1077,15 @@ target_include_directories(cloud_drive_agent_tools_test PRIVATE
 target_link_libraries(cloud_drive_agent_tools_test PRIVATE maiagent mai_cloud_drive_client
   mai_cloud_vod)
 add_test(NAME cloud_drive_agent_tools COMMAND cloud_drive_agent_tools_test)
+
+# 密码工具的输入/输出白名单与在途状态三端共用；此目标不打开 UI、不提交真实账号密码。
+add_executable(change_password_tool_test
+  ../MaiChatTools/tests/MaiChangePasswordToolTest.cpp
+  ../MaiChatTools/MaiChangePasswordTool.cpp)
+target_include_directories(change_password_tool_test PRIVATE
+  ../MaiChatTools ../../MaiAgent/include ../../MaiAgent/third_party/nlohmann)
+target_link_libraries(change_password_tool_test PRIVATE maiagent)
+add_test(NAME change_password_tool COMMAND change_password_tool_test)
 
 add_executable(mai_qr_code_test
   ../MaiChatTools/tests/MaiQrCodeTest.cpp
@@ -1684,3 +1714,21 @@ add_test(NAME remote_desktop_ui_test COMMAND remote_desktop_ui_test)
 add_test(NAME message_image_loader_test COMMAND message_image_loader_test)
 add_test(NAME message_search_test COMMAND message_search_test)
 add_test(NAME ui_zoom_test COMMAND ui_zoom_test)
+
+add_executable(desktop_password_change_test tests/DesktopPasswordChangeRequestsTest.cpp)
+if(APPLE)
+  target_sources(desktop_password_change_test PRIVATE tests/DesktopPasswordChangeTestMac.mm)
+  target_link_libraries(desktop_password_change_test PRIVATE "-framework AppKit")
+endif()
+target_link_libraries(desktop_password_change_test PRIVATE
+  remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+add_test(NAME desktop_password_change_test COMMAND desktop_password_change_test)
+
+add_executable(desktop_pdf_password_prompt_test tests/DesktopPdfPasswordPromptTest.cpp)
+if(APPLE)
+  target_sources(desktop_pdf_password_prompt_test PRIVATE tests/DesktopPasswordChangeTestMac.mm)
+  target_link_libraries(desktop_pdf_password_prompt_test PRIVATE "-framework AppKit")
+endif()
+target_link_libraries(desktop_pdf_password_prompt_test PRIVATE
+  remote_im_desktop_ui remote_im_desktop_app remote_im_core Qt5::Widgets Qt5::Test)
+add_test(NAME desktop_pdf_password_prompt_test COMMAND desktop_pdf_password_prompt_test)

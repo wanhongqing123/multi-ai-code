@@ -4,6 +4,191 @@
 import XCTest
 
 final class AIAssistantUITests: XCTestCase {
+    @MainActor func testPdfSecurityUsesNativeRenderAndPrivatePasswordForm() async throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        let base = "http://127.0.0.1:18390"
+        var health = URLRequest(url: URL(string: base + "/test/status")!)
+        health.timeoutInterval = 3
+        guard let (_, response) = try? await URLSession.shared.data(for: health),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要独立 18390 内存账号 fixture")
+        }
+        // 同轮账号改密测试可能先执行。只尝试两个明确的虚构口令，绝不修改共享账号或生产账号。
+        var fixturePassword: String?
+        for candidate in ["local sync UI test passphrase", "isolated password UI replacement"] {
+            var request = URLRequest(url: URL(string: base + "/v1/auth/password/login")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["account_id": "sync-ui-test",
+                "password": candidate, "age_confirmed_14_plus": true, "device_slot": "ios_phone"])
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 200 { fixturePassword = candidate; break }
+        }
+        let password = try XCTUnwrap(fixturePassword, "独立测试账号应能登录")
+        let (certificate, _) = try await URLSession.shared.data(from: URL(string: base + "/test/cert")!)
+        let app = XCUIApplication()
+        app.launchArguments = ["--pdf-security-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = password
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18390"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["创作中心"].waitForExistence(timeout: 35))
+        app.buttons["创作中心"].tap()
+        let run = app.buttons["pdf-security-run"]
+        XCTAssertTrue(run.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: run)], timeout: 35), .completed)
+        func result(_ status: String) throws -> [String: Any] {
+            let element = app.staticTexts["pdf-security-output"]
+            let compact = "\"status\":\"\(status)\"", spaced = "\"status\": \"\(status)\""
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value CONTAINS %@ OR value CONTAINS %@", compact, spaced),
+                object: element)], timeout: 30), .completed)
+            let raw = try XCTUnwrap(element.value as? String)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        }
+        run.tap()
+        let field = app.secureTextFields["pdf-password-new"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        app.buttons["pdf-password-cancel"].tap()
+        XCTAssertEqual(try result("canceled")["output_exists"] as? Bool, false,
+                       "取消原生密码输入不能生成输出 PDF")
+        run.tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        let fakePassword = "PDF private fixture secret"
+        field.tap()
+        field.typeText(fakePassword)
+        let confirmation = app.secureTextFields["pdf-password-confirm"]
+        confirmation.tap()
+        confirmation.typeText(fakePassword)
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        let form = XCTAttachment(screenshot: app.screenshot())
+        form.name = "pdf-private-native-form-keyboard-ready"
+        form.lifetime = .keepAlways
+        add(form)
+        app.buttons["pdf-password-submit"].tap()
+        let proof = try result("passed")
+        XCTAssertEqual(proof["locked_without_password"] as? Bool, true)
+        XCTAssertEqual(proof["wrong_password_rejected"] as? Bool, true)
+        XCTAssertEqual(proof["content_readable"] as? Bool, true)
+        // UIKit 的实际分页受系统版本/打印排版影响；保护只重写 PDF 对象，页数必须保持原样。
+        let sourcePages = try XCTUnwrap(proof["source_pages"] as? Int)
+        XCTAssertGreaterThan(sourcePages, 0)
+        XCTAssertEqual(try XCTUnwrap(proof["encrypted_pages"] as? Int), sourcePages)
+        XCTAssertFalse((app.staticTexts["pdf-security-output"].value as? String ?? "").contains(fakePassword))
+        let encrypted = XCTAttachment(screenshot: app.screenshot())
+        encrypted.name = "pdf-native-render-encrypted-independent-reader-proof"
+        encrypted.lifetime = .keepAlways
+        add(encrypted)
+        #else
+        throw XCTSkip("仅独立模拟器 fixture，不操作用户设备")
+        #endif
+    }
+
+    @MainActor func testPasswordToolUsesSecureFormAndConfirmsServerChange() async throws {
+        #if targetEnvironment(simulator)
+        continueAfterFailure = false
+        // 独立端口的内存账号可被本用例改密；绝不触碰共享 18190 或任何生产账号。
+        let base = "http://127.0.0.1:18390"
+        var health = URLRequest(url: URL(string: base + "/test/status")!)
+        health.timeoutInterval = 3
+        guard let (_, response) = try? await URLSession.shared.data(for: health),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw XCTSkip("需要独立 18390 密码工具内存账号 fixture")
+        }
+        let (certificate, _) = try await URLSession.shared.data(
+            from: URL(string: base + "/test/cert")!)
+        let app = XCUIApplication()
+        app.launchArguments = ["--password-tool-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18390"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        let open = app.buttons["password-tool-open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30))
+        let enabled = NSPredicate(format: "enabled == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: enabled, object: open)],
+                                     timeout: 30), .completed)
+
+        func safeOutput() throws -> [String: Any] {
+            let element = app.staticTexts["password-tool-output"]
+            let raw = element.value as? String ?? ""
+            let object = try JSONSerialization.jsonObject(with: Data(raw.utf8))
+            return try XCTUnwrap(object as? [String: Any])
+        }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        func queryStatus(_ expected: String) throws -> [String: Any] {
+            app.buttons["password-tool-status"].tap()
+            // execute 为异步入口；等待新状态写回，不能把按钮点击结束当作查询完成。
+            let value = app.staticTexts["password-tool-output"]
+            let compact = "\"status\":\"\(expected)\""
+            let spaced = "\"status\": \"\(expected)\""
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value CONTAINS %@ OR value CONTAINS %@", compact, spaced),
+                object: value)], timeout: 10), .completed)
+            return try safeOutput()
+        }
+        open.tap()
+        let firstPassword = app.secureTextFields["account-password-new"]
+        XCTAssertTrue(firstPassword.waitForExistence(timeout: 10))
+        app.buttons["account-password-close"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        let canceled = try queryStatus("canceled")
+        XCTAssertEqual(canceled["status"] as? String, "canceled")
+        XCTAssertEqual(canceled["opened"] as? Bool, true)
+        XCTAssertEqual(canceled["changed"] as? Bool, false)
+        let firstID = try XCTUnwrap(canceled["request_id"] as? String)
+
+        open.tap()
+        XCTAssertTrue(firstPassword.waitForExistence(timeout: 10))
+        // 虚构口令仅输入正常安全控件；open/status 的请求和探针从不接收这个值。
+        let replacement = "isolated password UI replacement"
+        firstPassword.tap()
+        firstPassword.typeText(replacement)
+        let confirmation = app.secureTextFields["account-password-confirm"]
+        confirmation.tap()
+        confirmation.typeText(replacement)
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        capture("password-tool-real-root-secure-form-keyboard-ready")
+        app.buttons["account-password-save"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: firstPassword)], timeout: 20), .completed)
+        let changed = try queryStatus("changed")
+        XCTAssertEqual(changed["status"] as? String, "changed")
+        XCTAssertEqual(changed["opened"] as? Bool, true)
+        XCTAssertEqual(changed["changed"] as? Bool, true)
+        XCTAssertNotEqual(changed["request_id"] as? String, firstID)
+        let output = app.staticTexts["password-tool-output"].value as? String ?? ""
+        XCTAssertFalse(output.contains(replacement), "密码不能进入工具输出或探针状态")
+        XCTAssertFalse(output.contains("new_password"))
+        capture("password-tool-changed-no-password-output")
+
+        // 停 App 后独立登录验证真实 POST 已改密；不让新登录影响正在检查的 UI 状态。
+        app.terminate()
+        var login = URLRequest(url: URL(string: base + "/v1/auth/password/login")!)
+        login.httpMethod = "POST"
+        login.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        login.httpBody = try JSONSerialization.data(withJSONObject: [
+            "account_id": "sync-ui-test", "password": replacement,
+            "age_confirmed_14_plus": true, "device_slot": "ios_phone"])
+        let (_, loginResponse) = try await URLSession.shared.data(for: login)
+        XCTAssertEqual((loginResponse as? HTTPURLResponse)?.statusCode, 200,
+                       "服务端必须接受新密码，不能仅验证页面显示成功")
+        #else
+        throw XCTSkip("只运行独立模拟器账号，不修改真机或生产密码")
+        #endif
+    }
+
     @MainActor func testConversationBarsCoverBottomSafeAreaWithLongContent() throws {
         #if targetEnvironment(simulator)
         continueAfterFailure = false

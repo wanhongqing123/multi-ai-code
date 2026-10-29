@@ -83,6 +83,9 @@ public:
     void adoptApprovedSession(const QJsonObject& session, Completion completion);
     void loginWithPassword(const QString& accountId, const QString& password,
                            Completion completion);
+    // 密码只交给普通鉴权请求；回调仅返回固定错误码，不能带回密码或服务端原文。
+    using PasswordCompletion = std::function<void(const QString& errorCode)>;
+    void setPassword(const QString& password, PasswordCompletion completion);
     void updateNickname(const QString& nickname, Completion completion);
     using FriendsCompletion =
         std::function<void(const QList<DesktopFriend>&, const QString&)>;
@@ -116,6 +119,7 @@ public:
     DesktopImCredential imCredential() const { return imCredential_; }
     QString authenticatedUserId() const { return userId_; }
     QString maiChatAccountId() const { return accountId_; }
+    QString authenticatedSessionIdentity() const;
     QString nickname() const { return nickname_; }
     void setCredentialUpdatedHandler(std::function<void(const DesktopImCredential&)> handler);
     void setSessionInvalidatedHandler(std::function<void(const QString&)> handler);
@@ -125,13 +129,15 @@ private:
         int status = 0;
         QJsonObject body;
         QString error;
+        QString code;
     };
     void request(const QString& path, const QByteArray& method, const QJsonObject& body,
                  const QString& bearer, std::function<void(const HttpResult&)> completion);
     void authorizedRequest(const QString& path, const QByteArray& method,
                            const QJsonObject& body,
                            std::function<void(const HttpResult&)> completion,
-                           bool retryAfterUnauthorized = true);
+                           bool retryAfterUnauthorized = true,
+                           quint64 expectedAccountGeneration = 0);
     void refresh(Completion completion);
     void fetchImCredentialImpl(Completion completion, bool retryAfterUnauthorized);
     void fetchAccountModelKeysImpl(AccountModelKeysCompletion completion,
@@ -157,6 +163,8 @@ private:
     QString userId_;
     QString accountId_;
     QString nickname_;
+    // 登录/退出推进代次；刷新同一登录不推进，密码请求不能随重试切到另一登录。
+    quint64 accountGeneration_ = 1;
     QDateTime accessExpiresAt_;
     DesktopImCredential imCredential_;
     QTimer refreshTimer_;

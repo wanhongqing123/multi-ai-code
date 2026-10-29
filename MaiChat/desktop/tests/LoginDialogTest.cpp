@@ -124,6 +124,15 @@ public:
                     response = status == 200 ? approvedSession() :
                         QJsonObject{{QStringLiteral("error"),
                                      QStringLiteral("Account or password is incorrect")}};
+                } else if (headers.startsWith("post /v1/auth/password/set ")) {
+                    ++passwordSetCount;
+                    passwordSetPayloadValid = body.size() == 1 &&
+                        body.value(QStringLiteral("new_password")).toString() ==
+                            QStringLiteral("new-password-safe-test-123");
+                    if (deferPasswordSet) { deferredPasswordSocket = socket; return; }
+                    status = passwordSetStatus;
+                    response = status == 200 ? QJsonObject{{QStringLiteral("password_set"), passwordSetConfirmation}} :
+                        QJsonObject{{QStringLiteral("error"), QStringLiteral("Sign in again before changing the password")}};
                 } else if (headers.startsWith("post /v1/auth/profile ")) {
                     ++profileUpdateCount;
                     profileNickname = body.value(QStringLiteral("nickname")).toString();
@@ -279,6 +288,14 @@ public:
         deferredClaimSocket = nullptr;
         deferClaimResponse = false;
     }
+    void finishDeferredPasswordSet() {
+        if (!deferredPasswordSocket) return;
+        const QByteArray payload = "{\"password_set\":true}";
+        deferredPasswordSocket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+            QByteArray::number(payload.size()) + "\r\nConnection: close\r\n\r\n" + payload);
+        deferredPasswordSocket->disconnectFromHost();
+        deferredPasswordSocket = nullptr;
+    }
     QString challenge;
     QString platform;
     int qrRequestCount = 0;
@@ -293,6 +310,12 @@ public:
     int initialAccessExpiresIn = 900;
     int refreshCount = 0;
     int passwordLoginCount = 0;
+    int passwordSetCount = 0;
+    int passwordSetStatus = 200;
+    QJsonValue passwordSetConfirmation = true;
+    bool passwordSetPayloadValid = false;
+    bool deferPasswordSet = false;
+    QTcpSocket* deferredPasswordSocket = nullptr;
     int profileUpdateCount = 0;
     QString profileNickname;
     QString passwordLoginAccount;
@@ -342,6 +365,8 @@ private slots:
     void switchingToPasswordCancelsQrAndKeepsAccountDraft();
     void accountPasswordLoginUsesServerSignedCredential();
     void updatesMaiChatNicknameAndAllowsClearingIt();
+    void passwordChangeRequiresServerConfirmationAndRecentLogin();
+    void passwordChangeRejectsResponseFromPreviousLoginGeneration();
     void displaysServerQrAndSendsMatchingVerifier();
     void replacingQrCancelsPreviousRequest();
     void approvedQrUsesServerSignedCredential();
@@ -529,6 +554,68 @@ void LoginDialogTest::accountPasswordLoginUsesServerSignedCredential() {
     QVERIFY(server.passwordLoginAgeConfirmed);
     QCOMPARE(auth.maiChatAccountId(), QStringLiteral("m-auth-test"));
     QCOMPARE(auth.authenticatedUserId(), QStringLiteral("im-auth-test"));
+}
+
+// 普通鉴权 API 只把服务端布尔 true 当成功；密码不经工具，也不把服务端原文当结果。
+void LoginDialogTest::passwordChangeRequiresServerConfirmationAndRecentLogin() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    bool signedIn = false;
+    auth.loginWithPassword(QStringLiteral("test_account"), QStringLiteral("test-account-password-123456"),
+        [&](bool ok, const QString&) { signedIn = ok; });
+    QTRY_VERIFY_WITH_TIMEOUT(signedIn, 5000);
+    int replies = 0;
+    QString error;
+    auto change = [&] {
+        auth.setPassword(QStringLiteral("new-password-safe-test-123"), [&](const QString& code) {
+            error = code;
+            ++replies;
+        });
+    };
+    server.passwordSetConfirmation = false;
+    change();
+    QTRY_COMPARE_WITH_TIMEOUT(replies, 1, 5000);
+    QCOMPARE(error, QStringLiteral("failed"));
+    QVERIFY(server.passwordSetPayloadValid);
+    server.passwordSetConfirmation = QStringLiteral("true");
+    change();
+    QTRY_COMPARE_WITH_TIMEOUT(replies, 2, 5000);
+    QCOMPARE(error, QStringLiteral("failed"));
+    server.passwordSetConfirmation = true;
+    change();
+    QTRY_COMPARE_WITH_TIMEOUT(replies, 3, 5000);
+    QVERIFY(error.isEmpty());
+    server.passwordSetStatus = 403;
+    change();
+    QTRY_COMPARE_WITH_TIMEOUT(replies, 4, 5000);
+    QCOMPARE(error, QStringLiteral("reauth_required"));
+}
+
+void LoginDialogTest::passwordChangeRejectsResponseFromPreviousLoginGeneration() {
+    FakeQrServer server;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    int logins = 0;
+    auto login = [&] {
+        auth.loginWithPassword(QStringLiteral("test_account"), QStringLiteral("test-account-password-123456"),
+            [&](bool ok, const QString&) { if (ok) ++logins; });
+    };
+    login();
+    QTRY_COMPARE_WITH_TIMEOUT(logins, 1, 5000);
+    const QString firstIdentity = auth.authenticatedSessionIdentity();
+    server.deferPasswordSet = true;
+    bool replied = false;
+    QString error;
+    auth.setPassword(QStringLiteral("new-password-safe-test-123"), [&](const QString& code) {
+        replied = true; error = code;
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(server.passwordSetCount, 1, 5000);
+    login();
+    QTRY_COMPARE_WITH_TIMEOUT(logins, 2, 5000);
+    QVERIFY(auth.authenticatedSessionIdentity() != firstIdentity);
+    server.finishDeferredPasswordSet();
+    QTRY_VERIFY_WITH_TIMEOUT(replied, 5000);
+    QCOMPARE(error, QStringLiteral("identity_changed"));
+    QCOMPARE(server.passwordSetCount, 1);
 }
 
 void LoginDialogTest::switchingToPasswordCancelsQrAndKeepsAccountDraft() {

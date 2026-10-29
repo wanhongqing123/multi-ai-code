@@ -1,6 +1,7 @@
 // 文件作用：移动端 C++ Agent 适配层；MaiMobileAgent 负责移动 Agent 生命周期、工具注册和宿主回调，本文件给出其声明。
 // 对外边界：本文件给出 MaiMobileAgent 的类型和函数声明；参数、返回值和对象生命周期以此为准。
 #pragma once
+#include <stddef.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,6 +12,14 @@ void* maiMobileAgentCreate(void);
 void maiMobileAgentDestroy(void* handle);
 char* maiMobileAgentRequest(void* handle, const char* request);
 void maiMobileAgentFree(char* response);
+
+// 普通 PDF 密码保护入口，与 generate_pdf 共用进程内核心，不调用模型工具。
+// source/output 为已授权的绝对 UTF-8 路径。password 是借用的原始 UTF-8 bytes，
+// 长度显式传入以拒绝 NUL 和非法编码，避免 JNI modified UTF-8 改写密码。
+// 同步阻塞，只在工作线程调用；成功原子发布，失败保留输入和旧输出。
+// 响应只有路径/尺寸/状态或固定安全错误，不含密码，须用 maiMobileAgentFree 释放。
+char* maiMobilePdfEncrypt(const char* source, const char* output, const unsigned char* password, size_t passwordSize,
+                          int replaceExisting);
 // iOS 静态链接 ONNX Runtime 时，必须在 configure 前登记 OrtGetApiBase 返回的地址。
 // Android 和桌面端改用打包的动态库路径。指针借用到宿主进程结束，只能在 Agent 工作线程设置。
 int maiMobileAgentSetOrtApiBase(void* handle, const void* apiBase);
@@ -24,9 +33,8 @@ int maiMobileAgentSetChangeHandler(void* handle, MaiMobileAgentChangeHandler han
 // 视频抠像的宿主直接入口与 cv_video_matting 工具共用参数 Schema 和处理器。
 // 路径使用 UTF-8；argumentsJson 中的 output_path 仍相对于 workspace。
 // 返回由调用方持有的 {ok,output|error} JSON 字符串，必须用 maiMobileAgentFree 释放。
-char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace,
-                          const char* modelPath, const char* runtimePath,
-                          const void* apiBase);
+char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace, const char* modelPath,
+                          const char* runtimePath, const void* apiBase);
 
 // MaiChat 专属工具由嵌入它的 App 实现。MaiAgent 通过常规审批闸门后在工作线程调用 handler。
 // 不同会话可能并发回调；宿主访问平台状态时须切到对应线程。
@@ -36,17 +44,15 @@ char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace,
 //   {"ok":false,"error":"actionable failure"}
 // responseFree 必须用宿主分配器释放响应。处理器被替换或桥接销毁且全部 Agent 工作结束后，
 // contextRelease 只调用一次。
-typedef const char* (*MaiMobileHostToolHandler)(void* context, const char* toolName,
-                                                const char* argumentsJson);
+typedef const char* (*MaiMobileHostToolHandler)(void* context, const char* toolName, const char* argumentsJson);
 typedef void (*MaiMobileHostToolResponseFree)(void* context, const char* response);
 typedef void (*MaiMobileHostToolContextRelease)(void* context);
 
 // 成功返回 1；句柄或回调组合无效，以及工具回调正在执行时返回 0。
 // 传空 handler 会清除注册；否则三个回调指针都必须非空。
-int maiMobileAgentSetHostToolHandler(void* handle, void* context,
-                                    MaiMobileHostToolHandler handler,
-                                    MaiMobileHostToolResponseFree responseFree,
-                                    MaiMobileHostToolContextRelease contextRelease);
+int maiMobileAgentSetHostToolHandler(void* handle, void* context, MaiMobileHostToolHandler handler,
+                                     MaiMobileHostToolResponseFree responseFree,
+                                     MaiMobileHostToolContextRelease contextRelease);
 
 #ifdef __cplusplus
 }

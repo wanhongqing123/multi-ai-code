@@ -81,7 +81,8 @@ public final class RemoteIMSessionController {
     private volatile MaiChatAuthClient.Credential imCredential;
     private volatile ChatState chatState;
     private volatile boolean destroyed;
-    private int accountGeneration;
+    // 密码等账号绑定写入也会在 worker 开始前检查代际，切号必须对该线程立即可见。
+    private volatile int accountGeneration;
     private final Map<String, RemoteIMVideoAttachment> pendingVideoMedia = new java.util.LinkedHashMap<>();
     private int mediaRevision;
     public int mediaRevision() { return mediaRevision; }
@@ -381,6 +382,41 @@ public final class RemoteIMSessionController {
 
     public String nickname() {
         return productionMode ? authClient.nickname() : "";
+    }
+
+    /** 安全表单绑定账号和本次登录代际；同账号重新登录也不得沿用旧密码页。 */
+    public String passwordChangeIdentity() {
+        return !productionMode || requiresLogin() ? "" : accountId() + "|" + accountGeneration;
+    }
+
+    public void setAccountPassword(String password, String expectedIdentity, AccountCompletion completion) {
+        if (!productionMode || requiresLogin() || !passwordChangeIdentity().equals(expectedIdentity)) {
+            completion.onFinished("登录账号已变化，请重新打开密码页");
+            return;
+        }
+        final int generation = accountGeneration;
+        final String owner = accountId();
+        ioExecutor.execute(() -> {
+            String error = null;
+            try {
+                if (generation != accountGeneration)
+                    throw new IOException("登录账号已变化，请重新打开密码页");
+                authClient.setPassword(password, owner);
+            } catch (Exception failure) {
+                // 不转发任意异常/请求体，避免密码进入通用错误日志或 Agent 记录。
+                error = "请重新登录后再修改密码".equals(failure.getMessage()) ||
+                    "登录已过期，请重新登录".equals(failure.getMessage())
+                    ? "请重新登录后再修改密码" : "密码修改尚未确认，请检查账号和网络后重试";
+            }
+            final String result = error;
+            runOnMain(() -> {
+                if (destroyed || generation != accountGeneration) {
+                    completion.onFinished("登录账号已变化，请重新打开密码页");
+                    return;
+                }
+                completion.onFinished(result);
+            });
+        });
     }
 
     public void setNickname(String nickname, AccountCompletion completion) {

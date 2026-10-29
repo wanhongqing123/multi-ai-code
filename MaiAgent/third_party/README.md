@@ -20,6 +20,7 @@
 | `opencv/` | https://github.com/opencv/opencv | 4.14.0（完整源码） |
 | `simde/` | https://github.com/simd-everywhere/simde | 0.8.2（OBS 使用的头文件与许可文件） |
 | `md4c/` | https://github.com/mity/md4c | release-0.5.2（MIT，供 PDF 与桌面 Markdown 共用） |
+| `qpdf/` | https://github.com/qpdf/qpdf | 12.2.0（Apache-2.0，C++17 进程内 PDF AES-256/R6 密码保护，见 `qpdf/MAI_UPSTREAM.md`） |
 | `websocketpp/` | https://github.com/zaphoyd/websocketpp | 0.8.2（BSD-3-Clause，MaiChat 多端 Session 通道） |
 | `asio/` | https://github.com/chriskohlhoff/asio | asio-1-30-2（Boost Software License 1.0，WebSocket++ 独立 Asio 传输） |
 

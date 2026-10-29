@@ -99,6 +99,11 @@ tasks.register("stageMaiAgentGraphicsEffects", Sync) {
         include "rvm_mobilenetv3_fp32.onnx", "RVM_LICENSE"
         into "MaiAgentModels"
     }
+    // PDF 核心静态链接 qpdf；许可与归属随 App 发布，不能只留在开发机源目录。
+    from(file("$projectDir/../../../../MaiAgent/third_party/qpdf")) {
+        include "LICENSE.txt", "NOTICE.md"
+        into "MaiPdfLicenses"
+    }
     into graphicsEffectsOutput
 }
 android.sourceSets.main.assets.srcDir(graphicsEffectsOutput)

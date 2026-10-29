@@ -1,6 +1,7 @@
 // 文件作用：把 Agent 工具调用转发给移动端宿主，并管理处理器注册、并发调用与释放。
 // 调用边界：由 MaiChat 媒体或 Agent 宿主调用；平台资源在停止或失败时须正确释放。
 #include "MaiMobileHostTools.h"
+#include "MaiChangePasswordTool.h"
 
 #include <cstdlib>
 #include <chrono>
@@ -657,6 +658,11 @@ void addMaiMobileHostTool(MaiToolRegistry& tools, const char* name, const char* 
 // 具有外部副作用的入口要求审批，注册时不能因同组只读工具而放宽权限。
 void registerMaiChatHostTools(MaiToolRegistry& tools,
                               const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+    // 密码工具只传递安全表单的无凭据状态；三端使用同一个 factory 拒绝密码参数及结果泄漏。
+    tools.add(makeMaiChangePasswordTool([dispatcher](const std::string& arguments,
+                                                    const MaiToolContext&) {
+        return callMaiMobileHostTool(dispatcher, "maichat_change_password", arguments);
+    }));
     const auto add = [&](const char* name, const char* description, const char* schema,
                          bool approval = false) {
         tools.add(std::make_unique<MaiMobileHostTool>(name, description, schema, dispatcher,

@@ -508,11 +508,17 @@ actor MaiChatAuthClient {
     }
 
     func setPassword(_ password: String) async throws {
+        // 令牌刷新可能让 actor 让出执行；账号已切换时不能替另一个账号提交或报告成功。
+        let version = sessionVersion
         let token = try await currentAccessToken()
-        let _: [String: Bool] = try await request(
+        guard sessionVersion == version else { throw MaiChatAuthError.identityMismatch }
+        let result: [String: Bool] = try await request(
             "auth/password/set", method: "POST",
             body: ["new_password": password], bearer: token
         )
+        guard sessionVersion == version else { throw MaiChatAuthError.identityMismatch }
+        // HTTP 受理不是密码已修改；只有服务端明确 password_set=true 才能更新页面/工具状态。
+        guard result["password_set"] == true else { throw MaiChatAuthError.invalidServerResponse }
     }
 
     func credentialIfAvailable(expectedUserID: String) async throws -> MaiChatIMCredential? {

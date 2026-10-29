@@ -33,6 +33,7 @@
 #include "mai_fftools_embed.h"
 #endif
 #include "MaiChatTools/DesktopPdfRenderer.h"
+#include "MaiChatTools/DesktopPdfPasswordPrompt.h"
 #include "MaiChatTools/DesktopCalendarEvents.h"
 #include "MaiChatTools/DesktopProcessTools.h"
 #include "MaiChatTools/DesktopBrowserTools.h"
@@ -363,7 +364,8 @@ buildAgent(std::unique_ptr<MaiModelClient> model, std::unique_ptr<MaiSessionStor
     }
 #endif
 #endif
-    tools->add(makeMaiPdfTool(renderDesktopPdf));
+    // 密码只由本机私有表单交给普通加密 API，不成为工具输入或输出，也不另加审批。
+    tools->add(makeMaiPdfTool(renderDesktopPdf, requestDesktopPdfPassword));
 #if defined(MAICHAT_DESKTOP_VISION)
     registerDesktopVisionTools(*tools);
 #endif

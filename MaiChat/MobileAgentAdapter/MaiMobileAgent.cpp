@@ -28,6 +28,7 @@
 #include "MaiOpenSslCliTool.h"
 #include "MaiOpenSslTool.h"
 #include "MaiPdfTool.h"
+#include "MaiIdGenerator.h"
 #include "MaiQuestionTool.h"
 #include "MaiSessionTools.h"
 #include "MaiSqliteStore.h"
@@ -47,6 +48,7 @@
 #include "mai_fftools_embed.h"
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -55,6 +57,7 @@
 #include <json.hpp>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -63,6 +66,74 @@
 using Json = nlohmann::json;
 
 namespace {
+
+// 私有表单 token 只关联这一轮请求，不用作路径、账号或密码；与宿主 UUID 校验保持一致。
+std::string pdfPasswordRequestId() {
+    std::random_device random;
+    std::array<unsigned char, 16> bytes{};
+    for (auto& byte : bytes) byte = static_cast<unsigned char>(random());
+    bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0f) | 0x40);
+    bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3f) | 0x80);
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result;
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        if (index == 4 || index == 6 || index == 8 || index == 10) result += '-';
+        result += digits[bytes[index] >> 4];
+        result += digits[bytes[index] & 15];
+    }
+    return result;
+}
+
+MaiResult<std::string> requestPrivatePdfPassword(const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher,
+                                                 const std::atomic<bool>* cancel) {
+    const std::string requestId = pdfPasswordRequestId();
+    const auto invoke = [&](const char* action) {
+        return callMaiMobileHostTool(dispatcher, "pdf_password_request",
+                                     Json{{"action", action}, {"request_id", requestId}}.dump());
+    };
+    const auto dismiss = [&] { (void)invoke("cancel"); };
+    try {
+        if (cancel && cancel->load(std::memory_order_relaxed))
+            return {MaiErrorCode::Canceled, "PDF password entry was canceled"};
+        const auto begin = invoke("begin");
+        if (begin.hasError()) {
+            // 通用 dispatcher 的解析错误可能附带原始响应片段。此处绝不转发其 message/output。
+            return {begin.error().code(), "Private PDF password entry is unavailable"};
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (cancel && cancel->load(std::memory_order_relaxed)) {
+                dismiss();
+                return {MaiErrorCode::Canceled, "PDF password entry was canceled"};
+            }
+            const auto response = invoke("poll");
+            if (response.hasError()) {
+                dismiss();
+                return {response.error().code(), "Private PDF password entry failed"};
+            }
+            const Json output = Json::parse(response.output(), nullptr, false);
+            if (!output.is_object() || !output.contains("status") || !output["status"].is_string()) {
+                dismiss();
+                return {MaiErrorCode::Protocol, "Private PDF password entry returned an invalid response"};
+            }
+            const std::string status = output["status"].get<std::string>();
+            if (status == "ready" && output.contains("password") && output["password"].is_string())
+                return output["password"].get<std::string>();
+            if (status == "canceled") return {MaiErrorCode::Canceled, "PDF password entry was canceled"};
+            if (status != "pending") {
+                dismiss();
+                return {MaiErrorCode::Protocol, "Private PDF password entry returned an invalid state"};
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        dismiss();
+        return {MaiErrorCode::Canceled, "PDF password entry timed out"};
+    } catch (...) {
+        // 密码响应只留在本次栈上；解析异常不带入工具结果/历史，关闭同 token 表单即可。
+        dismiss();
+        return {MaiErrorCode::Internal, "Private PDF password entry failed"};
+    }
+}
 
 constexpr auto kMarkdownBaseInstructions =
     // 工具名和 description 只用于初筛；推荐前必须逐个调用候选视频工具的
@@ -382,16 +453,14 @@ struct MaiMobileAgent {
         if (!scheduleStore || !agent) return;
         if (!scheduleRunner) {
             scheduleStore->markInterruptedUncertain();
-            scheduleRunner = std::make_unique<MaiSessionScheduleRunner>(scheduleStore,
+            scheduleRunner = std::make_unique<MaiSessionScheduleRunner>(
+                scheduleStore,
                 [this](const std::string& sessionId) {
                     MaiSession session;
                     return agent->getSession(sessionId, session) && session.isRoot();
                 },
-                [this](const std::string& sessionId) {
-                    return !configured || agent->isBusy(sessionId);
-                },
-                [this](const std::string& sessionId, const std::string& instruction)
-                    -> MaiResult<std::string> {
+                [this](const std::string& sessionId) { return !configured || agent->isBusy(sessionId); },
+                [this](const std::string& sessionId, const std::string& instruction) -> MaiResult<std::string> {
                     return agent->submit(MaiSendPrompt{sessionId, instruction});
                 });
         }
@@ -415,8 +484,7 @@ struct MaiMobileAgent {
                 scheduleRunner->poll(MaiTime::getCurrentTime());
                 std::unique_lock<std::mutex> lock(scheduleMutex);
                 scheduleWake.wait_for(lock, std::chrono::seconds(1), [this] {
-                    return stopSchedule.load(std::memory_order_relaxed) ||
-                        !scheduleEvents.empty();
+                    return stopSchedule.load(std::memory_order_relaxed) || !scheduleEvents.empty();
                 });
             }
         });
@@ -431,10 +499,9 @@ struct MaiMobileAgent {
         auto store = makeMaiSqliteStore(databasePath);
         if (!store) throw std::runtime_error(store.error().message());
         const auto scheduleOpened = MaiSessionScheduleStore::open(
-            databasePath == ":memory:" ? databasePath :
-                databasePath + ".schedule.sqlite");
-        const auto nextScheduleStore = scheduleOpened.isOk() ? scheduleOpened.value() :
-            std::shared_ptr<MaiSessionScheduleStore>();
+            databasePath == ":memory:" ? databasePath : databasePath + ".schedule.sqlite");
+        const auto nextScheduleStore =
+            scheduleOpened.isOk() ? scheduleOpened.value() : std::shared_ptr<MaiSessionScheduleStore>();
         MaiModelConfig config;
         config.baseUrl = request.at("baseUrl").get<std::string>();
         config.apiKey = request.value("apiKey", "");
@@ -609,13 +676,17 @@ struct MaiMobileAgent {
              (!ortRuntime.empty() && MaiFileSystem::exists(MaiFilePath::fromUtf8(ortRuntime))))) {
             tools->add(makeMaiTemporalWatermarkTool(maiRepairVideoWatermarks, lamaModel, ortRuntime, ortApiBase));
         }
-        tools->add(makeMaiPdfTool([dispatcher = hostTools](const std::string& html, const std::string& output,
-                                                           const std::atomic<bool>* cancel) {
-            if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
-                return MaiToolResult::failure(MaiErrorCode::Canceled, "PDF generation was canceled");
-            return callMaiMobileHostTool(dispatcher, "generate_pdf",
-                                         Json{{"html", html}, {"output_path", output}}.dump());
-        }));
+        tools->add(makeMaiPdfTool(
+            [dispatcher = hostTools](const std::string& html, const std::string& output,
+                                     const std::atomic<bool>* cancel) {
+                if (cancel != nullptr && cancel->load(std::memory_order_relaxed))
+                    return MaiToolResult::failure(MaiErrorCode::Canceled, "PDF generation was canceled");
+                return callMaiMobileHostTool(dispatcher, "generate_pdf",
+                                             Json{{"html", html}, {"output_path", output}}.dump());
+            },
+            [dispatcher = hostTools](const std::atomic<bool>* cancel) {
+                return requestPrivatePdfPassword(dispatcher, cancel);
+            }));
         registerMaiChatHostTools(*tools, hostTools);
         registerMaiQrCodeTools(*tools);
 #if defined(__ANDROID__)
@@ -624,36 +695,32 @@ struct MaiMobileAgent {
         const std::string scheduleDevice = request.value("scheduleDeviceName", "iPhone or iPad");
 #endif
         registerMaiSessionScheduleTools(*tools, nextScheduleStore,
-            scheduleDevice.size() <= 40 ? scheduleDevice : scheduleDevice.substr(0, 40));
-        registerMaiCalendarTools(*tools,
-            [dispatcher = hostTools](const MaiCalendarEventInput& event,
-                                     const MaiToolContext&) {
-                const Json request{{"title", event.title}, {"notes", event.notes},
-                    {"session_id", event.sessionId},
-                    {"starts_at_utc_ms", event.startsAtUtcMs},
-                    {"ends_at_utc_ms", event.endsAtUtcMs}};
-                return callMaiMobileHostTool(dispatcher,
-                    "maichat_calendar_create_event", request.dump());
+                                        scheduleDevice.size() <= 40 ? scheduleDevice : scheduleDevice.substr(0, 40));
+        registerMaiCalendarTools(
+            *tools, [dispatcher = hostTools](const MaiCalendarEventInput& event, const MaiToolContext&) {
+                const Json request{{"title", event.title},
+                                   {"notes", event.notes},
+                                   {"session_id", event.sessionId},
+                                   {"starts_at_utc_ms", event.startsAtUtcMs},
+                                   {"ends_at_utc_ms", event.endsAtUtcMs}};
+                return callMaiMobileHostTool(dispatcher, "maichat_calendar_create_event", request.dump());
             });
         registerMaiCloudDriveTools(
-            *tools, [dispatcher = hostTools](const std::string& name,
-                                             const std::string& argumentsJson,
-                                             const MaiToolContext&) {
+            *tools,
+            [dispatcher = hostTools](const std::string& name, const std::string& argumentsJson, const MaiToolContext&) {
                 return callMaiMobileHostTool(dispatcher, name, argumentsJson);
             });
         registerMobileBrowserTools(*tools, hostTools);
 #if defined(__ANDROID__)
         registerMobileScreenCaptureTools(*tools, hostTools);
 #elif defined(MAICHAT_MOBILE_IOS)
-        if (request.value("supportsScreenCapture", false))
-            registerMobileScreenCaptureTools(*tools, hostTools);
+        if (request.value("supportsScreenCapture", false)) registerMobileScreenCaptureTools(*tools, hostTools);
 #endif
         registerMobilePhotoTools(*tools, hostTools);
         MaiAgent::Options options;
         options.defaultModel = request.at("model").get<std::string>();
         options.reasoningEffort = request.value("reasoningEffort", std::string("high"));
-        if (options.reasoningEffort != "low" && options.reasoningEffort != "high" &&
-            options.reasoningEffort != "max")
+        if (options.reasoningEffort != "low" && options.reasoningEffort != "high" && options.reasoningEffort != "max")
             throw std::runtime_error("Unsupported DeepSeek reasoning effort.");
         options.fileAccessRoot = request.value("appRoot", request.at("workspace").get<std::string>());
         options.decodeText = [dispatcher = hostTools](const std::string& bytes,
@@ -708,11 +775,9 @@ struct MaiMobileAgent {
                     structureChanged = true;
                 if (event.type == MaiEventType::SessionError) errors[event.sessionId] = event.detail;
             }
-            if (changeHandler != nullptr && !event.sessionId.empty() &&
-                event.type != MaiEventType::SessionStatus)
+            if (changeHandler != nullptr && !event.sessionId.empty() && event.type != MaiEventType::SessionStatus)
                 changeHandler(event.sessionId.c_str());
-            if (event.type == MaiEventType::SessionIdle ||
-                event.type == MaiEventType::SessionError ||
+            if (event.type == MaiEventType::SessionIdle || event.type == MaiEventType::SessionError ||
                 event.type == MaiEventType::SessionDeleted) {
                 std::lock_guard<std::mutex> lock(scheduleMutex);
                 scheduleEvents.push_back({event.sessionId, event.type, event.detail});
@@ -852,8 +917,7 @@ struct MaiMobileAgent {
     // iPhone 自己的下一次刷新会误以为没有新消息。
     Json remoteSnapshot(const std::string& sessionId, const std::string& before, int limit) {
         MaiSession session;
-        if (!agent->getSession(sessionId, session))
-            throw std::runtime_error("Session not found.");
+        if (!agent->getSession(sessionId, session)) throw std::runtime_error("Session not found.");
         const bool busy = agent->isBusy(sessionId);
         const auto page = agent->listMessagesPage(sessionId, before, static_cast<std::size_t>(limit));
         Json permissions = Json::array(), questions = Json::array();
@@ -867,8 +931,7 @@ struct MaiMobileAgent {
                                        {"fileCount", item.approvalKeys.size()}});
         for (const auto& item : agent->listPendingQuestions())
             if (item.sessionId == sessionId)
-                questions.push_back({{"id", item.id}, {"question", item.question},
-                                     {"options", item.options}});
+                questions.push_back({{"id", item.id}, {"question", item.question}, {"options", item.options}});
         return {{"ok", true},
                 {"messages", serializeMessages(page, before.empty() && busy)},
                 {"permissions", permissions},
@@ -982,10 +1045,8 @@ struct MaiMobileAgent {
                                                     r.value("quoteMessageId", std::string{})}));
         } else if (op == "stop") {
             result(agent->submit(MaiInterrupt{session}));
-            if (scheduleRunner)
-                scheduleRunner->finish(session, "Interrupted by user");
-        }
-        else if (op == "delete")
+            if (scheduleRunner) scheduleRunner->finish(session, "Interrupted by user");
+        } else if (op == "delete")
             result(agent->submit(MaiDeleteSession{session}));
         else if (op == "clear")
             result(agent->submit(MaiClearMessages{session}));
@@ -1056,6 +1117,33 @@ char* maiMobileMatteVideo(const char* argumentsJson, const char* workspace, cons
         return ownedResponse(Json{{"ok", true}, {"output", result.output()}}.dump());
     } catch (const std::exception& error) {
         return ownedResponse(Json{{"ok", false}, {"error", error.what()}}.dump());
+    }
+}
+char* maiMobilePdfEncrypt(const char* source, const char* output, const unsigned char* password, size_t passwordSize,
+                          int replaceExisting) {
+    try {
+        if (!source || !output || !password || passwordSize == 0 || passwordSize > 127 ||
+            (replaceExisting != 0 && replaceExisting != 1))
+            return ownedResponse(
+                R"({"ok":false,"errorCode":"invalid_input","error":"Invalid PDF encryption arguments"})");
+        MaiPdfEncryptionOptions options;
+        options.userPassword.assign(reinterpret_cast<const char*>(password), passwordSize);
+        options.replaceExisting = replaceExisting != 0;
+        const auto result = maiEncryptPdfFile(MaiFilePath::fromUtf8(source), MaiFilePath::fromUtf8(output), options);
+        if (!result)
+            return ownedResponse(Json{{"ok", false},
+                                      {"errorCode", maiErrorCodeToString(result.error().code())},
+                                      {"error", result.error().message()}}
+                                     .dump());
+        return ownedResponse(Json{{"ok", true},
+                                  {"output", Json{{"path", result.value().path.toUtf8()},
+                                                  {"bytes", result.value().bytes},
+                                                  {"page_count", result.value().pageCount},
+                                                  {"password_protected", true}}}}
+                                 .dump());
+    } catch (...) {
+        // 原生异常不能跨语言边界，也不把可能包含密码的异常文本转回宿主日志。
+        return ownedResponse(R"({"ok":false,"errorCode":"internal","error":"PDF encryption failed"})");
     }
 }
 char* maiMobileAgentRequest(void* handle, const char* request) {

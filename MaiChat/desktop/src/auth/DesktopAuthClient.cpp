@@ -207,6 +207,7 @@ void DesktopAuthClient::invalidateSession(const QString& reason) {
 }
 
 void DesktopAuthClient::clearLocalSession() {
+    ++accountGeneration_;
     refreshTimer_.stop();
     credentialTimer_.stop();
     livenessTimer_.stop();
@@ -663,6 +664,7 @@ void DesktopAuthClient::adoptApprovedSession(const QJsonObject& session,
         completion(false, error);
         return;
     }
+    ++accountGeneration_;
     fetchImCredential([this, completion = std::move(completion)](
                           bool ok, const QString& error) {
         if (ok) startModelCredentialMonitoring();
@@ -712,9 +714,57 @@ void DesktopAuthClient::updateNickname(const QString& nickname, Completion compl
     });
 }
 
+// 密码由本地表单调用，不经过 Agent 参数、结果、历史或诊断。服务端确认字段
+// 必须是布尔 true；只依赖 HTTP 200 会把未修改或畸形回复误报为成功。
+void DesktopAuthClient::setPassword(const QString& password, PasswordCompletion completion) {
+    const int characters = password.toUcs4().size();
+    if (characters < 15 || characters > 128 || password.toUtf8().size() > 512) {
+        if (completion) completion(QStringLiteral("invalid_input"));
+        return;
+    }
+    if (accountId_.isEmpty() || userId_.isEmpty() || loggingOut_) {
+        if (completion) completion(QStringLiteral("reauth_required"));
+        return;
+    }
+    const QString account = accountId_, user = userId_;
+    const quint64 generation = accountGeneration_;
+    authorizedRequest(QStringLiteral("auth/password/set"), "POST",
+        {{QStringLiteral("new_password"), password}},
+        [this, account, user, generation, completion = std::move(completion)](const HttpResult& result) {
+            QString code;
+            if (accountId_.isEmpty() || userId_.isEmpty()) code = QStringLiteral("reauth_required");
+            else if (accountGeneration_ != generation || accountId_ != account || userId_ != user)
+                code = QStringLiteral("identity_changed");
+            else if (!result.code.isEmpty()) code = result.code;
+            else if (result.status == 200 && result.body.value(QStringLiteral("password_set")).isBool() &&
+                     result.body.value(QStringLiteral("password_set")).toBool()) { }
+            else if (result.status == 401 || (result.status == 403 &&
+                     result.body.value(QStringLiteral("error")).toString() ==
+                         QStringLiteral("Sign in again before changing the password")))
+                code = QStringLiteral("reauth_required");
+            else if (result.status == 400) code = QStringLiteral("invalid_input");
+            else if (result.status == 0 || result.status >= 500) code = QStringLiteral("network");
+            else code = QStringLiteral("failed");
+            if (completion) completion(code);
+        }, true, generation);
+}
+
+QString DesktopAuthClient::authenticatedSessionIdentity() const {
+    return accountId_.isEmpty() ? QString() : accountId_ + QLatin1Char(':') +
+        QString::number(accountGeneration_);
+}
+
 void DesktopAuthClient::authorizedRequest(const QString& path, const QByteArray& method,
     const QJsonObject& body, std::function<void(const HttpResult&)> completion,
-    bool retryAfterUnauthorized) {
+    bool retryAfterUnauthorized, quint64 expectedAccountGeneration) {
+    // 仅敏感操作显式绑定代次。每次刷新后的重试及回复处理都先检查，
+    // 因而不会把旧表单密码随已轮换账号的令牌发送给另一个账号。
+    if (expectedAccountGeneration && expectedAccountGeneration != accountGeneration_) {
+        HttpResult failed;
+        failed.code = QStringLiteral("identity_changed");
+        completion(failed);
+        return;
+    }
     if (loggingOut_ || userId_.isEmpty()) {
         HttpResult failed;
         failed.error = QStringLiteral("请先登录 MaiChat");
@@ -723,18 +773,25 @@ void DesktopAuthClient::authorizedRequest(const QString& path, const QByteArray&
     }
     if (accessToken_.isEmpty() ||
         accessExpiresAt_ <= QDateTime::currentDateTimeUtc().addSecs(60)) {
-        refresh([this, path, method, body, completion, retryAfterUnauthorized](
+        refresh([this, path, method, body, completion, retryAfterUnauthorized, expectedAccountGeneration](
                     bool ok, const QString& error) {
-            if (ok) authorizedRequest(path, method, body, completion, retryAfterUnauthorized);
+            if (ok) authorizedRequest(path, method, body, completion, retryAfterUnauthorized,
+                                      expectedAccountGeneration);
             else { HttpResult failed; failed.error = error; completion(failed); }
         });
         return;
     }
     request(path, method, body, accessToken_,
-            [this, path, method, body, completion, retryAfterUnauthorized](const HttpResult& result) {
+            [this, path, method, body, completion, retryAfterUnauthorized, expectedAccountGeneration](const HttpResult& result) {
+        if (expectedAccountGeneration && expectedAccountGeneration != accountGeneration_) {
+            HttpResult failed;
+            failed.code = QStringLiteral("identity_changed");
+            completion(failed);
+            return;
+        }
         if (result.status == 401 && retryAfterUnauthorized) {
-            refresh([this, path, method, body, completion](bool ok, const QString& error) {
-                if (ok) authorizedRequest(path, method, body, completion, false);
+            refresh([this, path, method, body, completion, expectedAccountGeneration](bool ok, const QString& error) {
+                if (ok) authorizedRequest(path, method, body, completion, false, expectedAccountGeneration);
                 else { HttpResult failed; failed.error = error; completion(failed); }
             });
             return;

@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "MaiTool.h"
+#include "MaiChangePasswordTool.h"
 #include "app/RemoteIMApplication.h"
 #include "model/MessageQuote.h"
 #include "model/MessageSearch.h"
@@ -761,6 +762,21 @@ void addTool(MaiToolRegistry &registry, HostToolKind kind, const char *name,
 // 桌面宿主工具按读写能力注册；有外部副作用的工具必须经过审批，名称与 Schema 供模型发现。
 void registerMaiChatHostTools(MaiToolRegistry &registry,
                               RemoteIMApplication &app) {
+  registry.add(makeMaiChangePasswordTool(
+      [host = QPointer<RemoteIMApplication>(&app)](const std::string& args, const MaiToolContext& context) {
+        if (context.isCanceled())
+          return MaiToolResult::failure(MaiErrorCode::Canceled, "password form request was canceled");
+        QJsonObject arguments;
+        if (!parseObject(args, &arguments, nullptr))
+          return MaiToolResult::failure(MaiErrorCode::InvalidInput, "invalid password form request");
+        return onApplicationThread(host, [&](RemoteIMApplication& application) {
+          if (context.isCanceled())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "password form request was canceled");
+          const QJsonObject output = application.requestPasswordChange(arguments);
+          return output.isEmpty() ? MaiToolResult::failure(MaiErrorCode::NotConfigured,
+              "secure password form is unavailable") : jsonResult(output);
+        });
+      }));
   addTool(
       registry, HostToolKind::ListContacts, "maichat_list_contacts",
       "List MaiChat contacts. Use query to filter by user ID or display name.",

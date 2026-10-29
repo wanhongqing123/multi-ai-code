@@ -662,6 +662,15 @@ bool RemoteIMApplication::updateNickname(const QString& nickname,
     return true;
 }
 
+void RemoteIMApplication::setPasswordChangeHandler(
+    std::function<QJsonObject(const QJsonObject&)> handler) {
+    passwordChangeHandler_ = std::move(handler);
+}
+
+QJsonObject RemoteIMApplication::requestPasswordChange(const QJsonObject& arguments) {
+    return passwordChangeHandler_ ? passwordChangeHandler_(arguments) : QJsonObject{};
+}
+
 void RemoteIMApplication::requestFriendById(const QString& userId,
                                             const QString& displayName) {
     Q_UNUSED(displayName);

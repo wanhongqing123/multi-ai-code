@@ -243,6 +243,11 @@ add_subdirectory(third_party/zlib EXCLUDE_FROM_ALL)
 # Z_PREFIX does not rename z_errmsg, which collides with the media libraries' zlib.
 target_compile_definitions(zlibstatic PRIVATE Z_PREFIX z_errmsg=mai_z_errmsg)
 
+# qpdf 固定为最后一个支持 C++17 的 12.2.0；与 VS2019 和移动工具链保持一致。
+# 仅编译进程内库，通过私有 provider/依赖目标复用现有 OpenSSL 与前缀 zlib。
+include(third_party/MaiPdfDependencies.cmake)
+mai_add_pdf_dependencies()
+
 set(LIBSSH2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
 set(CRYPTO_BACKEND OpenSSL CACHE STRING "" FORCE)
@@ -324,6 +329,7 @@ add_library(maiagent STATIC
   AgentTools/MaiScreenshotTool.cpp
   AgentTools/MaiViewImageTool.cpp
   AgentTools/MaiPdfTool.cpp
+  AgentTools/MaiPdfDocumentTools.cpp
   AgentTools/MaiWindowListTool.cpp
   Agent/MaiAgent.cpp
   Agent/MaiTurnRunner.cpp
@@ -395,6 +401,10 @@ endif()
 if(APPLE)
   target_link_libraries(maiagent PRIVATE iconv)
 endif()
+
+# qpdf 头不进入公开 API；生成器和普通调用共同使用这一份密码保护实现。
+target_link_libraries(maiagent PRIVATE libqpdf)
+target_compile_definitions(maiagent PRIVATE POINTERHOLDER_TRANSITION=4)
 if(WIN32)
   target_link_libraries(maiagent PRIVATE d3d11 dxgi windowscodecs ole32 user32 windowsapp
     ws2_32 iphlpapi crypt32 bcrypt advapi32)
@@ -495,6 +505,7 @@ if(MAIAGENT_BUILD_TESTS)
       MaiScreenshotToolTests  # screenshot：平台能力、审批、原生 PNG 捕获
       MaiViewImageToolTests   # view_image：路径边界、图片识别、多模态回灌
       MaiPdfToolTests         # generate_pdf：工作区边界、审批和产物验证
+      MaiPdfDocumentToolsTests # 普通 PDF 加密：真实 R6 产物、取消、原子替换与保旧
       MaiWindowListToolTests  # list_windows：平台能力、审批、可见窗口枚举
       MaiToolLoopTests      # 工具循环：调用 -> 执行 -> 回灌 -> 再答
       MaiPermissionTests)   # 权限闸门：拦住 -> 等裁决 -> 放行或拒绝

@@ -35,3 +35,9 @@
 - 已准备默认关闭的 DEBUG 普通 App 验收 hook `MAICHAT_SCREEN_FRAME_ACCEPTANCE=YES`，不依赖此前被阻止的 XCTest UI Automation。它使用原账号、正常创作中心及普通 start/register，系统授权仍由用户本人选择；开始后采样十秒自动停止、保留本批，不发送模型、不加草稿、不删除图片。`Library/Application Support/MaiChat/ScreenFrameAcceptance/<UUID>/result.json` 写入开始/停止状态和帧元数据；回到前台后另用普通 current_app API 保存实际界面 PNG。该 hook 本轮尚未在手机执行。
 - 最终候选就绪后已询问用户一次集中真机采样的方便时间；未得到回复前不安装、弹系统选择器或切换用户手机 App。真实 ScreenCaptureKit、面板收起后其他 App 采样、正常 Composer 和停止选图的真机链路仍未验证；锁屏等额外边界也未验证。
 - 当前模拟器证据覆盖正式本地 sampler、档案、Swift 宿主、选图界面及会话草稿归属；不覆盖正常 Composer 蓝条在实际手机上的完整共享操作。本轮没有因记录工作再次启动手机自动化、安装、切换 App 或操作真实云盘数据。
+
+## 132 真机安装回执
+
+- 用户随后明确“安装到真机”。执行者重新校验上述候选主程序和 dylib SHA、严格签名，通过 `devicectl device install app` 覆盖安装到实体 iPhone 14 Pro Max（UDID `00008120-001E0DEC0263C01E`），exit 0。未卸载 App 或清理用户数据；安装回执 `/private/tmp/maichat-screen-frame-ios132-install.json`。
+- 设备回读版本为 **2.2.4 (132)**，路径 `/private/var/containers/Bundle/Application/D8391991-19D1-464E-8853-EFAB294268AA/MaiChat.app/`。普通启动无测试参数/验收环境开关，exit 0，激活成功，PID **5253** 的 executable 与该安装路径一致。证据 `/private/tmp/maichat-screen-frame-ios132-installed.json`、`/private/tmp/maichat-screen-frame-ios132-launch.json`。
+- App 自身日志 `2026-10-29T05:42:01.233Z` 记录 `app_version=2.2.4 build=132 ios=27.2 pid=5253`，本地回读 `/private/tmp/maichat-screen-frame-ios132-runtime.log`。因此安装和启动已完成；此次没有弹共享选择器、重跑 XCTest 或执行十秒真实采样，真机 ScreenCaptureKit 和停止选图的验收仍未完成。

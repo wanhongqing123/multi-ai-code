@@ -16,7 +16,7 @@ enum AppTab {
 }
 
 extension RemoteIMStyle {
-    static let barMaterial: Material = .thin
+    static let barBackground = Color(uiColor: .systemBackground).opacity(0.9)
     static let barSeparator = Color.primary.opacity(0.1)
 }
 
@@ -30,14 +30,14 @@ struct RemoteIMBarSeparator: View {
 }
 
 extension View {
-    /// The bar keeps its safe-area layout while its material samples scrolling
-    /// content underneath. Only the background extends into system safe areas.
+    /// A stable translucent color lets scrolling content show underneath.
+    /// Only the background extends into system safe areas.
     func remoteIMBarBackground(edges: Edge.Set = []) -> some View {
-        background(RemoteIMStyle.barMaterial, ignoresSafeAreaEdges: edges)
+        background(RemoteIMStyle.barBackground, ignoresSafeAreaEdges: edges)
     }
 
     func remoteIMNavigationBarMaterial() -> some View {
-        toolbarBackground(RemoteIMStyle.barMaterial, for: .navigationBar)
+        toolbarBackground(RemoteIMStyle.barBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
     }
 }
@@ -51,8 +51,8 @@ private enum RemoteIMBarAppearance {
         installed = true
         let navigation = UINavigationBarAppearance()
         navigation.configureWithDefaultBackground()
-        navigation.backgroundEffect = UIBlurEffect(style: .systemThinMaterial)
-        navigation.backgroundColor = .clear
+        navigation.backgroundEffect = nil
+        navigation.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.9)
         navigation.shadowColor = .separator
         navigation.titleTextAttributes = [.foregroundColor: UIColor.label]
         navigation.largeTitleTextAttributes = [.foregroundColor: UIColor.label]
@@ -65,8 +65,8 @@ private enum RemoteIMBarAppearance {
 
         let tab = UITabBarAppearance()
         tab.configureWithDefaultBackground()
-        tab.backgroundEffect = UIBlurEffect(style: .systemThinMaterial)
-        tab.backgroundColor = .clear
+        tab.backgroundEffect = nil
+        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.9)
         tab.shadowColor = .separator
         let tabBar = UITabBar.appearance()
         tabBar.isTranslucent = true

@@ -364,7 +364,6 @@ struct MaiCloudDriveView: View {
                             sectionTitle("待上传")
                             ForEach(model.localTasks) { task in uploadCard(task) }
                         }
-                        sectionTitle("我的文件")
                         folderNavigation
                             .id("cloud-drive-directory-navigation-top")
                         if model.currentFolderID != nil {

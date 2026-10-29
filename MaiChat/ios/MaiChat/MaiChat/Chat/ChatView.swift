@@ -526,9 +526,9 @@ struct ChatView: View {
                 )
             }
         }
-        // The outer canvas owns status/home material. White message surfaces
-        // paint only their content area, leaving system safe areas translucent.
-        .background(RemoteIMStyle.barMaterial, ignoresSafeAreaEdges: [.top, .bottom])
+        // Keep the navigation canvas stable; only headers and composers use
+        // translucent color. Message surfaces do not extend into safe areas.
+        .background(Color(uiColor: .systemBackground), ignoresSafeAreaEdges: [.top, .bottom])
         .task(id: activeContact?.userID) {
             guard let contact = activeContact else {
                 preparedContactID = nil
@@ -592,7 +592,7 @@ struct ChatView: View {
                 .zIndex(1)
             }
         }
-        .background(RemoteIMStyle.panelBackground)
+        .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
         .environmentObject(appState)
     }
 
@@ -702,7 +702,7 @@ struct ChatAddFriendMenuUITestRoot: View {
             }
         }
         .environmentObject(appState)
-        .background(RemoteIMStyle.panelBackground)
+        .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
         .sheet(isPresented: $isShowingQRScanner, onDismiss: {
             guard let pendingScannedFriendID else { return }
             appState.newContactUserID = pendingScannedFriendID
@@ -1346,9 +1346,9 @@ private struct ConversationListView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.immediately)
-                .background(RemoteIMStyle.panelBackground)
+                .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
             }
-            .background(RemoteIMStyle.panelBackground)
+            .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
 
             if let pendingClearHistoryContact {
                 ClearHistoryDialog(
@@ -1483,7 +1483,7 @@ private struct GroupConversationRow: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 72)
-        .background(RemoteIMStyle.panelBackground)
+        .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
     }
 }
 
@@ -1558,7 +1558,7 @@ private struct GroupChatDetailView: View {
                 .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in
                     followsLatest = false
                 })
-                .background(RemoteIMStyle.pageBackground)
+                .background(RemoteIMStyle.pageBackground, ignoresSafeAreaEdges: [])
                 .overlay(alignment: .bottomTrailing) {
                     if !followsLatest && !messages.isEmpty {
                         Button {
@@ -1591,7 +1591,7 @@ private struct GroupChatDetailView: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) { header }
             .safeAreaInset(edge: .bottom, spacing: 0) { composer }
-        .background(RemoteIMStyle.panelBackground)
+        .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
         .onAppear {
             if appState.selectedGroupID != group.groupID {
                 appState.selectGroup(groupID: group.groupID)
@@ -2457,7 +2457,7 @@ private struct ChatDetailView: View {
             }
         }
         .coordinateSpace(name: RemoteIMImagePreviewLayout.coordinateSpaceName)
-        .background(RemoteIMStyle.pageBackground)
+        .background(RemoteIMStyle.pageBackground, ignoresSafeAreaEdges: [])
         .toolbar(.hidden, for: .navigationBar)
         .background {
             RemoteIMImagePresentationHost(presentation: $imagePreviewPresentation,
@@ -3477,7 +3477,7 @@ private struct MessageListView: View {
             .modifier(MessageInitialScrollAnchor())
             .accessibilityIdentifier("im-message-timeline")
             .scrollDismissesKeyboard(.interactively)
-            .background(RemoteIMStyle.panelBackground)
+            .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
             .overlay(alignment: .bottomTrailing) {
                 if hasNewerMessages {
                     Button(action: returnToLatestMessages) {
@@ -5205,7 +5205,7 @@ private struct RemoteIMMarkdownFilePreview: View {
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(RemoteIMStyle.panelBackground)
+        .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
     }
 
 
@@ -6692,7 +6692,7 @@ struct ComposerAttachmentPanel: View {
         .padding(.horizontal, 18)
         .padding(.top, 18)
         .padding(.bottom, 20)
-        .background(RemoteIMStyle.pageBackground)
+        .background(RemoteIMStyle.pageBackground, ignoresSafeAreaEdges: [])
     }
 
     private func actionButton(

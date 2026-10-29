@@ -2288,6 +2288,7 @@ final class AIAssistantUITests: XCTestCase {
 
         tabs[1].tap()
         XCTAssertTrue(app.staticTexts["我的云盘"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["我的文件"].exists)
         capture("normal-root-cloud-navigation-and-tab-bars")
         tabs[0].tap()
         capture("normal-root-message-list-bars")
@@ -2821,7 +2822,7 @@ final class AIAssistantUITests: XCTestCase {
         let latest = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "IM 历史消息 2543")).firstMatch
         XCTAssertTrue(latest.waitForExistence(timeout: 15))
-        let timeline = app.scrollViews.element(boundBy: 0)
+        let timeline = app.scrollViews["im-message-timeline"]
         let laidOutRows = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "IM 历史消息 "))
         XCTAssertGreaterThanOrEqual(laidOutRows.count, 160,
@@ -2841,6 +2842,12 @@ final class AIAssistantUITests: XCTestCase {
         afterSettling.name = "im-fast-history-swipe-after-3p5s"
         afterSettling.lifetime = .keepAlways
         add(afterSettling)
+        timeline.swipeUp(velocity: .slow)
+        timeline.swipeDown(velocity: .slow)
+        let afterBothDirections = XCTAttachment(screenshot: app.screenshot())
+        afterBothDirections.name = "im-history-after-slow-up-and-down"
+        afterBothDirections.lifetime = .keepAlways
+        add(afterBothDirections)
         XCTAssertTrue(timeline.exists)
     }
 

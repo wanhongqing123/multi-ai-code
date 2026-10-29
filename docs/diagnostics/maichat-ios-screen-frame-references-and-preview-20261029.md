@@ -74,3 +74,13 @@
 - 同一模拟器构建额外运行既有 `--ai-browser-ui-test` 普通 API 验收，结果 `/private/tmp/maichat-ios-material-browser-134-result.txt` 为 `PASS: observe, type, click, verify, screenshot`，当次新写入结果与启动时间匹配。执行者亲看 `/private/tmp/maichat-ios-material-browser-134.png`：嵌入网页标题、输入的 `iOS WebKit OK`、确认按钮与“操作已完成”均显示，网页首行没有被标题盖住。这里只证明该短测试页与既有工具契约，没有声称已验长网页末项。
 - 2026-10-29 15:46 CST 左右，iPhone 14 Pro Max / iOS 27.2（UDID `00008120-001E0DEC0263C01E`）覆盖安装成功，安装回执 `/private/tmp/maichat-ios-material-bars-134-install.json`，安装路径 `/private/var/containers/Bundle/Application/D40C7CC8-2244-4FAE-AA91-EC473BAD3BAA/MaiChat.app/`。独立 `device info apps` 回读 `com.kongshang.maichat` = **2.2.4 (134)**，回执 `/private/tmp/maichat-ios-material-bars-134-installed-app.json`；没有卸载 App 或清理用户数据。
 - 随后启动被系统拒绝，CoreDevice 10002 → FBSOpenApplicationErrorDomain 7、`Locked`，明确为手机锁屏而非启动崩溃。启动回执 `/private/tmp/maichat-ios-material-bars-134-launch.json`。已请求用户解锁后继续，当前不能把“安装成功”写成“真机已启动并完成 UI 验收”。独立 `idevicescreenshot` 也因 screenshotr service 不可用失败，未获得真机截图，不把模拟器截图当真机画面。
+
+## 134 回归：聊天滚动闪动、顶部灰白分层，135 收敛修正
+
+- 用户于 2026-10-29 15:57 左右反馈聊天上下滚动“一闪一闪”，且状态栏和标题栏出现灰白两色；同批要求删除云盘“我的文件”文字。现场图 `144115250159782623-1793260624-4129811858.png` 的状态区至标题栏分界在原图 y=177（59pt×3），相邻行 median 从约 `[241,242,243]` 变为 `[235,235,236]`；这是明确的颜色硬切，不是仅凭文字猜测。
+- 真机只读日志已取回 `/private/tmp/maichat-ios134-physical-flicker.log`（约626KB）。实际 134 在 15:55:16 CST 已启动，launch=`049e4390`、iOS27.2，更新了此前“仍待解锁启动”的历史状态。15:48–15:59 窗口内 position/dismiss 桥各安装一次，无反复拆装；四次 offset clamp 中三次紧随键盘开关，没有普通滚动期间持续改 offset 的证据，不将滚动读取器认定为本次闪动根因。
+- 最近产品提交 `0ea4cca48` 为 ChatView 整页添加 `.thin Material`，标题栏和输入栏又各有一层 Material。IM UIKit host 以系统安全区起点布局，各层采样不在同一画布中；该源码叠加与现场 y=177 的灰白分界吻合。另 SwiftUI ShapeStyle 的 `.background` 默认会忽略安全区，省略参数不能保证白色内容背景限于中间区域。
+- 修正收敛为背景样式：共享栏底改为动态 `systemBackground`、固定0.9 alpha，原生导航/标签栏 `backgroundEffect=nil`，不再动态模糊采样；IM 整页画布与 hosting 背景恢复稳定实色，内部白色/page 背景显式 `ignoresSafeAreaEdges: []`。本轮没有再改布局、导航转场、滚动意图或校正策略。云盘只删除 `sectionTitle("我的文件")` 一行，保留容量、面包屑、文件夹条目及上传区域。
+- 基线134按同一长 IM 手势录屏 `/private/tmp/maichat-ios134-im-flicker-baseline.mp4`，用例通过只能证明动作完成；静态灰白带可见，但未在这段模拟器录屏重现用户描述的整页闪白，不声称已用模拟器完整复现所有真机闪动。
+- 135 模拟器定向回归 `/private/tmp/maichat-ios135-im-background-fix.xcresult` **3/3 PASS，零跳过**：正常 Root 五页/草稿/键盘且“我的文件”不存在；展开长历史快速滑动后慢速上、下滑；最新消息/键盘/背景收键盘/历史分页/返回列表。录像 `/private/tmp/maichat-ios135-im-background-fix.mp4`，快滑约59.277秒、慢上滑67.232秒、慢下滑70.274秒。执行者亲看两段8fps密集取帧 `/private/tmp/maichat-ios135-flicker-fast-contact.png`、`...slow-contact.png` 及大图：取帧内内容连续，上下栏无整条灰白变换，状态/标题底色连贯，标题和按钮仍清楚，正文从半透明底色后透出。采样取帧不等于对全部原始帧的穷尽检查。
+- 135 的 `7DCA0FE8-07BB-4FFA-95C4-2CE7748ADB5E.png` 显示键盘打开时最新2543完整在输入栏上方；云盘附件 `98B589C4-AB43-4383-B9F4-7922DFA0686B.png` 已无“我的文件”。135 真机构建、安装与运行回执后续追加；目前尚未把新版本真机滚动视觉标为已验收。

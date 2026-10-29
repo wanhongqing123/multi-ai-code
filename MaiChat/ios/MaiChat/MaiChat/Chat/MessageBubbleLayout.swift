@@ -679,8 +679,8 @@ final class ChatNavigationController: UINavigationController,
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
-        listController.view.backgroundColor = .clear
+        view.backgroundColor = .systemBackground
+        listController.view.backgroundColor = .systemBackground
         setNavigationBarHidden(true, animated: false)
         delegate = self
         interactivePopGestureRecognizer?.isEnabled = false
@@ -731,7 +731,7 @@ final class ChatNavigationController: UINavigationController,
             } else {
                 arrival = ChatNavigationArrival()
                 next = UIHostingController(rootView: AnyView(requestedDetail.environmentObject(arrival)))
-                next.view.backgroundColor = .clear
+                next.view.backgroundColor = .systemBackground
                 cachedChats[requestedID] = CachedChat(
                     controller: next, arrival: arrival, lastVisited: visitSequence)
             }

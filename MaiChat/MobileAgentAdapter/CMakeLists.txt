@@ -282,6 +282,9 @@ target_link_libraries(maichat_mobile PRIVATE maiagent mai_curl_download mai_vide
   "${ffmpeg_build}/vendor-install/lib/libdav1d.a"
   "${ffmpeg_build}/vendor-install/lib/libx264.a"
   "${ffmpeg_build}/vendor-install/lib/libmp3lame.a" z)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  target_link_libraries(maichat_mobile PUBLIC mai_screen_frame_archive)
+endif()
 if(TARGET maiagent_graphics)
   target_link_libraries(maichat_mobile PRIVATE maiagent_graphics)
 endif()

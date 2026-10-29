@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6F03A9BA5D80FAE8B01671B8 /* ScreenFrameArchiveUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */; };
+		F77BA084695F31C9AD6308A7 /* AIMobileScreenFramesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699DD641EBF222F19503CD4B /* AIMobileScreenFramesView.swift */; };
+		3CE9DB0AABBB106D926C907E /* AIMobileScreenFrameArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BD3F9C5BD5EE3D987670129 /* AIMobileScreenFrameArchive.swift */; };
 		751C9C7EC4D79C407AB8992A /* MaiCloudDriveImagePager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */; };
 		0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */; };
 		F2D771B8A5334D159C238C01 /* AIMobileBrowserTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2D771B8A5334D159C238C02 /* AIMobileBrowserTools.swift */; };
@@ -150,6 +153,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenFrameArchiveUITests.swift; sourceTree = "<group>"; };
+		699DD641EBF222F19503CD4B /* AIMobileScreenFramesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileScreenFramesView.swift; sourceTree = "<group>"; };
+		8BD3F9C5BD5EE3D987670129 /* AIMobileScreenFrameArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileScreenFrameArchive.swift; sourceTree = "<group>"; };
 		751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiCloudDriveImagePager.swift; sourceTree = "<group>"; };
 		0075BCCB2188B8EB8E6F11FA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		0194E7C7F438293A088E45E0 /* MarkdownPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPresentationTests.swift; sourceTree = "<group>"; };
@@ -297,6 +303,7 @@
 				89FDF5DC4F6DB91F2A1B3FD5 /* AIAssistantUITests.swift */,
 				5FFB5E24161F8E400C19FB64 /* CloudDriveDeviceReadOnlySmokeUITests.swift */,
 				6FA2296AE72440AA993F7C13 /* CloudDriveFolderBrowseUITests.swift */,
+				22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */,
 				4844275C1326313FC09CA83F /* CloudDriveProductionCanaryUITests.swift */,
 				8F3E7E371D631DE55D3D718C /* DesktopLoginUITests.swift */,
 				DAB7CB3554291BE63987EC07 /* SocialLoginUITests.swift */,
@@ -361,6 +368,8 @@
 				29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */,
 				F2D771B8A5334D159C238C02 /* AIMobileBrowserTools.swift */,
 				7090E768648CE5F2D55AD135 /* AIMobileScreenCapture.swift */,
+				8BD3F9C5BD5EE3D987670129 /* AIMobileScreenFrameArchive.swift */,
+				699DD641EBF222F19503CD4B /* AIMobileScreenFramesView.swift */,
 				2BD57C56FFB1D7BD773DD1A1 /* AIMobileSshTools.swift */,
 				C12D574F08359081230E0D3A /* MaiChatIMTools.swift */,
 				8888872A869DC80CF8DF58B6 /* MobileImageTools.swift */,
@@ -856,9 +865,11 @@
 			files = (
 				10E63571389FF61C9869CE9E /* AIAssistantModel.swift in Sources */,
 				91722667D29CD5A82A3A2E00 /* AIAssistantView.swift in Sources */,
+				F77BA084695F31C9AD6308A7 /* AIMobileScreenFramesView.swift in Sources */,
 				0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */,
 				F2D771B8A5334D159C238C01 /* AIMobileBrowserTools.swift in Sources */,
 				80A93D25352CFB7F9675EB89 /* AIMobileScreenCapture.swift in Sources */,
+				3CE9DB0AABBB106D926C907E /* AIMobileScreenFrameArchive.swift in Sources */,
 				4AF5DDAC5AC5B4962C55600B /* AIMobileSshTools.swift in Sources */,
 				DF6DB710A7BAB0AD6FA5093B /* AgentDocumentTools.swift in Sources */,
 				17D2334D14B8A1F571A7D69B /* AppDiagnosticLog.swift in Sources */,
@@ -915,6 +926,7 @@
 				194E338FF3D0DE993B165814 /* AIAssistantUITests.swift in Sources */,
 				6F8A66D5F8344B2C0A738BE6 /* CloudDriveDeviceReadOnlySmokeUITests.swift in Sources */,
 				6FA2296AE72440AA993F7C12 /* CloudDriveFolderBrowseUITests.swift in Sources */,
+				6F03A9BA5D80FAE8B01671B8 /* ScreenFrameArchiveUITests.swift in Sources */,
 				A4FE70D1E7F52FD7C3E93B6C /* CloudDriveProductionCanaryUITests.swift in Sources */,
 				E614ECA45B50A47575FB9B82 /* DesktopLoginUITests.swift in Sources */,
 				9EF853C23CC0121860279D06 /* SocialLoginUITests.swift in Sources */,
@@ -1015,7 +1027,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 131;
+				CURRENT_PROJECT_VERSION = 132;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -1192,7 +1204,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 131;
+				CURRENT_PROJECT_VERSION = 132;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

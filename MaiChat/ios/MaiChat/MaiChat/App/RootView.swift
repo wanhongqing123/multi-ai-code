@@ -350,6 +350,14 @@ struct RootView: View {
             keyboardVisible = false
         }
         .task {
+#if DEBUG
+            AIMobileScreenCapture.shared.startFrameAcceptanceIfRequested(
+                prepareAssistant: {
+                    guard !appState.shouldShowInitialLogin else { return false }
+                    openAssistant()
+                    return true
+                }, assistantIsVisible: { selectedTab == .assistant })
+#endif
             if !appState.shouldShowInitialLogin {
                 await appState.connectOnLaunchIfNeeded()
                 await offerNotificationPermissionIfNeeded()

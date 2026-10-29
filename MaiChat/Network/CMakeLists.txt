@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 project(MaiChatNetwork LANGUAGES C CXX)
 
+option(MAICHAT_NETWORK_BUILD_TESTS "Build local TLS downloader tests" OFF)
+option(MAICHAT_SCREEN_FRAME_ARCHIVE_ENABLED "Build the screen frame archive API" OFF)
+
 if(NOT TARGET CURL::libcurl)
   find_package(CURL REQUIRED)
 endif()
@@ -42,10 +45,32 @@ target_link_libraries(mai_cloud_drive_client PUBLIC CURL::libcurl
   ${MAI_OPENSSL_CRYPTO_TARGET})
 set_target_properties(mai_cloud_drive_client PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-option(MAICHAT_NETWORK_BUILD_TESTS "Build local TLS downloader tests" OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR MAICHAT_NETWORK_BUILD_TESTS OR
+    MAICHAT_SCREEN_FRAME_ARCHIVE_ENABLED)
+  find_package(ZLIB REQUIRED)
+  add_library(mai_screen_frame_archive STATIC MaiScreenFrameArchive.cpp)
+  target_compile_features(mai_screen_frame_archive PUBLIC cxx_std_17)
+  target_include_directories(mai_screen_frame_archive PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/openssl/include"
+            ${MAI_OPENSSL_INCLUDE_DIR})
+  target_link_libraries(mai_screen_frame_archive PUBLIC
+    ${MAI_OPENSSL_CRYPTO_TARGET} ZLIB::ZLIB)
+  set_target_properties(mai_screen_frame_archive PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if(MAICHAT_NETWORK_BUILD_TESTS)
   enable_testing()
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_executable(mai_screen_frame_archive_test tests/MaiScreenFrameArchiveTest.cpp)
+  target_include_directories(mai_screen_frame_archive_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party")
+  target_link_libraries(mai_screen_frame_archive_test PRIVATE mai_screen_frame_archive)
+  add_test(NAME mai_screen_frame_archive
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_screen_frame_archive.py"
+      "$<TARGET_FILE:mai_screen_frame_archive_test>")
+  set_tests_properties(mai_screen_frame_archive PROPERTIES TIMEOUT 90)
   add_executable(mai_curl_download_test tests/MaiCurlDownloadTest.cpp)
   target_link_libraries(mai_curl_download_test PRIVATE mai_curl_download)
   add_test(NAME mai_curl_download_local_tls

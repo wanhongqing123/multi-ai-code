@@ -163,7 +163,10 @@ struct AIAssistantView: View {
                             attachments: model.attachments(for: model.selected),
                             workspacePath: model.workspacePath,
                             remoteRestoreText: model.remoteRestoreText,
-                            remoteRestoreGeneration: model.remoteRestoreGeneration
+                            remoteRestoreGeneration: model.remoteRestoreGeneration,
+                            screenFrameImportRevision: model.screenFrameImportRevision,
+                            screenFrameAccountID: model.screenFrameCurrentAccountID,
+                            screenFrameOwnerID: model.selectedRemote?.id ?? model.selected
                         ),
                         focusController: composerFocusController,
                         transcriptionPresentation: transcriptionPresentation,
@@ -2848,6 +2851,9 @@ private struct AIComposerSnapshot: Equatable {
     let workspacePath: String
     let remoteRestoreText: String
     let remoteRestoreGeneration: Int
+    let screenFrameImportRevision: Int
+    let screenFrameAccountID: String
+    let screenFrameOwnerID: String
 }
 
 private struct AIComposer: View, Equatable {
@@ -2885,6 +2891,7 @@ private struct AIComposer: View, Equatable {
     @State private var importingTargets: [AIAttachmentImportTarget: Int] = [:]
     @State private var draftVideoPreview: AIVideoPreviewItem?
     @State private var draftFilePreview: URL?
+    @State private var screenFrameSelection: AIScreenFrameImportBinding?
     @State private var draftSession = ""
     @State private var draftImportTarget: AIAttachmentImportTarget?
     @State private var isVoiceMode = false
@@ -3000,27 +3007,7 @@ private struct AIComposer: View, Equatable {
                 .padding(.horizontal, 16)
                 .accessibilityIdentifier("ai-music-mini-player")
             }
-            if screenCapture.isSharing {
-                HStack(spacing: 10) {
-                    Image(systemName: "rectangle.on.rectangle")
-                        .foregroundStyle(RemoteIMStyle.blue)
-                    Text("正在共享整台设备屏幕")
-                        .font(.system(size: 13, weight: .medium))
-                    Spacer(minLength: 4)
-                    Button("截屏") { captureSharedScreen() }
-                        .font(.system(size: 12, weight: .semibold))
-                    Button("停止共享") {
-                        Task { await screenCapture.stop() }
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 14).frame(height: 40)
-                .background(RemoteIMStyle.blueSoft,
-                            in: RoundedRectangle(cornerRadius: 11))
-                .padding(.horizontal, 16)
-                .accessibilityIdentifier("ai-screen-share-status")
-            }
+            screenFramesStrip
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     composerEditMenuState = nil
@@ -3239,6 +3226,21 @@ private struct AIComposer: View, Equatable {
                 MaiFfplayVideoScreen(path: item.path) { draftVideoPreview = nil }
             }
             .quickLookPreview($draftFilePreview)
+            .sheet(item: $screenFrameSelection) { binding in
+                AIMobileScreenFramesView(model: model, binding: binding)
+            }
+            .task(id: "\(snapshot.screenFrameAccountID)|\(snapshot.workspacePath)|\(snapshot.screenFrameOwnerID)") {
+                await model.restoreScreenFrameArchivesForCurrentDraft()
+                adoptScreenArchive()
+            }
+            .onChange(of: screenCapture.archiveContext?.batchID) { _ in adoptScreenArchive() }
+            .onChange(of: screenCapture.isSharing) { sharing in
+                if !sharing && !screenCapture.isStarting { presentFinishedScreenFrames() }
+            }
+            .onChange(of: screenCapture.archiveBatch?.status) { status in
+                if status == "stopped" { presentFinishedScreenFrames() }
+            }
+            .onChange(of: snapshot.screenFrameAccountID) { _ in screenFrameSelection = nil }
             .fileImporter(
                 isPresented: $importing,
                 allowedContentTypes: model.selectedRemote == nil
@@ -3455,45 +3457,93 @@ private struct AIComposer: View, Equatable {
             }
     }
 
+    @ViewBuilder private var screenFramesStrip: some View {
+        let saved = model.screenFrameBindingsForCurrentDraft()
+        let active = screenCapture.isSharing || screenCapture.isStarting
+        if active || !saved.isEmpty {
+            HStack(spacing: 10) {
+                Image(systemName: "rectangle.on.rectangle")
+                    .foregroundStyle(RemoteIMStyle.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    if active {
+                        Text(screenCapture.isStarting ? "正在开启屏幕共享…" :
+                            "每 2 秒截取一张 · 已截取 \(screenCapture.archiveBatch?.frameCount ?? 0) 张")
+                        if let context = screenCapture.archiveContext,
+                           !saved.contains(where: { $0.id == context.batchID }) {
+                            Text("图片保存在开始共享的原会话").font(.caption).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("共享截图已保留 · 选择需要的图片")
+                    }
+                }.font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 4)
+                if active {
+                    Button("停止共享") { Task { await stopScreenShareAndReview() } }
+                        .accessibilityIdentifier("ai-screen-share-stop")
+                } else if let latest = saved.last {
+                    Button("选择图片") { screenFrameSelection = latest }
+                        .accessibilityIdentifier("ai-screen-share-review")
+                }
+            }
+            .font(.system(size: 12, weight: .semibold)).buttonStyle(.plain)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 11))
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("ai-screen-share-status")
+        }
+    }
+
+    private func adoptScreenArchive() {
+        guard let context = screenCapture.archiveContext else { return }
+        // Host starts already register the actual session. A UI start supplies its
+        // click-time snapshot below; never rebind another session's batch here.
+        if model.screenFrameBinding(id: context.batchID) == nil {
+            _ = try? model.registerScreenFrameArchive(context: context)
+        }
+    }
+
+    private func presentFinishedScreenFrames() {
+        adoptScreenArchive()
+        guard screenCapture.archiveBatch?.status == "stopped",
+              let context = screenCapture.archiveContext,
+              let binding = model.screenFrameBindingsForCurrentDraft().first(where: { $0.id == context.batchID })
+        else { return }
+        screenFrameSelection = binding
+    }
+
+    private func stopScreenShareAndReview() async {
+        await screenCapture.stop()
+        presentFinishedScreenFrames()
+    }
+
     private var screenShareAction: (() -> Void)? {
         guard aiSupportsWholeDeviceScreenCapture() else { return nil }
         return {
             isAttachmentPanelPresented = false
-            Task { @MainActor in
-                do {
-                    if screenCapture.isSharing { await screenCapture.stop() }
-                    else { try await screenCapture.start() }
-                } catch {
-                    model.showTransientError(error.localizedDescription)
-                }
+            if screenCapture.isSharing || screenCapture.isStarting {
+                Task { @MainActor in await stopScreenShareAndReview() }
+                return
             }
-        }
-    }
-
-    private func captureSharedScreen() {
-        guard !snapshot.workspacePath.isEmpty else {
-            model.showTransientError("创作中心尚未准备好")
-            return
-        }
-        guard snapshot.attachments.count < 10 else {
-            model.showTransientError("每条消息最多添加 10 项附件")
-            return
-        }
-        let target = model.importTarget()
-        let directory = URL(fileURLWithPath: snapshot.workspacePath, isDirectory: true)
-            .appendingPathComponent("screenshots", isDirectory: true)
-        let name = "mobile_screen_\(UUID().uuidString).png"
-        let file = directory.appendingPathComponent(name)
-        Task { @MainActor in
             do {
-                _ = try await screenCapture.capture(to: file,
-                    workspace: URL(fileURLWithPath: snapshot.workspacePath, isDirectory: true))
-                let attachment = AIImportedFile(relativePath: "screenshots/\(name)",
-                                                mimeType: "image/png", isImage: true)
-                model.addAttachments([attachment], to: target)
-            } catch {
-                model.showTransientError(error.localizedDescription)
-            }
+                let original = try model.makeScreenFrameImportSnapshot()
+                Task { @MainActor in
+                    do {
+                        try await screenCapture.start(workspace: original.workspace,
+                                                      sessionID: original.ownerSessionID)
+                        guard let context = screenCapture.archiveContext else { return }
+                        _ = try model.registerScreenFrameArchive(context: context, snapshot: original)
+                    } catch {
+                        // A canceled/failed system picker may already have created
+                        // an empty batch. Keep it on the original target as well.
+                        if let context = screenCapture.archiveContext,
+                           context.belongs(to: original.workspace, sessionID: original.ownerSessionID) {
+                            do { _ = try model.registerScreenFrameArchive(context: context, snapshot: original) }
+                            catch { await screenCapture.stop() }
+                        }
+                        model.showTransientError(error.localizedDescription)
+                    }
+                }
+            } catch { model.showTransientError(error.localizedDescription) }
         }
     }
 

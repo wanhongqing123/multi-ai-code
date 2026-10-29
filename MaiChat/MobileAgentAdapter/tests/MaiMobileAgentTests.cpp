@@ -21,6 +21,10 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#if defined(__APPLE__)
+#include "MaiScreenFrameArchive.h"
+#include "MaiQrCode.h"
+#endif
 #if !defined(_WIN32)
 #include <pthread.h>
 #endif
@@ -99,19 +103,45 @@ struct ScreenCaptureProbe {
     std::atomic<bool> released{false};
     std::atomic<bool>* cancel = nullptr;
     bool cancelOnReturn = false;
+    std::string expectedTool = "mobile_capture_screen";
     Json arguments;
 };
 
 static const char* captureHostHandler(void* context, const char* tool, const char* arguments) {
     auto* probe = static_cast<ScreenCaptureProbe*>(context);
-    CHECK(tool && std::strcmp(tool, "mobile_capture_screen") == 0);
+    CHECK(tool && probe->expectedTool == tool);
     probe->arguments = Json::parse(arguments);
     ++probe->calls;
-    const std::string output = probe->arguments.at("output_path").get<std::string>();
-    CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output),
-                                    std::string("\x89PNG\r\n\x1a\n", 8)).hasError());
+    if (probe->expectedTool == "mobile_capture_screen") {
+        const std::string output = probe->arguments.at("output_path").get<std::string>();
+        CHECK(!MaiFileSystem::writeFile(MaiFilePath::fromUtf8(output),
+                                        std::string("\x89PNG\r\n\x1a\n", 8)).hasError());
+    }
+    Json output{{"captured", true}};
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    if (probe->expectedTool == "mobile_export_screen_frame") {
+        const std::string root = probe->arguments.at("workspace_path");
+        const std::string owner = probe->arguments.at("session_id");
+        const Json request{{"action", "get"}, {"batch_id", probe->arguments.at("batch_id")},
+                           {"frame_id", probe->arguments.at("frame_id")}};
+        char* encoded = mai_screen_frame_archive_request(root.c_str(), owner.c_str(),
+            request.dump().c_str(), nullptr, 0);
+        CHECK(encoded != nullptr);
+        const Json reply = Json::parse(encoded);
+        mai_screen_frame_archive_free(encoded);
+        CHECK(reply.value("ok", false));
+        const auto source = MaiFilePath::fromUtf8(root).append(
+            MaiFilePath::fromUtf8(reply.at("output").at("path").get<std::string>()));
+        std::string png;
+        CHECK(!MaiFileSystem::readFile(source, png).hasError());
+        const auto copy = MaiFilePath::fromUtf8(root).append(MaiFilePath::fromUtf8("screenshots"))
+            .append(MaiFilePath::fromUtf8("mobile_screen_export_" + MaiIdGenerator::newEventId() + ".png"));
+        CHECK(!MaiFileSystem::writeFile(copy, png).hasError());
+        output["file_path"] = copy.toUtf8();
+    }
+#endif
     if (probe->cancelOnReturn && probe->cancel) probe->cancel->store(true);
-    const std::string response = Json{{"ok", true}, {"output", {{"captured", true}}}}.dump();
+    const std::string response = Json{{"ok", true}, {"output", output}}.dump();
     auto* owned = static_cast<char*>(std::malloc(response.size() + 1));
     CHECK(owned != nullptr);
     std::memcpy(owned, response.c_str(), response.size() + 1);
@@ -144,6 +174,7 @@ static void captureContract() {
     MaiToolContext context;
     context.root = workspace.path.toUtf8();
     context.cancel = &cancel;
+    context.sessionId = "capture-contract-owner";
 
 #if defined(__APPLE__) && TARGET_OS_IPHONE
     CHECK(schema["properties"]["target"]["enum"] ==
@@ -191,7 +222,8 @@ static void captureContract() {
     CHECK(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(50));
     CHECK(probe.calls.load() == 1);
     CHECK(probe.arguments["target"] == "current_app" && probe.arguments["delay_ms"] == 0);
-    CHECK(probe.arguments.size() == 3);
+    CHECK(probe.arguments.size() == 4);
+    CHECK(probe.arguments["session_id"] == context.sessionId);
     CHECK(delayed.images()[0].path == probe.arguments["output_path"]);
     CHECK(!MaiFileSystem::removeFile(MaiFilePath::fromUtf8(delayed.images()[0].path)).hasError());
     auto external = capture->execute(R"({"target":"last_external"})", context);
@@ -252,6 +284,73 @@ static void captureContract() {
     auto alreadyCanceled = capture->execute("{}", context);
     CHECK(alreadyCanceled.hasError() && alreadyCanceled.error().code() == MaiErrorCode::Canceled);
     CHECK(probe.calls.load() == callsBeforeCancel + 1);
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    cancel.store(false);
+    probe.cancelOnReturn = false;
+    context.sessionId = "capture-contract-owner";
+    for (const char* name : {"mobile_start_screen_share", "mobile_stop_screen_share"}) {
+        auto* lifecycle = registry.findForModel(name);
+        CHECK(lifecycle != nullptr);
+        probe.expectedTool = name;
+        auto bad = lifecycle->execute(R"({"sample_interval_ms":1})", context);
+        CHECK(bad.hasError() && bad.error().code() == MaiErrorCode::InvalidInput);
+        auto accepted = lifecycle->execute("{}", context);
+        CHECK(!accepted.hasError());
+        CHECK(probe.arguments == Json({{"workspace_path", context.root},
+                                       {"session_id", context.sessionId}}));
+    }
+    const auto archive = [&](const Json& request, const std::string& png = std::string()) {
+        char* encoded = mai_screen_frame_archive_request(context.root.c_str(),
+            context.sessionId.c_str(), request.dump().c_str(), png.empty() ? nullptr : png.data(), png.size());
+        CHECK(encoded != nullptr);
+        const Json reply = Json::parse(encoded);
+        mai_screen_frame_archive_free(encoded);
+        CHECK(reply.value("ok", false));
+        return reply.at("output");
+    };
+    const Json begun = archive({{"action", "begin"}});
+    const std::string batch = begun.at("batch").at("id").get<std::string>();
+    const auto png = maiEncodeQrCodePng("saved screen frame contract");
+    CHECK(png.isOk());
+    const auto readDimension = [&](std::size_t offset) {
+        std::uint32_t value = 0;
+        for (std::size_t index = 0; index < 4; ++index)
+            value = (value << 8) | static_cast<unsigned char>(png.value()[offset + index]);
+        return value;
+    };
+    const auto nowMS = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    archive({{"action", "append"}, {"batch_id", batch}, {"width", readDimension(16)},
+        {"height", readDimension(20)}, {"captured_at_ms", nowMS}, {"elapsed_ms", 2000}}, png.value());
+    archive({{"action", "finish"}, {"batch_id", batch}, {"reason", "user_stopped"}});
+    auto* frames = registry.findForModel("mobile_screen_frames");
+    CHECK(frames != nullptr);
+    const auto listed = frames->execute(Json{{"action", "list"}, {"batch_id", batch}}.dump(), context);
+    CHECK(!listed.hasError() && listed.images().empty());
+    const Json listing = Json::parse(listed.output());
+    CHECK(listing.at("frames").size() == 1);
+    CHECK(listing.at("batches").at(0).at("status") == "stopped");
+    const std::string id = listing.at("frames").at(0).at("id").get<std::string>();
+    probe.expectedTool = "mobile_export_screen_frame";
+    const auto opened = frames->execute(Json{{"action", "open"}, {"batch_id", batch},
+                                             {"frame_id", id}}.dump(), context);
+    CHECK(!opened.hasError() && opened.images().size() == 1);
+    CHECK(MaiFileSystem::exists(MaiFilePath::fromUtf8(opened.images()[0].path)));
+    context.sessionId = "another-session";
+    auto rejected = frames->execute(Json{{"action", "open"}, {"batch_id", batch},
+                                         {"frame_id", id}}.dump(), context);
+    CHECK(rejected.hasError() && rejected.error().code() == MaiErrorCode::NotFound);
+    context.sessionId = "capture-contract-owner";
+    const Json discard{{"action", "delete_batch"}, {"batch_id", batch}};
+    CHECK(frames->requiresApproval(discard.dump()));
+    CHECK(!frames->execute(discard.dump(), context).hasError());
+    CHECK(MaiFileSystem::exists(retained));
+    std::string selectedPNG;
+    CHECK(!MaiFileSystem::readFile(MaiFilePath::fromUtf8(opened.images()[0].path), selectedPNG).hasError());
+    CHECK(selectedPNG == png.value());
+#else
+    CHECK(registry.findForModel("mobile_screen_frames") == nullptr);
+#endif
     clearMaiMobileHostToolHandler(dispatcher);
     CHECK(probe.released.load());
     std::puts("PASS: screen capture schema, dispatch, delay cancellation and owned PNG cleanup");

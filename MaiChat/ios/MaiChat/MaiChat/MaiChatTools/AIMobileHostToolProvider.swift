@@ -52,6 +52,8 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
+        case "mobile_export_screen_frame":
+            return await exportScreenFrame(arguments)
         case "mobile_start_screen_share", "mobile_stop_screen_share", "mobile_capture_screen":
             return await executeScreenCapture(name: name, arguments: arguments)
         case "mobile_browser":
@@ -737,33 +739,125 @@ final class AIMobileHostToolProvider {
         return view
     }
 
+    // Native context-only bridge: the model sees mobile_screen_frames, while
+    // UI and tool exports share the ordinary file-copy and backup API.
+    private func exportScreenFrame(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        guard Set(arguments.keys) == ["workspace_path", "session_id", "batch_id", "frame_id"],
+              let workspace = arguments["workspace_path"] as? String,
+              (workspace as NSString).isAbsolutePath,
+              let owner = arguments["session_id"] as? String, !owner.isEmpty,
+              let batch = arguments["batch_id"] as? String,
+              let frame = arguments["frame_id"] as? String else {
+            return .failure(code: "invalid_input", message: "screen frame export requires its Session context")
+        }
+        let model = AIAssistantModel.shared
+        let root = URL(fileURLWithPath: workspace, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        guard !model.workspacePath.isEmpty,
+              root == URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath() else {
+            return .failure(code: "invalid_input", message: "screen frame belongs to another workspace")
+        }
+        let account = appState?.maiChatAccountID
+        do {
+            let context = AIMobileScreenArchiveContext(workspace: root,
+                ownerSessionID: owner, batchID: batch)
+            let files = try await AIMobileScreenFrameArchive.shared.exportSelected(
+                frameIDs: [frame], context: context)
+            guard files.count == 1 else {
+                return .failure(code: "internal", message: "screen frame export did not create one file")
+            }
+            guard account == appState?.maiChatAccountID,
+                  !model.workspacePath.isEmpty,
+                  root == URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+                    .standardizedFileURL.resolvingSymlinksInPath() else {
+                try? FileManager.default.removeItem(at: files[0])
+                return .failure(code: "canceled", message: "screen frame account changed")
+            }
+            return Self.jsonSuccess(["file_path": files[0].path,
+                                     "batch_id": batch, "frame_id": frame])
+        } catch let error as AIMobileScreenArchiveError {
+            return .failure(code: error.code, message: error.localizedDescription)
+        } catch is CancellationError {
+            return .failure(code: "canceled", message: "screen frame export was canceled")
+        } catch {
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
+    }
+
     private func executeScreenCapture(name: String,
                                       arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         let capture = AIMobileScreenCapture.shared
-        if name == "mobile_start_screen_share" {
-            guard arguments.isEmpty else {
-                return .failure(code: "invalid_input", message: "screen share start expects no arguments")
+        if name == "mobile_start_screen_share" || name == "mobile_stop_screen_share" {
+            // These fields come from the native tool context, not model arguments.
+            guard Set(arguments.keys) == ["workspace_path", "session_id"],
+                  let workspace = arguments["workspace_path"] as? String,
+                  (workspace as NSString).isAbsolutePath,
+                  let sessionID = arguments["session_id"] as? String,
+                  !sessionID.isEmpty, sessionID.utf8.count <= 1024,
+                  !sessionID.utf8.contains(0) else {
+                return .failure(code: "invalid_input", message: "screen sharing requires its Session context")
             }
+            let model = AIAssistantModel.shared
+            let root = URL(fileURLWithPath: workspace, isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            guard !model.workspacePath.isEmpty,
+                  root == URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+                    .standardizedFileURL.resolvingSymlinksInPath() else {
+                return .failure(code: "invalid_input", message: "screen sharing belongs to another workspace")
+            }
+            let expectedAccount = appState?.maiChatAccountID
             do {
-                try await capture.start()
-                return Self.jsonSuccess([
-                    "sharing": true,
-                    "next_step": "共享已开始。点系统面板外的灰色空白处收起面板，不要点‘停止共享’。再切到目标 App 停留片刻，返回 MaiChat 截屏。截 MaiChat 自己的页面可直接使用 mobile_capture_screen 的 target=current_app，无需开启共享。"
-                ])
+                if name == "mobile_start_screen_share" {
+                    try await capture.start(workspace: root, sessionID: sessionID)
+                    guard expectedAccount == appState?.maiChatAccountID,
+                          !model.workspacePath.isEmpty,
+                          root == URL(fileURLWithPath: model.workspacePath, isDirectory: true)
+                            .standardizedFileURL.resolvingSymlinksInPath() else {
+                        await capture.stop()
+                        return .failure(code: "canceled", message: "screen sharing account changed")
+                    }
+                    guard let context = capture.archiveContext else {
+                        await capture.stop()
+                        return .failure(code: "internal", message: "screen frame batch is unavailable")
+                    }
+                    do { _ = try model.registerScreenFrameArchive(context: context) }
+                    catch { await capture.stop(); throw error }
+                    return Self.jsonSuccess([
+                        "sharing": true, "batch_id": context.batchID, "sample_interval_ms": 2000,
+                        "next_step": "共享已开始，每2秒自动保存一张截图。点系统面板外的灰色空白处收起面板，去操作需要截取的页面。结束后停止共享，再列出本批截图让用户选择；不需要反复调用截屏工具。"
+                    ])
+                }
+                if let context = capture.archiveContext,
+                   context.workspace.standardizedFileURL.resolvingSymlinksInPath() != root ||
+                    context.ownerSessionID != sessionID {
+                    return .failure(code: "busy", message: "screen sharing belongs to another Session")
+                }
+                await capture.stop()
+                var output: [String: Any] = ["sharing": false, "sample_interval_ms": 2000,
+                    "next_step": "截图已保留。使用 mobile_screen_frames 列出本批图片，告诉用户序号和时间，并询问需要哪张；不要自动把全部图片送给模型。"]
+                if let context = capture.archiveContext {
+                    output["batch_id"] = context.batchID
+                    do {
+                        let saved = try await AIMobileScreenFrameArchive.shared.list(
+                            workspace: context.workspace, sessionID: context.ownerSessionID,
+                            batchID: context.batchID)
+                        output["frame_count"] = saved.frames.count
+                    } catch {
+                        output["warning"] = "共享已停止，但截图列表暂时无法读取，请重试列出本批截图。"
+                    }
+                } else { output["frame_count"] = 0 }
+                if let warning = capture.archiveError { output["archive_warning"] = warning }
+                return Self.jsonSuccess(output)
+            } catch let error as AIMobileScreenArchiveError {
+                return .failure(code: error.code, message: error.localizedDescription)
             } catch let error as AIMobileScreenCaptureError {
                 return .failure(code: error.code, message: error.localizedDescription)
             } catch {
                 return .failure(code: "internal", message: error.localizedDescription)
             }
         }
-        if name == "mobile_stop_screen_share" {
-            guard arguments.isEmpty else {
-                return .failure(code: "invalid_input", message: "screen share stop expects no arguments")
-            }
-            await capture.stop()
-            return Self.jsonSuccess(["sharing": false])
-        }
-        guard Set(arguments.keys).isSubset(of: ["output_path", "target", "delay_ms"]),
+        guard Set(arguments.keys).isSubset(of: ["output_path", "target", "delay_ms", "session_id"]),
               let outputPath = arguments["output_path"] as? String,
               (outputPath as NSString).isAbsolutePath,
               !AIAssistantModel.shared.workspacePath.isEmpty else {
@@ -787,6 +881,14 @@ final class AIMobileHostToolProvider {
         } else { delay = 0 }
         let root = URL(fileURLWithPath: AIAssistantModel.shared.workspacePath,
                        isDirectory: true)
+        if let suppliedSession = arguments["session_id"],
+           !(suppliedSession is String) {
+            return .failure(code: "invalid_input", message: "invalid screen capture Session")
+        }
+        if target == .lastExternal, let owner = capture.archiveContext,
+           !owner.belongs(to: root, sessionID: arguments["session_id"] as? String ?? "") {
+            return .failure(code: "not_found", message: "the live screen frame belongs to another Session")
+        }
         do {
             let frame = try await capture.capture(to: URL(fileURLWithPath: outputPath),
                 workspace: root, target: target, delayMilliseconds: delay)

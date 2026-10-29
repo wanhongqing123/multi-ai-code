@@ -949,6 +949,19 @@ struct AIAttachmentImportTarget: Sendable, Hashable {
     let emptyDraftToken: UUID?
     let remoteRoomKey: String?
 }
+
+struct AIScreenFrameImportSnapshot: Sendable, Hashable {
+    let accountID: String
+    let workspace: URL
+    let ownerSessionID: String
+    let importTarget: AIAttachmentImportTarget
+}
+
+struct AIScreenFrameImportBinding: Identifiable, Sendable, Equatable {
+    let context: AIMobileScreenArchiveContext
+    let snapshot: AIScreenFrameImportSnapshot
+    var id: String { context.batchID }
+}
 struct AIImagePreview: Identifiable, Equatable {
     let id: UUID
     let filePath: String
@@ -1315,6 +1328,7 @@ final class AIAssistantModel: ObservableObject {
     private static let lifecycleSessionID = "session_lifecycle"
 
     static func resetForAccountSwitch() {
+        Task { @MainActor in await AIMobileScreenCapture.shared.stop() }
         AIMobileLocalMediaRequests.shared.deactivate()
         shared.disappear()
         shared.stopRemoteSync()
@@ -1351,6 +1365,8 @@ final class AIAssistantModel: ObservableObject {
     @Published var quotedMessage: AIMessage?
     var drafts: [String: String] = [:]
     @Published private(set) var pendingAttachments: [String: [AIImportedFile]] = [:]
+    @Published private(set) var screenFrameImportRevision = 0
+    private var screenFrameImports: [AIScreenFrameImportBinding] = []
     private(set) var firstMessageSessionID = ""
     private var emptyDraftToken = UUID()
     private var createdEmptyDraftSessions: [UUID: String] = [:]
@@ -1421,6 +1437,14 @@ final class AIAssistantModel: ObservableObject {
 
     #if DEBUG
     func installVideoToolTestWorkspace(_ path: String) { workspacePath = path }
+    #if targetEnvironment(simulator)
+    private var screenFrameUITestAccountID: String?
+    func installScreenFrameUITestWorkspace(_ path: String, accountID: String) {
+        guard ProcessInfo.processInfo.arguments.contains("--ai-screen-frames-ui-test") else { return }
+        workspacePath = path
+        screenFrameUITestAccountID = accountID
+    }
+    #endif
     #endif
 
     func setComposerTyping(_ active: Bool) { composerTyping = active }
@@ -3106,6 +3130,155 @@ final class AIAssistantModel: ObservableObject {
         guard let token = target.emptyDraftToken else { return nil }
         if let created = createdEmptyDraftSessions[token] { return created }
         return token == emptyDraftToken ? "" : nil
+    }
+
+    var screenFrameCurrentAccountID: String {
+        #if DEBUG && targetEnvironment(simulator)
+        if let screenFrameUITestAccountID { return screenFrameUITestAccountID }
+        #endif
+        guard let appState = AIMobileHostToolProvider.shared.appState else { return "" }
+        return appState.maiChatAccountID.isEmpty ? appState.masterUserID : appState.maiChatAccountID
+    }
+
+    func makeScreenFrameImportSnapshot() throws -> AIScreenFrameImportSnapshot {
+        let account = screenFrameCurrentAccountID
+        guard !account.isEmpty, !workspacePath.isEmpty, self === Self.shared else {
+            throw AIBackendError(message: "账号或创作中心尚未准备好")
+        }
+        let target = importTarget()
+        let owner = target.remoteRoomKey ?? (!target.sessionID.isEmpty ? target.sessionID :
+            "draft:" + (target.emptyDraftToken ?? UUID()).uuidString.lowercased())
+        return AIScreenFrameImportSnapshot(accountID: account,
+            workspace: URL(fileURLWithPath: workspacePath, isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath(),
+            ownerSessionID: owner, importTarget: target)
+    }
+
+    @discardableResult
+    func registerScreenFrameArchive(context: AIMobileScreenArchiveContext,
+                                    snapshot supplied: AIScreenFrameImportSnapshot? = nil) throws
+        -> AIScreenFrameImportBinding {
+        if let existing = screenFrameImports.first(where: { $0.id == context.batchID }) {
+            try validateScreenFrameImport(existing)
+            return existing
+        }
+        let snapshot: AIScreenFrameImportSnapshot
+        if let supplied { snapshot = supplied }
+        else {
+            let current = try makeScreenFrameImportSnapshot()
+            if context.ownerSessionID == current.ownerSessionID { snapshot = current }
+            else {
+                guard sessions.contains(where: { $0.id == context.ownerSessionID }),
+                      !context.ownerSessionID.isEmpty else {
+                    throw AIBackendError(message: "请返回开始共享的原会话查看截图")
+                }
+                snapshot = AIScreenFrameImportSnapshot(accountID: current.accountID,
+                    workspace: current.workspace, ownerSessionID: context.ownerSessionID,
+                    importTarget: AIAttachmentImportTarget(sessionID: context.ownerSessionID,
+                        emptyDraftToken: nil, remoteRoomKey: nil))
+            }
+        }
+        let binding = AIScreenFrameImportBinding(context: context, snapshot: snapshot)
+        try validateScreenFrameImport(binding)
+        screenFrameImports.append(binding)
+        screenFrameImportRevision &+= 1
+        return binding
+    }
+
+    private func validateScreenFrameImport(_ binding: AIScreenFrameImportBinding) throws {
+        guard self === Self.shared, !binding.snapshot.accountID.isEmpty,
+              binding.snapshot.accountID == screenFrameCurrentAccountID,
+              binding.snapshot.workspace.standardizedFileURL.resolvingSymlinksInPath().path ==
+                URL(fileURLWithPath: workspacePath, isDirectory: true)
+                    .standardizedFileURL.resolvingSymlinksInPath().path,
+              binding.context.workspace.standardizedFileURL.resolvingSymlinksInPath().path ==
+                binding.snapshot.workspace.path,
+              binding.context.ownerSessionID == binding.snapshot.ownerSessionID,
+              attachmentSession(for: binding.snapshot.importTarget) != nil else {
+            throw AIBackendError(message: "账号、工作区或原会话已变化，截图已保留但未加入草稿")
+        }
+    }
+
+    func screenFrameBindingsForCurrentDraft() -> [AIScreenFrameImportBinding] {
+        let current = importTarget()
+        return screenFrameImports.filter { binding in
+            guard (try? validateScreenFrameImport(binding)) != nil,
+                  let session = attachmentSession(for: binding.snapshot.importTarget) else { return false }
+            return binding.snapshot.importTarget.remoteRoomKey == current.remoteRoomKey &&
+                session == attachmentSession(for: current)
+        }
+    }
+
+    func screenFrameBinding(id: String) -> AIScreenFrameImportBinding? {
+        guard let binding = screenFrameImports.first(where: { $0.id == id }),
+              (try? validateScreenFrameImport(binding)) != nil else { return nil }
+        return binding
+    }
+
+    func restoreScreenFrameArchivesForCurrentDraft() async {
+        do {
+            let snapshot = try makeScreenFrameImportSnapshot()
+            let listing = try await AIMobileScreenFrameArchive.shared.list(
+                workspace: snapshot.workspace, sessionID: snapshot.ownerSessionID)
+            guard !Task.isCancelled else { return }
+            for batch in listing.batches.sorted(by: { $0.startedAtMS < $1.startedAtMS }) {
+                let context = AIMobileScreenArchiveContext(workspace: snapshot.workspace,
+                    ownerSessionID: snapshot.ownerSessionID, batchID: batch.id)
+                let binding = AIScreenFrameImportBinding(context: context, snapshot: snapshot)
+                try validateScreenFrameImport(binding)
+                let capture = AIMobileScreenCapture.shared
+                let isLive = (capture.isSharing || capture.isStarting) &&
+                    capture.archiveContext == context
+                if batch.status == "recording", !isLive, !capture.isStarting {
+                    _ = try await AIMobileScreenFrameArchive.shared.finish(
+                        context: context, reason: "interrupted")
+                    try validateScreenFrameImport(binding)
+                }
+                _ = try registerScreenFrameArchive(context: context, snapshot: snapshot)
+            }
+        } catch { /* A missing archive is normal before the first capture. */ }
+    }
+
+    func screenFrameAttachmentCapacity(_ binding: AIScreenFrameImportBinding) -> Int {
+        guard (try? validateScreenFrameImport(binding)) != nil,
+              let session = attachmentSession(for: binding.snapshot.importTarget) else { return 0 }
+        let key = binding.snapshot.importTarget.remoteRoomKey ?? session
+        return max(0, 10 - pendingAttachments[key, default: []].count)
+    }
+
+    @discardableResult
+    func addScreenFrames(_ frameIDs: [String], binding: AIScreenFrameImportBinding) async throws -> Int {
+        try validateScreenFrameImport(binding)
+        let capacity = screenFrameAttachmentCapacity(binding)
+        guard !frameIDs.isEmpty, frameIDs.count <= capacity else {
+            throw AIBackendError(message: capacity == 0 ? "原会话草稿已有 10 项附件，请先移除部分附件" :
+                "原会话草稿还可添加 \(capacity) 张图片")
+        }
+        let files = try await AIMobileScreenFrameArchive.shared.exportSelected(
+            frameIDs: frameIDs, context: binding.context)
+        do {
+            try Task.checkCancellation()
+            try validateScreenFrameImport(binding)
+            guard files.count <= screenFrameAttachmentCapacity(binding) else {
+                throw AIBackendError(message: "原会话草稿的附件数量已变化，请减少选择后重试")
+            }
+        }
+        catch {
+            for file in files { try? FileManager.default.removeItem(at: file) }
+            throw error
+        }
+        let imported = files.map { AIImportedFile(relativePath: "screenshots/" + $0.lastPathComponent,
+                                                 mimeType: "image/png", isImage: true) }
+        return addAttachments(imported, to: binding.snapshot.importTarget)
+    }
+
+    func discardScreenFrameArchive(_ binding: AIScreenFrameImportBinding) async throws {
+        try validateScreenFrameImport(binding)
+        try await AIMobileScreenFrameArchive.shared.discard(context: binding.context)
+        try validateScreenFrameImport(binding)
+        AIMobileScreenCapture.shared.forgetFinishedArchive(batchID: binding.id)
+        screenFrameImports.removeAll { $0.id == binding.id }
+        screenFrameImportRevision &+= 1
     }
 
     @discardableResult

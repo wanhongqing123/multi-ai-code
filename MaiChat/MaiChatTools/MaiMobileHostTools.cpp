@@ -16,6 +16,10 @@
 #include "MaiFilePath.h"
 #include "MaiFileSystem.h"
 #include "MaiIdGenerator.h"
+#if defined(MAICHAT_MOBILE_IOS)
+#include "MaiPathGuard.h"
+#include "MaiScreenFrameArchive.h"
+#endif
 
 using Json = nlohmann::json;
 
@@ -132,6 +136,180 @@ private:
 };
 
 namespace {
+
+#if defined(MAICHAT_MOBILE_IOS)
+MaiToolResult screenArchiveRequest(const MaiToolContext& context, const Json& request) {
+    if (context.isCanceled())
+        return MaiToolResult::failure(MaiErrorCode::Canceled, "screen frame request was canceled");
+    if (context.root.empty() || context.sessionId.empty())
+        return MaiToolResult::failure(MaiErrorCode::NotConfigured,
+                                      "the screen frame Session workspace is unavailable");
+    char* encoded = mai_screen_frame_archive_request(
+        context.root.c_str(), context.sessionId.c_str(), request.dump().c_str(), nullptr, 0);
+    if (!encoded)
+        return MaiToolResult::failure(MaiErrorCode::Internal, "screen frame archive returned no response");
+    const Json response = Json::parse(encoded, nullptr, false);
+    mai_screen_frame_archive_free(encoded);
+    if (!response.is_object() || !response.contains("ok") || !response["ok"].is_boolean())
+        return MaiToolResult::failure(MaiErrorCode::Protocol, "invalid screen frame archive response");
+    if (!response["ok"].get<bool>()) {
+        const std::string code = response.value("errorCode", "internal");
+        MaiErrorCode error = MaiErrorCode::Internal;
+        if (code == "invalid_input") error = MaiErrorCode::InvalidInput;
+        else if (code == "not_found") error = MaiErrorCode::NotFound;
+        else if (code == "busy" || code == "limit") error = MaiErrorCode::Busy;
+        else if (code == "rate_limited") error = MaiErrorCode::RateLimited;
+        return MaiToolResult::failure(error, response.value("error", "screen frame archive failed"));
+    }
+    if (!response.contains("output") || !response["output"].is_object())
+        return MaiToolResult::failure(MaiErrorCode::Protocol, "screen frame archive output is missing");
+    if (context.isCanceled())
+        return MaiToolResult::failure(MaiErrorCode::Canceled, "screen frame request was canceled");
+    return MaiToolResult::success(response["output"].dump());
+}
+
+class MaiMobileScreenFramesTool final : public MaiTool {
+public:
+    explicit MaiMobileScreenFramesTool(std::shared_ptr<MaiMobileHostDispatcher> dispatcher)
+        : mDispatcher(std::move(dispatcher)) {}
+    std::string name() const override { return "mobile_screen_frames"; }
+    std::string description() const override {
+        return "List screenshots saved automatically every 2 seconds during iOS screen sharing. "
+               "After sharing stops, list the batch and ask which numbered/timestamped images the "
+               "user needs. Listing returns metadata without sending all images to the model. "
+               "Open only the requested frame with batch_id and frame_id from that list. "
+               "delete_batch permanently clears only a stopped batch when the user requests cleanup. "
+               "This tool does not start or restart sharing, and stopped batches remain available.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{"action":{"type":"string","enum":["list","open","delete_batch"]},)"
+               R"("batch_id":{"type":"string","minLength":1,"maxLength":100},)"
+               R"("frame_id":{"type":"string","minLength":1,"maxLength":100}},"required":["action"],"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string& arguments) const override {
+        const Json parsed = Json::parse(arguments, nullptr, false);
+        return parsed.is_object() && parsed.value("action", Json{}) == "delete_batch";
+    }
+    MaiToolResult execute(const std::string& argumentsJson,
+                          const MaiToolContext& context) override {
+        Json args = Json::parse(argumentsJson, nullptr, false);
+        if (!args.is_object() || !args.contains("action") || !args["action"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "a screen frame action is required");
+        for (auto field = args.begin(); field != args.end(); ++field) {
+            if (field.key() != "action" && field.key() != "batch_id" && field.key() != "frame_id")
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput, "unknown screen frame argument");
+            if (!field.value().is_string() || field.value().get_ref<const std::string&>().empty() ||
+                field.value().get_ref<const std::string&>().size() > 100)
+                return MaiToolResult::failure(MaiErrorCode::InvalidInput, "screen frame identifiers must be strings");
+        }
+        const std::string action = args["action"].get<std::string>();
+        if ((action != "list" && action != "open" && action != "delete_batch") ||
+            (action != "list" && !args.contains("batch_id")) ||
+            (action == "open" && !args.contains("frame_id")) ||
+            (action != "open" && args.contains("frame_id")))
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput,
+                                          "open requires batch_id and frame_id; deletion requires batch_id");
+        if (action == "open" && context.model == "glm-5.3")
+            return MaiToolResult::failure(MaiErrorCode::NotSupported,
+                                          "the current model cannot inspect saved screenshots");
+        if (action == "delete_batch") {
+            const MaiToolResult checked = screenArchiveRequest(context,
+                Json{{"action", "list"}, {"batch_id", args["batch_id"]}});
+            if (checked.hasError()) return checked;
+            const Json listing = Json::parse(checked.output(), nullptr, false);
+            if (!listing.is_object() || !listing.contains("batches") ||
+                !listing["batches"].is_array() || listing["batches"].size() != 1)
+                return MaiToolResult::failure(MaiErrorCode::Protocol, "screen frame batch is missing");
+            if (listing["batches"][0].value("status", "") == "recording")
+                return MaiToolResult::failure(MaiErrorCode::Busy,
+                                              "stop screen sharing before deleting its batch");
+        }
+        args["action"] = action == "open" ? "get" : action == "delete_batch" ? "discard" : "list";
+        const MaiToolResult result = screenArchiveRequest(context, args);
+        if (result.hasError() || action != "open") return result;
+        const Json frame = Json::parse(result.output(), nullptr, false);
+        if (!frame.is_object() || !frame.contains("path") || !frame["path"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "screen frame path is missing");
+        // The ordinary iOS exporter owns copy/backup handling. A tool result
+        // must survive a later deletion of the temporary capture batch.
+        const MaiToolResult exported = callMaiMobileHostTool(mDispatcher, "mobile_export_screen_frame",
+            Json{{"workspace_path", context.root}, {"session_id", context.sessionId},
+                 {"batch_id", args["batch_id"]}, {"frame_id", args["frame_id"]}}.dump());
+        if (exported.hasError()) return exported;
+        const Json saved = Json::parse(exported.output(), nullptr, false);
+        if (!saved.is_object() || !saved.contains("file_path") || !saved["file_path"].is_string())
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "exported screen frame path is missing");
+        const std::string path = maiResolvePathWithinRoot(context.root, saved["file_path"].get<std::string>());
+        if (path.empty())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "screen frame is outside this workspace");
+        const MaiFilePath file = MaiFilePath::fromUtf8(path);
+        const MaiFilePath directory = MaiFileSystem::resolve(
+            MaiFilePath::fromUtf8(context.root).append(MaiFilePath::fromUtf8("screenshots")));
+        const std::string filename = file.baseName().toUtf8();
+        if (file.dirName() != directory || filename.rfind("mobile_screen_", 0) != 0 ||
+            filename.size() < 4 || filename.substr(filename.size() - 4) != ".png")
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "exported frame is outside the screenshot area");
+        std::uint64_t size = 0;
+        std::string header;
+        bool clipped = false;
+        const MaiError read = MaiFileSystem::readFile(file, header, 8, &clipped);
+        if (!MaiFileSystem::fileSize(file, size) || size == 0 || size > 20 * 1024 * 1024 ||
+            read.hasError() || header.compare(0, 8, "\x89PNG\r\n\x1a\n", 8) != 0) {
+            MaiFileSystem::removeFile(file);
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "saved screen frame is not a bounded PNG");
+        }
+        if (context.isCanceled()) {
+            MaiFileSystem::removeFile(file);
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "screen frame request was canceled");
+        }
+        Json output = frame;
+        output["path"] = "screenshots/" + filename;
+        output["file_path"] = path;
+        return MaiToolResult::successWithImages(output.dump(), {MaiToolImage{path, "image/png"}});
+    }
+private:
+    std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;
+};
+
+class MaiMobileScreenShareLifecycleTool final : public MaiTool {
+public:
+    MaiMobileScreenShareLifecycleTool(bool start, std::shared_ptr<MaiMobileHostDispatcher> dispatcher)
+        : mStart(start), mDispatcher(std::move(dispatcher)) {}
+    std::string name() const override {
+        return mStart ? "mobile_start_screen_share" : "mobile_stop_screen_share";
+    }
+    std::string description() const override {
+        return mStart
+            ? "Start iOS 27+ system-approved screen sharing and save a screenshot every 2 seconds "
+              "in this Session. Before opening the picker, tell the user to choose Share Entire Screen "
+              "and then tap the gray area outside the system panel to close it without stopping sharing. "
+              "The user can visit the pages they need, then stop sharing. Sampling is automatic: do not "
+              "repeatedly call capture or restart sharing. After stopping, use mobile_screen_frames to "
+              "list the saved images and ask the user which ones they need."
+            : "Stop this Session's screen sharing while preserving its screenshots. Return the saved "
+              "batch and count, then list its screenshots with mobile_screen_frames and let the user "
+              "choose. Stopping must not delete the captured images.";
+    }
+    std::string parametersSchema() const override {
+        return R"({"type":"object","properties":{},"additionalProperties":false})";
+    }
+    bool requiresApproval(const std::string&) const override { return false; }
+    MaiToolResult execute(const std::string& argumentsJson, const MaiToolContext& context) override {
+        const Json args = Json::parse(argumentsJson, nullptr, false);
+        if (!args.is_object() || !args.empty())
+            return MaiToolResult::failure(MaiErrorCode::InvalidInput, "screen sharing expects an empty object");
+        if (context.isCanceled())
+            return MaiToolResult::failure(MaiErrorCode::Canceled, "screen sharing was canceled");
+        if (context.root.empty() || context.sessionId.empty())
+            return MaiToolResult::failure(MaiErrorCode::NotConfigured, "the Session workspace is unavailable");
+        return callMaiMobileHostTool(mDispatcher, name(), Json{
+            {"workspace_path", context.root}, {"session_id", context.sessionId}}.dump());
+    }
+private:
+    bool mStart;
+    std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;
+};
+#endif
 
 class MaiMobileHostTool final : public MaiTool {
 public:
@@ -334,7 +512,9 @@ public:
                "For another app, omit target or use last_external to read the recent whole-device "
                "frame from a screen-sharing session the user started and visited that app in. "
                "Returning to MaiChat does not overwrite that external frame. If no frame is ready, "
-               "let the user visit the target app; do not repeatedly restart sharing.";
+               "let the user visit the target app; do not repeatedly restart sharing. "
+               "Screen sharing already saves frames every 2 seconds; after stopping, use "
+               "mobile_screen_frames to list and open the saved images instead of this live-frame tool.";
 #else
         return "Read the most recent whole-device screen frame from a screen-sharing session "
                "that the user started with mobile_start_screen_share. This can include other "
@@ -412,6 +592,7 @@ public:
         Json payload = arguments;
 #if defined(MAICHAT_MOBILE_IOS)
         payload["delay_ms"] = 0;
+        payload["session_id"] = context.sessionId;
 #endif
         payload["output_path"] = path.toUtf8();
         const MaiToolResult response = callMaiMobileHostTool(mDispatcher, name(), payload.dump());
@@ -719,17 +900,15 @@ void registerMaiChatHostTools(MaiToolRegistry& tools,
 
 void registerMobileScreenCaptureTools(
     MaiToolRegistry& tools, const std::shared_ptr<MaiMobileHostDispatcher>& dispatcher) {
+#if defined(MAICHAT_MOBILE_IOS)
+    tools.add(std::make_unique<MaiMobileScreenShareLifecycleTool>(true, dispatcher));
+    tools.add(std::make_unique<MaiMobileScreenShareLifecycleTool>(false, dispatcher));
+    tools.add(std::make_unique<MaiMobileScreenFramesTool>(dispatcher));
+#else
     addMaiMobileHostTool(
         tools, "mobile_start_screen_share",
         "Ask the user to start a system-approved whole-device screen-sharing session. "
-#if defined(MAICHAT_MOBILE_IOS)
-        "On iOS this requires iOS 27 or later and the ScreenCaptureKit system picker. "
-        "Before opening it, tell the user to choose Share Entire Screen, then tap the gray area "
-        "outside the system panel after sharing starts to close the panel without stopping sharing. "
-        "Do not ask the user to stop or repeatedly restart sharing to close that panel. "
-#else
         "On Android choose Share entire screen in the system picker. "
-#endif
         "The user can then switch to another app and return before requesting a frame.",
         R"({"type":"object","properties":{},"additionalProperties":false})",
         dispatcher, false);
@@ -738,6 +917,7 @@ void registerMobileScreenCaptureTools(
         "Stop the active whole-device screen-sharing session and discard its cached frame.",
         R"({"type":"object","properties":{},"additionalProperties":false})",
         dispatcher, false);
+#endif
     tools.add(std::make_unique<MaiMobileScreenCaptureTool>(dispatcher));
 }
 

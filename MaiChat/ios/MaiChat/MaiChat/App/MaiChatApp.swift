@@ -259,7 +259,13 @@ struct MaiChatApp: App {
             Group {
                 #if targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--ai-ui-test") {
-                    if ProcessInfo.processInfo.arguments.contains("--current-app-screen-capture-test") {
+                    if ProcessInfo.processInfo.arguments.contains("--ai-screen-frames-ui-test") {
+                        #if DEBUG
+                        AIScreenFramesUITestRoot()
+                        #else
+                        EmptyView()
+                        #endif
+                    } else if ProcessInfo.processInfo.arguments.contains("--current-app-screen-capture-test") {
                         AICurrentAppScreenshotUITestRoot()
                     } else if ProcessInfo.processInfo.arguments.contains("--im-curl-download-ui-test") {
                         IMCurlDownloadUITestRoot()

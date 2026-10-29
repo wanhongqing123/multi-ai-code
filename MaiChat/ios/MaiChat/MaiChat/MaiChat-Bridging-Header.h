@@ -15,5 +15,6 @@
 #include "../../../Network/MaiCloudVod.h"
 #include "../../../Network/MaiVideoCircleClient.h"
 #include "../../../Network/MaiCloudDriveClient.h"
+#include "../../../Network/MaiScreenFrameArchive.h"
 #include "../../../Media/MaiVideoCircleMark.h"
 #include "../../../SessionSync/MaiSessionSyncC.h"

@@ -48,3 +48,11 @@
 - Android普通页面验收已生成真实加密PDF，独立Poppler空/错误密码拒绝，正确虚构密码显示AES-256、1页A4并可读；但普通Java封装把结果报失败。封装原先直接比较调用方路径字符串与核心resolve后的路径；改为核对同一canonical文件并保留核心真实路径，同一正常App流程通过。首轮未保留请求和返回路径的具体两种拼写，不将某个Android别名字串写成现场事实。
 - Swift普通封装存在相同的原始路径比较，真机 `/var` 与 `/private/var` 等父目录别名可能触发此类误报。两端均按规范化路径核对。现有iOS普通PDF验收增加真正的父目录symlink别名，验证核心回传实际URL、取消无产物、正确/错误密码、源与加密页数一致；`/private/tmp/maichat-ios138-pdf-canonical.xcresult` **1/1通过、零跳过**。别名与明文测试源在结束时清理，不放宽核心对末级symlink和已有输出的限制。
 - Android正常登录密码页已打开并取消，未向共享18190账号提交新密码。原生PDF路径使用普通Android排版、安全输入与共用核心，未通过模型或付费请求验收。已停止补充可选路径取证字段或扩大测试，最终APK和截图证据另附。
+
+## 交付回执：138已安装
+
+- 路径修复产品提交 `435f74087759fc84c99b4a16121a086af8f1d50e` 已推main。最终generic Debug构建退出0、深度签名检查通过，清单 `/private/tmp/maichat-ios138-pdf-canonical-candidate.json`。主文件91,856B，SHA-256 `a77777351bc5fb72dff22df2b07d0cad6b569411a1f175f06eb2c4732afe9a9f`；调试dylib89,571,072B，SHA-256 `62760b8f525ad0ee78ef9dca9085bc57acfcd9915f1fce7a1ce1663d632c40ba`；qpdf许可实际随App。
+- 用户重新连接手机后，同一iPhone14ProMax/iOS27.2已覆盖安装 **2.2.4(138)**，没有卸载或清理数据。安装回执 `/private/tmp/maichat-ios138-pdf-installed-connected.json`，实际目录 `/private/var/containers/Bundle/Application/AE25D23F-8F30-4DD4-8B7F-9184D8FC57C3/MaiChat.app/`。独立 apps 回读版本138；普通无参数启动成功、PID6547、executable与目录一致。设备自身日志 `/private/tmp/maichat-ios138-installed-runtime.log` 确认 `2026-10-29T11:25:08.555Z app_version=2.2.4 build=138 ios=27.2 launch=ae80e558 pid=6547`，更新此前“离线未安装”的历史状态。
+- Android正常App验收已完成，实际安装的2.2.5(237)隔离Debug候选202,124,370B，SHA-256 `8f15973ff5944b75f77f317c29fbf611d0e39e940fba8c939e15d2f9d37cb000`。从模拟器拉回原始APK保存为 `/private/tmp/maichat-android138-password-pdf/MaiChat-2.2.5-isolated-verified.apk` 并独立核对哈希；未采用随后未安装的可选取证构建。源码已恢复与实际通过候选一致，可选字段撤去。
+- 同目录 `pdf-final-proof.json` 为passed/source_pages1/page_count1/password_protectedtrue；`protected-final.pdf`、`protected-final.txt` 和final-pdfinfo系列日志证明正确虚构密码可读原文、AES-256/1页A4，空/错误密码退出1。`pdf-final.mp4`、`canonical-secure-form.png`、`canonical-result.png` 覆盖真实安全输入和正常Root完成态，执行者与root均查看关键截图。账号页打开/取消有 `account-open-cancel.mp4`、`account-secure-form.png`、`account-canceled-settled.png` 和secure_fields=0的AX证据；取消PDF记录output_exists=false。
+- 验证边界：手机实际安装与启动已确认，真实账号改密和真实用户文件操作未执行；功能流程使用隔离模拟器账号/文件验证。Mac原生窗口仍受锁屏限制，Windows未实机验证。本轮密码能力交付完成；用户随后新增的当前Session改名工具将单独记录并随后续包交付，不把它误算进138。

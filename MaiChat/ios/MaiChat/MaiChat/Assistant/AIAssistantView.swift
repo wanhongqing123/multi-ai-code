@@ -2883,12 +2883,9 @@ private struct AIComposer: View, Equatable {
     let snapshot: AIComposerSnapshot
     let focusController: AIComposerFocusController
     let transcriptionPresentation: VoiceTranscriptionPresentation
+    @EnvironmentObject private var appState: RemoteIMAppState
     @Binding var isAttachmentPanelPresented: Bool
-    @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer(
-        appId: TencentASRCredentials.appId,
-        secretId: TencentASRCredentials.secretId,
-        secretKey: TencentASRCredentials.secretKey
-    )
+    @StateObject private var speechRecognizer = TencentRealtimeSpeechRecognizer()
     @State private var draft = ""
     @State private var importing = false
     @ObservedObject private var music = MaiLocalMusicPlayer.shared
@@ -3429,6 +3426,16 @@ private struct AIComposer: View, Equatable {
                     guard isPressingVoice else { return }
                     transcriptionPresentation.updateLiveText(text, sessionID: sessionID)
                 }
+                speechRecognizer.onFailure = { error, _ in
+                    // 服务端可在松手前报错，立即恢复输入栏，不把中间态当作消息提交。
+                    isPressingVoice = false
+                    transcriptionPresentation.reset()
+                    model.error = "语音转文字失败：\(error.localizedDescription)"
+                }
+            }
+            .onChange(of: appState.remoteDiagnosticsIdentity) { _ in
+                // 当前页面即使复用相同 Session，也不能沿用上一轮账号认证的识别会话。
+                cancelVoiceTranscription(restoresDraft: true)
             }
             .onDisappear {
                 music.stop()
@@ -3441,6 +3448,7 @@ private struct AIComposer: View, Equatable {
                 voiceStartTask?.cancel()
                 voiceStartTask = nil
                 speechRecognizer.onLiveTextUpdate = nil
+                speechRecognizer.onFailure = nil
                 transcriptionPresentation.onCancel = nil
                 transcriptionPresentation.onEdit = nil
                 transcriptionPresentation.reset()
@@ -3949,10 +3957,6 @@ private struct AIComposer: View, Equatable {
     private func beginVoiceTranscription(at gestureOrigin: CGPoint?) {
         guard !isPressingVoice else { return }
         guard draft.isEmpty else { return }
-        guard speechRecognizer.isAvailable else {
-            model.error = "语音转文字凭证未配置"
-            return
-        }
         focusController.dismiss()
         isPressingVoice = true
         voiceBaseDraft = draft
@@ -3973,11 +3977,13 @@ private struct AIComposer: View, Equatable {
             do {
                 try await speechRecognizer.start(
                     diagnosticFields: transcriptionPresentation.diagnosticFields
-                )
+                ) { try await appState.asrCredential() }
                 return true
             } catch is CancellationError {
                 return false
             } catch {
+                // 已取消的领取任务可能稍后才收到网络错误，不覆盖下一轮长按的界面状态。
+                guard !Task.isCancelled else { return false }
                 isPressingVoice = false
                 transcriptionPresentation.reset()
                 model.error = "语音转文字失败：\(error.localizedDescription)"

@@ -8,7 +8,7 @@ const { createArkCredentialIssuer } = require('./ark-credential');
 const { createBailianCredentialIssuer } = require('./bailian-credential');
 const { createSocialVerifiers } = require('./social-providers');
 const { createAccountModelKeyIssuer } = require('./account-model-keys');
-const { createAsrRealtimeUrlIssuer } = require('./asr-realtime-url');
+const { createAsrCredentialIssuer } = require('./asr-credential');
 const { createAdminServer } = require('./admin-server');
 const { createTencentFriendWriter, syncPendingFriendActions } = require('./tim-friend-sync');
 const { createTencentProfileWriter, syncPendingProfileActions } =
@@ -198,7 +198,7 @@ function start(env = process.env) {
     issueArkCredential: createArkCredentialIssuer(env),
     issueBailianCredential: createBailianCredentialIssuer(env),
     issueAccountModelKeys: createAccountModelKeyIssuer(env),
-    issueAsrRealtimeUrl: createAsrRealtimeUrlIssuer(env),
+    issueAsrCredential: createAsrCredentialIssuer(env),
     socialVerifiers: createSocialVerifiers(env),
     sdkAppId: Number(env.MAICHAT_IM_SDK_APP_ID),
     provisionTestImAccount: createTencentAccountProvisioner({

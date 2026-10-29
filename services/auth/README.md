@@ -4,6 +4,37 @@
 Node 服务只监听 `127.0.0.1:9100`。验证码、密码哈希、登录会话与腾讯 IM UserSig
 均在服务端处理。客户端只获得自己的短期会话凭据和 UserSig，不获得 IM 签名密钥。
 
+## 腾讯实时语音识别 V2 凭据
+
+`MAICHAT_ASR_APP_ID`、`MAICHAT_ASR_SECRET_ID`、`MAICHAT_ASR_SECRET_KEY` 仅配置在
+账号服务环境中。三项均未配置时，ASR 凭据接口返回 503；只配置部分值或格式错误则
+拒绝启动。两端在登录后通过 `POST /v1/asr/credential` 预取 STS 临时
+`secret_id`、`secret_key`、`token`，统一使用 `16k_zh_en_2.0` 引擎。
+Android 用临时密钥和 token 在本地为每轮新 `voice_id` 签名 WebSocket URL，保留
+16 kHz 单声道 AAC（`voice_format=16`）与 `needvad=1`；iOS 通过官方 V2 SDK
+`QCloudConfig` 的临时凭据初始化方式连接腾讯。
+`app_id` 在响应中是数字字符串，`expires_at` 是 Unix 秒，客户端只在内存保存临时凭据。
+音频和识别结果由 App 与腾讯直接传输，账号服务只处理凭据。
+
+服务通过腾讯官方 `tencentcloud-sdk-nodejs-sts` 调用 `GetFederationToken`，
+请求有效期 1800 秒，仅允许 `name/asr:RealtimeRecognition`，资源为 `*`。
+实时识别只支持操作级授权，不能通过具体资源进一步缩小；临时权限仍是该策略与服务端
+子账号已有权限的交集。部署使用的子账号须允许申请 STS 和执行实时识别；永久密钥
+不得下发至 App。证书仅缓存在当前进程内，到期前 90 秒刷新，并合并并发 STS 请求。
+STS 失败或返回失效证书时返回 503，不回退到旧证书；响应均为 `Cache-Control: no-store`。
+唯一的 ASR 凭据接口限制每账号每分钟 10 次请求，包含上游失败的尝试，超过返回 429。
+
+发布顺序：先部署具备 STS 接口及上述环境配置的后端并验证凭据响应，再发布使用 STS
+的新版 iOS 与 Android 客户端。本次正式停止 `POST /v1/asr/realtime-url`，该路径返回
+404；仍依赖旧签名 URL 接口的客户端需要升级后才能使用语音识别。
+
+官方依据：[实时 V2 WebSocket 参数](https://cloud.tencent.com/document/product/1093/131127)、
+[iOS 实时 V2 SDK](https://cloud.tencent.com/document/product/1093/133355)、
+[iOS 临时凭据初始化](https://cloud.tencent.com/document/product/1093/35723)、
+[STS GetFederationToken](https://cloud.tencent.com/document/product/1312/48195)、
+[ASR 接口授权粒度](https://cloud.tencent.com/document/product/1093/48422)、
+[ASR 策略语法](https://cloud.tencent.com/document/product/1093/48423)。
+
 ## AI 视频圈控制面（默认关闭）
 
 代码提供账号绑定的待审核／已公开／撤回状态、登录用户列表和短时播放入口、
@@ -232,7 +263,7 @@ Workspace。切换 Workspace 时必须指定已存在 Session 的 ID 和绝对�
 | `GET /v1/model/bailian-credential` | 有效 Bearer 会话；返回 5 分钟百炼临时 Key 和万相 Workspace ID，供万相与百炼可灵共用 |
 | `GET /v1/model/api-keys` | 有效 Bearer 会话；返回 GLM、DeepSeek、MiniMax Key，客户端直接调用供应商 |
 | `GET /v1/media/authorize` | 有效 Bearer 会话；供素材服务核验该账号可否登记素材或取得 OSS 上传签名，不返回密钥 |
-| `POST /v1/asr/realtime-url` | 有效 Bearer 会话且空 JSON 请求体；返回一次性 `voice_id`、5 分钟有效的腾讯实时语音识别 `url` 与 Unix 秒 `expires_at`。每账号每分钟最多签发 10 次，未配置返回 503，超过频率返回 429；音频由 App 直连腾讯，不经过账号服务。 |
+| `POST /v1/asr/credential` | 有效 Bearer 会话且空 JSON 请求体；返回 `{app_id,secret_id,secret_key,token,expires_at}`，其中 `app_id` 为数字字符串，凭据仅允许实时识别，30 分钟有效。两端登录后预取并仅在内存缓存；未配置、上游失败或无效凭据返回 503，无效会话返回 401；每账号每分钟最多 10 次。 |
 | `GET /v1/friend/my-qr` | 有效 Bearer 会话；将 MaiChat `account_id` 编入好友二维码，不含手机号或凭据。 |
 | `POST /v1/friends/resolve` | 有效 Bearer 会话，传 `{account}`（MaiChat ID 或精确手机号）；返回 MaiChat `account_id`、昵称与当前 `im_user_id`；每账号每小时最多 20 次。 |
 | `POST /v1/friends/requests` | 有效 Bearer 会话，传 `{account}`；创建待确认的 MaiChat 好友申请，同一发起人每小时最多 20 次。 |

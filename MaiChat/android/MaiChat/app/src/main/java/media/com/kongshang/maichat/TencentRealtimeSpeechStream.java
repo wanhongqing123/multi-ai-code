@@ -1,4 +1,4 @@
-// 文件作用：按实时节奏读取 AAC，并通过 WebSocket 接收腾讯语音识别结果。
+// 文件作用：按实时节奏读取 AAC，直连腾讯 WebSocket 并接收 V2 语音识别结果。
 // 主要入口：dispatch、receive、pump、finish。
 package com.kongshang.maichat;
 
@@ -15,6 +15,7 @@ final class TencentRealtimeSpeechStream {
     interface Listener {
         void partial(String text);
         void finished(String text);
+        void failed();
         default void diagnostic(String event) {}
     }
     private interface SocketFactory {
@@ -23,7 +24,7 @@ final class TencentRealtimeSpeechStream {
     }
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final String voiceId;
-    private final RealtimeSpeechProtocol transcript = new RealtimeSpeechProtocol();
+    private final RealtimeSpeechProtocol transcript;
     private final Listener listener;
     private final File audio;
     private final SocketFactory socketFactory;
@@ -37,19 +38,25 @@ final class TencentRealtimeSpeechStream {
     // 本地 WSS 集成测试的连接入口；不读取付费服务凭据。
     TencentRealtimeSpeechStream(File audio, String url, byte[] caPem, MaiChatAuthTransport.ProxyRoute proxy,
                                 Listener listener) {
+        this(audio, url, "", caPem, proxy, listener);
+    }
+
+    TencentRealtimeSpeechStream(File audio, String url, String token, byte[] caPem,
+                                MaiChatAuthTransport.ProxyRoute proxy, Listener listener) {
         this(audio, UUID.randomUUID().toString(), listener, (voiceId, callback) ->
-            new CurlRealtimeSpeechWebSocket(url, caPem, proxy, callback));
+            new CurlRealtimeSpeechWebSocket(url, token, caPem, proxy, callback));
     }
 
     TencentRealtimeSpeechStream(File audio, MaiChatAuthClient.RealtimeAsrTicket ticket,
                                 Listener listener) {
         this(audio, ticket.voiceId, listener, (voiceId, callback) ->
-            new CurlRealtimeSpeechWebSocket(ticket.url, callback));
+            new CurlRealtimeSpeechWebSocket(ticket.url, ticket.token, callback));
     }
 
     private TencentRealtimeSpeechStream(File audio, String voiceId, Listener listener,
                                         SocketFactory socketFactory) {
         this.audio = audio; this.voiceId = voiceId;
+        this.transcript = new RealtimeSpeechProtocol(voiceId);
         this.listener = listener; this.socketFactory = socketFactory;
         worker.execute(() -> {
             try {
@@ -81,7 +88,8 @@ final class TencentRealtimeSpeechStream {
         if (finished) return;
         try {
             JSONObject message = new JSONObject(text);
-            if (message.optInt("code", -1) != 0 || !voiceId.equals(message.optString("voice_id", voiceId))) {
+            if (!transcript.accept(message)) return;
+            if (transcript.failed()) {
                 listener.diagnostic("asr-service-failed code=" + message.optInt("code", -1));
                 finish(null);
                 return;
@@ -91,7 +99,6 @@ final class TencentRealtimeSpeechStream {
                 ready = true; readyAt = System.nanoTime(); reader = new AdtsFrameReader(audio);
                 pumping = worker.scheduleAtFixedRate(this::pump, 0, 200, TimeUnit.MILLISECONDS);
             }
-            transcript.accept(message);
             String value = transcript.text();
             if (!value.equals(previousText)) { previousText = value; listener.partial(value); }
             if (transcript.complete()) {
@@ -123,9 +130,10 @@ final class TencentRealtimeSpeechStream {
                 }
                 pumping.cancel(false);
                 worker.schedule(() -> {
+                    // V2 可在结束时修正全文；没有 final 就不能把中间态当成功发送。
                     listener.diagnostic("asr-end-timeout");
-                    finish(transcript.text().isEmpty() ? null : transcript.text());
-                }, 1, TimeUnit.SECONDS);
+                    finish(null);
+                }, 10, TimeUnit.SECONDS);
             }
         } catch (Exception error) { finish(null); }
     }
@@ -138,7 +146,10 @@ final class TencentRealtimeSpeechStream {
         if (pumping != null) pumping.cancel(false);
         if (socket != null) socket.cancel();
         if (reader != null) try { reader.close(); } catch (Exception ignored) { }
-        if (notify) listener.finished(text);
+        if (notify) {
+            if (text == null) listener.failed();
+            else listener.finished(text);
+        }
         worker.shutdownNow();
     }
 }

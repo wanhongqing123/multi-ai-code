@@ -75,6 +75,11 @@ struct CurlHandle {
     ~CurlHandle() { if (value != nullptr) curl_easy_cleanup(value); }
 };
 
+struct CurlHeaders {
+    curl_slist* value = nullptr;
+    ~CurlHeaders() { if (value != nullptr) curl_slist_free_all(value); }
+};
+
 std::once_flag gCurlInitOnce;
 CURLcode gCurlInitResult = CURLE_FAILED_INIT;
 
@@ -237,13 +242,20 @@ private:
 };
 
 int runSocket(JNIEnv* env, jobject owner, SocketState* state, const std::string& url,
-              std::vector<unsigned char>& ca, jint proxyType, const std::string& proxyHost, jint proxyPort) {
+              const std::string& token, std::vector<unsigned char>& ca, jint proxyType,
+              const std::string& proxyHost, jint proxyPort) {
     if (state->cancelled.load()) return kCancelled;
     bool secure = false;
     if (!validUrl(url, &secure) || !validProxy(proxyHost, proxyPort, proxyType) ||
         (secure && ca.empty())) return kSetupFailed;
+    // STS 只透传为官方固定头；Java/JNI 两层拒绝 CRLF、控制字符及过长值。
+    if (token.size() > 8192) return kSetupFailed;
+    for (unsigned char value : token) {
+        if (value <= 32 || value >= 127) return kSetupFailed;
+    }
     CURLcode initialized = initializeCurl();
     if (initialized != CURLE_OK) return static_cast<int>(initialized);
+    CurlHeaders headers;
     CurlHandle curl;
     if (curl.value == nullptr) return kSetupFailed;
     curl_blob caBlob = {ca.data(), ca.size(), CURL_BLOB_COPY};
@@ -254,6 +266,12 @@ int runSocket(JNIEnv* env, jobject owner, SocketState* state, const std::string&
     };
     // 握手只允许 WS/WSS，不跟随重定向；WSS 同时验证 Android CA 与目标主机名。
     set(CURLOPT_URL, url.c_str());
+    if (!token.empty()) {
+        std::string header = "X-TC-Token: " + token;
+        headers.value = curl_slist_append(nullptr, header.c_str());
+        if (headers.value == nullptr) return kSetupFailed;
+        set(CURLOPT_HTTPHEADER, headers.value);
+    }
     set(CURLOPT_PROTOCOLS_STR, "ws,wss");
     set(CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
     set(CURLOPT_CONNECT_ONLY, 2L);
@@ -424,16 +442,17 @@ extern "C" JNIEXPORT void JNICALL Java_com_kongshang_maichat_CurlRealtimeSpeechW
 }
 
 extern "C" JNIEXPORT jint JNICALL Java_com_kongshang_maichat_CurlRealtimeSpeechWebSocket_nativeRun(
-    JNIEnv* env, jobject owner, jlong handle, jstring jurl, jbyteArray jca, jint proxyType,
+    JNIEnv* env, jobject owner, jlong handle, jstring jurl, jstring jtoken, jbyteArray jca, jint proxyType,
     jstring jproxyHost, jint proxyPort) {
     auto* state = reinterpret_cast<SocketState*>(handle);
     if (state == nullptr) return kSetupFailed;
     try {
-        std::string url, proxyHost;
+        std::string url, token, proxyHost;
         std::vector<unsigned char> ca;
-        if (!copyString(env, jurl, 4096, &url) || !copyString(env, jproxyHost, 255, &proxyHost) ||
+        if (!copyString(env, jurl, 4096, &url) || !copyString(env, jtoken, 8192, &token) ||
+            !copyString(env, jproxyHost, 255, &proxyHost) ||
             !copyBytes(env, jca, kMaxCaBytes, &ca)) return kSetupFailed;
-        return runSocket(env, owner, state, url, ca, proxyType, proxyHost, proxyPort);
+        return runSocket(env, owner, state, url, token, ca, proxyType, proxyHost, proxyPort);
     } catch (...) {
         return kSetupFailed;
     }

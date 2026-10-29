@@ -110,6 +110,13 @@ final class VoiceRecordingController {
                                         clip.text = text; clip.resultReady = true; deliver(clip);
                                     });
                                 }
+                                @Override public void failed() {
+                                    // 空 final 仍是正常无文字；网络/服务失败单独交给界面提示。
+                                    worker.post(() -> {
+                                        if (clip.cancelled || closed) return;
+                                        clip.asrFailed = true; clip.resultReady = true; deliver(clip);
+                                    });
+                                }
                             });
                         if (clip.released) clip.stream.endAudio();
                     } catch (RuntimeException error) {

@@ -14,13 +14,15 @@ import org.json.JSONObject;
 import org.json.JSONArray;
 
 import java.io.IOException;
-import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -144,12 +146,23 @@ public final class MaiChatAuthClient {
     public static final class RealtimeAsrTicket {
         public final String voiceId;
         public final String url;
+        public final String token;
         public final long expiresAt;
 
-        private RealtimeAsrTicket(String voiceId, String url, long expiresAt) {
+        RealtimeAsrTicket(String voiceId, String url, String token, long expiresAt) {
             this.voiceId = voiceId;
             this.url = url;
+            this.token = token;
             this.expiresAt = expiresAt;
+        }
+    }
+
+    // 不复用一次性 voice_id/URL；只有此登录代际的短期 STS 凭据进入内存缓存。
+    private static final class AsrSession {
+        final String identity, bearer;
+        final long accessExpiresAt;
+        AsrSession(String identity, String bearer, long accessExpiresAt) {
+            this.identity = identity; this.bearer = bearer; this.accessExpiresAt = accessExpiresAt;
         }
     }
 
@@ -234,6 +247,14 @@ public final class MaiChatAuthClient {
     private long accessExpiresAt;
     private volatile SessionTerminationListener terminationListener;
     private final boolean tablet;
+    private long asrLoginGeneration;
+    private volatile AsrSession asrSession;
+    private final RealtimeAsrCredentialCache asrCredentials = new RealtimeAsrCredentialCache(
+        Executors.newCachedThreadPool(action -> {
+            Thread thread = new Thread(action, "MaiChat-asr-credential");
+            thread.setDaemon(true);
+            return thread;
+        }), () -> System.currentTimeMillis() / 1000L);
 
     public MaiChatAuthClient(Context context) {
         preferences = context.getApplicationContext()
@@ -433,6 +454,8 @@ public final class MaiChatAuthClient {
             response.getString("user_sig"), response.getLong("expires_at"));
         if (result.sdkAppId <= 0 || result.userId.isEmpty() || result.userSig.isEmpty())
             throw new IOException("登录服务返回的 IM 凭证无效");
+        // 恢复凭证已由服务端验证；异步领取 STS，不让语音网络阻塞账号恢复。
+        prefetchRealtimeAsrCredential();
         return result;
     }
 
@@ -536,47 +559,60 @@ public final class MaiChatAuthClient {
         return new AccountModelKeys(glm, deepseek, minimax);
     }
 
-    public synchronized RealtimeAsrTicket realtimeAsrTicket() throws Exception {
-        if (!hasSession()) throw new IOException("请先登录后使用语音转文字");
-        JSONObject issued = authenticatedRequest("asr/realtime-url", "POST", new JSONObject());
-        return parseRealtimeAsrTicket(issued, System.currentTimeMillis() / 1000L);
-    }
-
-    static RealtimeAsrTicket parseRealtimeAsrTicket(JSONObject issued, long now) throws IOException {
-        String voiceId = issued.optString("voice_id", "");
-        String url = issued.optString("url", "");
-        long expiresAt = issued.optLong("expires_at", 0);
-        if (!voiceId.matches("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}") ||
-            url.length() > 4096 || expiresAt <= now + 10 || expiresAt > now + 360)
-            throw new IOException("语音识别签名无效");
+    // 调用者在录音工作线程等待预取中的同一个 Future；每次取用都生成新的流标识和 URL。
+    public RealtimeAsrTicket realtimeAsrTicket() throws Exception {
+        AsrSession session = asrSession;
+        if (session == null || session.accessExpiresAt <= System.currentTimeMillis()) {
+            // 只在用户主动开始录音且账号 token 需要刷新时走已有刷新流程。
+            // 登录预取不会调用此分支，也不会持有 AuthClient 锁进行 STS 网络请求。
+            synchronized (this) {
+                if (!hasSession()) throw new IOException("请先登录后使用语音转文字");
+                currentAccessToken();
+                session = asrSession;
+            }
+        }
+        if (session == null) throw new IOException("请先登录后使用语音转文字");
+        RealtimeAsrCredential credential;
         try {
-            URI endpoint = new URI(url);
-            String query = endpoint.getRawQuery();
-            if (!"wss".equals(endpoint.getScheme()) ||
-                !"asr.cloud.tencent.com".equals(endpoint.getHost()) ||
-                endpoint.getPort() != -1 || endpoint.getUserInfo() != null ||
-                endpoint.getFragment() != null ||
-                !endpoint.getPath().matches("/asr/v2/[0-9]{5,20}") ||
-                query == null || !voiceId.equals(queryValue(query, "voice_id")) ||
-                !"16k_zh".equals(queryValue(query, "engine_model_type")) ||
-                !"1".equals(queryValue(query, "needvad")) ||
-                !"16".equals(queryValue(query, "voice_format")) ||
-                !Long.toString(expiresAt).equals(queryValue(query, "expired")) ||
-                queryValue(query, "signature").isEmpty())
-                throw new IOException("语音识别签名无效");
-            return new RealtimeAsrTicket(voiceId, url, expiresAt);
-        } catch (java.net.URISyntaxException error) {
-            throw new IOException("语音识别签名无效", error);
+            credential = realtimeAsrCredential(session).get();
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IOException("语音识别凭据领取已取消");
+        } catch (ExecutionException error) {
+            // 不把底层响应或临时密钥带进界面错误/日志。
+            throw new IOException("语音识别临时凭据领取失败");
         }
+        if (!currentAsrSession(session)) throw new IOException("登录账号已变化，请重试语音输入");
+        return credential.newTicket(System.currentTimeMillis() / 1000L);
     }
 
-    private static String queryValue(String query, String key) {
-        for (String item : query.split("&")) {
-            int separator = item.indexOf('=');
-            if (separator > 0 && item.substring(0, separator).equals(key))
-                return item.substring(separator + 1);
-        }
-        return "";
+    private boolean currentAsrSession(AsrSession expected) {
+        AsrSession current = asrSession;
+        return current != null && current.identity.equals(expected.identity);
+    }
+
+    private void prefetchRealtimeAsrCredential() {
+        AsrSession session = asrSession;
+        if (session != null && session.accessExpiresAt > System.currentTimeMillis())
+            realtimeAsrCredential(session); // 只排队；不等待结果，不改变登录成功状态。
+    }
+
+    private CompletableFuture<RealtimeAsrCredential> realtimeAsrCredential(AsrSession session) {
+        return asrCredentials.get(session.identity, () -> {
+            if (!currentAsrSession(session)) throw new IOException("登录账号已变化");
+            JSONObject issued;
+            try {
+                // bearer 是登录/有效恢复时的内存快照；网络期间不持有账号锁。
+                issued = request("asr/credential", "POST", new JSONObject(), session.bearer);
+            } catch (SessionTerminatedException error) {
+                synchronized (this) {
+                    if (currentAsrSession(session)) handleSessionTerminated(error);
+                }
+                throw error;
+            }
+            if (!currentAsrSession(session)) throw new IOException("登录账号已变化");
+            return RealtimeAsrCredential.parse(issued, System.currentTimeMillis() / 1000L);
+        });
     }
 
     public synchronized MediaServiceAccess mediaServiceAccess() throws Exception {
@@ -632,6 +668,9 @@ public final class MaiChatAuthClient {
     }
 
     private void clearLocalSession() {
+        asrSession = null;
+        asrLoginGeneration++;
+        asrCredentials.activate("");
         accessToken = "";
         accessExpiresAt = 0;
         preferences.edit().remove(STORED_REFRESH).remove(STORED_ACCOUNT_ID)
@@ -639,6 +678,10 @@ public final class MaiChatAuthClient {
     }
 
     private String adopt(JSONObject session) throws Exception {
+        return adopt(session, true);
+    }
+
+    private String adopt(JSONObject session, boolean newLogin) throws Exception {
         String refresh = session.getString("refresh_token");
         String access = session.getString("access_token");
         JSONObject user = session.getJSONObject("user");
@@ -652,6 +695,14 @@ public final class MaiChatAuthClient {
             + Math.max(0, session.getLong("expires_in") - 30) * 1000;
         preferences.edit().putString(STORED_ACCOUNT_ID, accountId)
             .putString(STORED_NICKNAME, nicknameFromUser(user)).apply();
+        AsrSession previous = asrSession;
+        boolean changed = newLogin || previous == null ||
+            !previous.identity.startsWith(accountId + ":");
+        String identity = changed ? accountId + ":" + (++asrLoginGeneration) : previous.identity;
+        asrSession = new AsrSession(identity, access, accessExpiresAt);
+        if (changed) asrCredentials.activate(identity);
+        // 真实登录每次推进代际；普通 access token 刷新保留同一 STS 缓存。
+        if (newLogin) prefetchRealtimeAsrCredential();
         return userId;
     }
 
@@ -670,7 +721,7 @@ public final class MaiChatAuthClient {
             else if (String.valueOf(failure.getMessage()).startsWith("登录已过期")) clearLocalSession();
             throw failure;
         }
-        adopt(response);
+        adopt(response, false);
         return accessToken;
     }
 
@@ -714,6 +765,7 @@ public final class MaiChatAuthClient {
         JSONObject user = authenticatedRequest("auth/me", "GET", null).getJSONObject("user");
         preferences.edit().putString(STORED_ACCOUNT_ID, user.getString("id"))
             .putString(STORED_NICKNAME, nicknameFromUser(user)).apply();
+        prefetchRealtimeAsrCredential();
     }
 
     private void handleSessionTerminated(SessionTerminatedException failure) {

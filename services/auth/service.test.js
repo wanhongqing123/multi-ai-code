@@ -510,32 +510,69 @@ test('phone lookup resolves one registered account to its IM identity', async ()
   setup.db.close();
 });
 
-test('ASR URL issuance requires a session and limits each account', async () => {
-  let serial = 0;
-  const setup = fixture({ issueAsrRealtimeUrl: () => ({
-    voice_id: `00000000-0000-4000-8000-${String(++serial).padStart(12, '0')}`,
-    url: 'wss://asr.cloud.tencent.com/asr/v2/1234567890?signed=test',
-    expires_at: 1_780_000_300
-  }) });
-  const path = '/v1/asr/realtime-url';
+test('ASR STS issuance requires an active session, empty JSON and configured provider', async () => {
+  const credential = { app_id: '1234567890', secret_id: 'AKIDTemporary12345678',
+    secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
+    expires_at: 1_780_001_800 };
+  let calls = 0;
+  const setup = fixture({ issueAsrCredential: async () => { ++calls; return credential; } });
+  const path = '/v1/asr/credential';
   assert.equal((await setup.call('POST', path)).statusCode, 401);
-  const token = (await signInWithSms(setup, '13900000002')).body.access_token;
-  assert.equal((await setup.call('POST', path, { engine_model_type: 'paid' }, token))
-    .statusCode, 400);
-  for (let index = 0; index < 10; index++) {
-    const response = await setup.call('POST', path, {}, token);
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.body.expires_at, 1_780_000_300);
-  }
-  assert.equal((await setup.call('POST', path, {}, token)).statusCode, 429);
-  setup.advance(60_001);
-  assert.equal((await setup.call('POST', path, {}, token)).statusCode, 200);
+  assert.equal((await setup.call('POST', path, {}, 'invalid-token')).statusCode, 401);
+  const token = (await signInWithSms(setup)).body.access_token;
+  for (const body of [null, [], 'invalid', { action: 'any-api' }])
+    assert.equal((await setup.call('POST', path, body, token)).statusCode, 400);
+  assert.equal(calls, 0);
+  const reply = await setup.call('POST', path, {}, token);
+  assert.equal(reply.statusCode, 200);
+  assert.deepEqual(reply.body, credential);
+  setup.advance(24 * 60 * 60 * 1000 + 1);
+  assert.equal((await setup.call('POST', path, {}, token)).statusCode, 401);
+  assert.equal(calls, 1);
   setup.db.close();
 
   const unavailable = fixture();
   const other = (await signInWithSms(unavailable)).body.access_token;
   assert.equal((await unavailable.call('POST', path, {}, other)).statusCode, 503);
   unavailable.db.close();
+});
+
+test('ASR credentials reserve an account budget before awaiting STS', async () => {
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const setup = fixture({ issueAsrCredential: async () => {
+    await waiting;
+    return { app_id: '1234567890', secret_id: 'AKIDTemporary12345678',
+      secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
+      expires_at: 1_780_001_800 };
+  } });
+  const token = (await signInWithSms(setup)).body.access_token;
+  const pending = Array.from({ length: 10 }, () =>
+    setup.call('POST', '/v1/asr/credential', {}, token));
+  assert.equal((await setup.call('POST', '/v1/asr/credential', {}, token)).statusCode, 429);
+  release();
+  assert.ok((await Promise.all(pending)).every(reply => reply.statusCode === 200));
+  setup.advance(60_001);
+  assert.equal((await setup.call('POST', '/v1/asr/credential', {}, token)).statusCode, 200);
+  setup.db.close();
+});
+
+test('ASR STS failure and expired responses stay unavailable without exposing provider errors', async () => {
+  let calls = 0;
+  const setup = fixture({ issueAsrCredential: async () => {
+    ++calls;
+    if (calls === 1) throw new Error('private-provider-error-must-not-be-forwarded');
+    return { app_id: '1234567890', secret_id: 'AKIDTemporary12345678',
+      secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
+      expires_at: 1_779_999_999 };
+  } });
+  const token = (await signInWithSms(setup)).body.access_token;
+  for (let index = 0; index < 2; index++) {
+    const response = await setup.call('POST', '/v1/asr/credential', {}, token);
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(response.body, { error: 'Speech recognition is unavailable' });
+  }
+  setup.db.close();
 });
 
 test('one SMS login creates a stable account and a server-signed IM identity', async () => {

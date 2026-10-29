@@ -1,5 +1,5 @@
 // 文件作用：处理 MaiChat 账号登录、会话、设备名额与受会话保护的凭据领取权限。
-// 供应商密钥由独立凭据进程保管，本进程不转发模型请求。
+// 模型密钥由独立凭据进程保管；腾讯 ASR 永久密钥只在服务端申请 STS，音频由客户端直连。
 'use strict';
 
 const { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } =
@@ -11,6 +11,7 @@ const { createFriendService } = require('./friends');
 const { createVideoCircleService } = require('./video-circle-service');
 const { createCloudDriveService } = require('./cloud-drive-service');
 const { validAccountId, newAccountId } = require('./account-id');
+const { validAsrCredential } = require('./asr-credential');
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -79,7 +80,7 @@ function passwordDevice(body, requireDeviceSlot = false) {
 
 function createAuthService(options) {
   const { db, sms, secret, imSecret, sdkAppId, issueArkCredential,
-    issueBailianCredential, issueAccountModelKeys, issueAsrRealtimeUrl,
+    issueBailianCredential, issueAccountModelKeys, issueAsrCredential,
     provisionTestImAccount } = options;
   if (!db || !sms || typeof sms.send !== 'function' ||
       typeof secret !== 'string' || secret.length < 32 ||
@@ -1101,25 +1102,25 @@ function createAuthService(options) {
       try { return json(200, await issueAccountModelKeys()); }
       catch { return json(503, { error: 'Main chat model keys are unavailable' }); }
     }
-    if (method === 'POST' && path === '/v1/asr/realtime-url') {
+    if (method === 'POST' && path === '/v1/asr/credential') {
       if (!session) return json(401, { error: 'Authentication required' });
-      if (Object.keys(request).length)
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(request).length)
         return json(400, { error: 'ASR request parameters are not accepted' });
-      if (typeof issueAsrRealtimeUrl !== 'function')
+      if (typeof issueAsrCredential !== 'function')
         return json(503, { error: 'Speech recognition is unavailable' });
       const recent = (asrIssuanceTimes.get(session.user_id) || [])
         .filter(time => time > now() - MINUTE);
       if (recent.length >= 10)
         return json(429, { error: 'Speech recognition requests are too frequent' });
+      // Reserve before awaiting STS so parallel requests and upstream failures
+      // cannot bypass the per-account credential issuance limit.
+      recent.push(now());
+      asrIssuanceTimes.set(session.user_id, recent);
       try {
-        const issued = issueAsrRealtimeUrl();
-        if (!issued || !/^[a-f0-9-]{36}$/.test(issued.voice_id) ||
-            typeof issued.url !== 'string' ||
-            !issued.url.startsWith('wss://asr.cloud.tencent.com/asr/v2/') ||
-            !Number.isSafeInteger(issued.expires_at))
-          throw new Error('Invalid ASR URL');
-        recent.push(now());
-        asrIssuanceTimes.set(session.user_id, recent);
+        const issued = await issueAsrCredential();
+        if (!validAsrCredential(issued, Math.floor(now() / 1000)))
+          throw new Error('Invalid ASR authorization');
         return json(200, issued);
       } catch { return json(503, { error: 'Speech recognition is unavailable' }); }
     }

@@ -129,8 +129,15 @@ void showPrompt(const std::shared_ptr<PromptState>& state) {
     };
     QObject::connect(confirm, &QPushButton::clicked, dialog, accept);
     QObject::connect(confirmation, &QLineEdit::returnPressed, dialog, accept);
-    QObject::connect(dialog, &QDialog::finished, dialog, [state, password, confirmation](int) {
+    QObject::connect(dialog, &QDialog::finished, dialog,
+                     [state, parent = QPointer<QWidget>(parent), password, confirmation](int) {
         password->clear(); confirmation->clear();
+        // Cocoa 隐藏模态表单后会暂时没有 activeWindow；连续请求应回到同一可见宿主。
+        // 只在应用仍在前台且没有其它活动窗口或模态表单时恢复，不激活后台应用。
+        if (parent && parent->isVisible() &&
+            qApp->applicationState() == Qt::ApplicationActive &&
+            !QApplication::activeWindow() && !QApplication::activeModalWidget())
+            parent->activateWindow();
         finish(state, {MaiErrorCode::Canceled, "PDF password input was canceled"});
     });
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, dialog, [state, dialog] {

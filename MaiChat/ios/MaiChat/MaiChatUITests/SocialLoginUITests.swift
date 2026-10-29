@@ -1,7 +1,61 @@
-// 文件作用：用本机假微信/QQ 凭据跑通 202 手机绑定与 200 已绑定登录界面。
+// 文件作用：用本机账号与假微信/QQ 凭据验证普通登录、手机绑定和相关 IM 界面。
 import XCTest
 
 final class SocialLoginUITests: XCTestCase {
+    /// 正常登录页只接本机假短信，验证输入验证码与切换号码不会绕过或误用短信冷却。
+    @MainActor func testNormalPhoneLoginRetainsSmsCooldownAfterChangingPhone() async throws {
+        #if DEBUG && targetEnvironment(simulator)
+        continueAfterFailure = false
+        let url = URL(string: "http://127.0.0.1:18590/test/status")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(fixture["fixture"] as? String, "maichat-login-sms-ui")
+        let app = XCUIApplication()
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = ""
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = ""
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18590"
+        app.launch()
+        defer { app.terminate() }
+        let phone = app.textFields["account-phone"]
+        XCTAssertTrue(phone.waitForExistence(timeout: 20))
+        phone.tap()
+        phone.typeText("13900000881")
+        app.swipeUp()
+        app.buttons["account-minimum-age"].tap()
+        app.buttons["account-agreement"].tap()
+        let submit = app.buttons["account-submit"]
+        submit.tap()
+        let code = app.textFields["account-code"]
+        XCTAssertTrue(code.waitForExistence(timeout: 15))
+        let resend = app.buttons["account-resend"]
+        XCTAssertTrue(resend.label.contains("秒后重试"))
+        XCTAssertFalse(resend.isEnabled)
+        code.tap()
+        code.typeText("123456")
+        app.swipeUp()
+        XCTAssertTrue(submit.isEnabled, "六位验证码可提交，短信冷却不应阻塞登录")
+        let sent = XCTAttachment(screenshot: app.screenshot())
+        sent.name = "phone-login-resend-disabled-code-submit-enabled"
+        sent.lifetime = .keepAlways
+        add(sent)
+        for value in ["13900000882", "13900000881"] {
+            phone.tap()
+            phone.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11))
+            phone.typeText(value)
+            app.swipeUp()
+            XCTAssertFalse(app.textFields["account-code"].exists)
+            XCTAssertEqual(submit.isEnabled, value == "13900000882")
+        }
+        XCTAssertTrue(submit.label.contains("秒后重试"))
+        let returned = XCTAttachment(screenshot: app.screenshot())
+        returned.name = "phone-login-original-number-cooldown-preserved"
+        returned.lifetime = .keepAlways
+        add(returned)
+        #else
+        throw XCTSkip("本机假短信界面验收需要 Debug 模拟器构建")
+        #endif
+    }
+
     @MainActor func testGroupCreationTextAndPrivateChatIsolation() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ai-ui-test", "--im-group-ui-test"]

@@ -14,6 +14,7 @@ target 'MaiChat' do
 
   pod 'TXIMSDK_Plus_iOS_XCFramework'
   pod 'TXLiteAVSDK_TRTC', :podspec => 'https://liteav.sdk.qcloud.com/pod/liteavsdkspec/TXLiteAVSDK_TRTC.podspec'
-  pod 'QCloudRealTime', '3.1.39'
+  # 官方分发包的 standard 与 v2 同名模块不同协议，显式固定 v2 目录与归档 SHA256。
+  pod 'QCloudRealTimeV2', :podspec => 'Vendor/TencentASRV2/QCloudRealTimeV2.podspec'
   pod 'onnxruntime-c', :path => onnxruntime_pod
 end

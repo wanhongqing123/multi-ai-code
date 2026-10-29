@@ -18,23 +18,32 @@ final class CurlRealtimeSpeechWebSocket {
     private static final int RESULT_SETUP_FAILED = -2;
 
     private final String url;
+    private final String token;
     private final byte[] caPem;
     private final MaiChatAuthTransport.ProxyRoute proxy;
     private final Listener listener;
     private long handle;
     private boolean cancelled;
 
-    CurlRealtimeSpeechWebSocket(String url, Listener listener) throws Exception {
-        this(url, SystemCertificateBundle.currentPem(), selectProxy(url), listener);
+    CurlRealtimeSpeechWebSocket(String url, String token, Listener listener) throws Exception {
+        this(url, token, SystemCertificateBundle.currentPem(), selectProxy(url), listener);
     }
 
     // 本地 WSS 测试使用临时 CA；正式路径始终读取 Android 当前系统信任证书。
     CurlRealtimeSpeechWebSocket(String url, byte[] caPem, MaiChatAuthTransport.ProxyRoute proxy,
                                 Listener listener) throws IOException {
+        this(url, "", caPem, proxy, listener);
+    }
+
+    // 只允许传入固定头的值，不暴露任意 HTTP 头注入；本地 WSS 合同测试可使用空值。
+    CurlRealtimeSpeechWebSocket(String url, String token, byte[] caPem,
+                                MaiChatAuthTransport.ProxyRoute proxy, Listener listener) throws IOException {
         if (url == null || (!url.startsWith("wss://") && !url.startsWith("ws://"))
-                || url.length() > 4096 || caPem == null || proxy == null || listener == null)
+                || url.length() > 4096 || caPem == null || proxy == null || listener == null
+                || token == null || !token.matches("[!-~]{0,8192}"))
             throw new IOException("实时语音连接参数无效");
         this.url = url;
+        this.token = token;
         this.caPem = caPem.clone();
         this.proxy = proxy;
         this.listener = listener;
@@ -77,7 +86,7 @@ final class CurlRealtimeSpeechWebSocket {
         synchronized (this) { target = handle; }
         int result = RESULT_SETUP_FAILED;
         try {
-            result = nativeRun(target, url, caPem, proxy.type, proxy.host, proxy.port);
+            result = nativeRun(target, url, token, caPem, proxy.type, proxy.host, proxy.port);
         } catch (Throwable ignored) { }
         boolean notify;
         synchronized (this) {
@@ -100,6 +109,6 @@ final class CurlRealtimeSpeechWebSocket {
     private static native boolean nativeQueue(long handle, byte[] packet, boolean text);
     private static native void nativeCancel(long handle);
     private static native void nativeDestroy(long handle);
-    private native int nativeRun(long handle, String url, byte[] caPem, int proxyType,
+    private native int nativeRun(long handle, String url, String token, byte[] caPem, int proxyType,
                                  String proxyHost, int proxyPort);
 }

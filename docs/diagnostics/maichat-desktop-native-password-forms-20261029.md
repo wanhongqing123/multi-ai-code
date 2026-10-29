@@ -26,3 +26,13 @@
 - 生产门禁继续要求 AppActive、可见窗口及无其他 modal。测试 helper 保留真实 NSApp 激活，并等待 ApplicationActive；解锁后再单次运行原生表单用例，不能用假 active 或跳过断言换取绿色结果。
 - `MAICHAT_PASSWORD_FORM_CAPTURE` 可指定空白真实登录密码表单 widget PNG；它的 parent 是测试 dummy window，不是正常 MainWindow。锁屏调查期间尚未取得这个实际表单画面。PDF 私有表单的 worker/UI 确认与取消、正常 Settings/Agent 完整操作同样未做原生视觉验收。
 - PDF prompt、AgentController 第二参数和 qpdf 许可打包已准备给统一构建；本记录不表示新 PDF 密码功能或 Desktop 新版本已经发布。
+
+## 2026-10-29 23:42–23:52：Cocoa 连续 PDF 密码请求
+
+- 运行环境：macOS 27.2、arm64、Qt 5.15.18 Cocoa，用户会话已解锁；源码基线 `b275438b9fc40b299ded6a59c2218ba65a22dfce`。本节是该基线上的未提交修复，最终修复提交由统一提交执行者补充。
+- 实际产物：`MaiChat/desktop/build-screenshot-mac/desktop_pdf_password_prompt_test`，通过 `cmake --build MaiChat/desktop/build-screenshot-mac --target desktop_pdf_password_prompt_test -j 4` 重建。未替换、启动或停止 `/Applications/MaiChat.app`，未操作真实账号或密码。
+- 复现：运行 `QT_QPA_PLATFORM=cocoa MaiChat/desktop/build-screenshot-mac/desktop_pdf_password_prompt_test`；首次安全表单输入两次假密码并保存，工作线程成功退出后立即发起第二次请求。预期第二个原生表单出现并可由本次取消令牌关闭；实际第二表单没有出现，测试原 `DesktopPdfPasswordPromptTest.cpp:84` 失败。首轮四项 gate 中其他三项通过，日志 `/private/tmp/maichat-desktop232-native-form-gates.log`。
+- 根因证据：仅在 `showPrompt` 和首次 `accept()` 后临时记录应用状态及控件指针，不记录密码。首次显示时 AppActive、原宿主可见、无 modal；首次保存后 `QApplication::activeWindow()` 变成 null；第二次请求仍为 AppActive、无 modal、activeWindow=null，因此被现有 presenter 门禁以 NotConfigured 拒绝。复现日志 `/private/tmp/maichat-pdf-prompt-lifecycle-before-fix.log`。这是关闭本次 Cocoa 模态表单后的宿主激活恢复边界，与此前锁屏导致的 AppInactive 不同。
+- 修复：只在本表单 `finished` 后，且原宿主仍可见、应用仍为 AppActive、没有其他活动窗口或 modal 时，调用原宿主 `activateWindow()`。保持 `showPrompt` 的前台、可见窗口和 modal 门禁以及 worker 取消机制；不修改测试断言。定点修复日志 `/private/tmp/maichat-pdf-prompt-lifecycle-after-fix.log` 证明首次保存后恢复为同一个宿主，第二请求取得同一可见宿主，原测试 4 passed、0 failed。
+- 视觉检查：查看 `/private/tmp/maichat-pdf-form-after-fix.png`，确认空白原生表单的说明、两个密码框及取消/保护按钮可见且无裁切。截图由隔离测试 dummy window 提供，只使用假密码，不代表正常 MainWindow 的完整产品操作验收。
+- 临时定点日志已从源码移除；最终源码已重建该单目标（产物时间 23:51:24 CST），并使用 `QT_QPA_PLATFORM=cocoa ctest --test-dir MaiChat/desktop/build-screenshot-mac -R '^desktop_pdf_password_prompt_test$' --output-on-failure` 验证，1/1 passed、0 failed（2.23s），日志 `/private/tmp/maichat-pdf-prompt-final-cocoa.log`。`git diff --check` 通过。此次未扩大到其他平台或完整 PDF 导出流程。

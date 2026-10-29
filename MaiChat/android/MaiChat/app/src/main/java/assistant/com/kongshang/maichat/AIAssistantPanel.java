@@ -459,7 +459,10 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         visibleToUser = value;
         if (browser != null) browser.setVisible(value);
         if (!value && sessionDrawerPopup != null) sessionDrawerPopup.dismiss();
-        if (!value && voiceRecording) finishVoice(true);
+        if (!value) {
+            if (voiceRecording) finishVoice(true);
+            else voiceGeneration++;
+        }
         if (!value) updateHostVoiceOverlay(false, "");
         removeCallbacks(elapsed);
         if (value)
@@ -475,6 +478,9 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         if (next.remoteSession != null) remoteAttachmentTargets.add(next.selected);
         boolean changedSession = !selected.equals(next.selected);
         if (changedSession) {
+            // 切走后即使又切回同一会话，也不能接收旧录音的迟到 final。
+            if (voiceRecording) finishVoice(true);
+            else voiceGeneration++;
             String previous = selected;
             drafts.put(previous, composer.getText().toString());
             boolean firstSend = submitting && previous.isEmpty()
@@ -1387,12 +1393,14 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
     static final int REQUEST_AUDIO_PERMISSION = 7111;
     private void beginVoice() {
         int generation = ++voiceGeneration;
+        String voiceSession = selected;
+        String voiceAccount = MaiChatAuthClient.shared(activity).accountId();
         VoiceRecordingController.AsrTicketProvider ticketProvider =
             activity instanceof MainActivity ?
                 () -> MaiChatAuthClient.shared(activity).realtimeAsrTicket() : null;
         boolean started = voiceRecorder.tryStart(new VoiceRecordingController.Completion() {
             @Override public void partial(String text) {
-                if (voiceRecording && generation == voiceGeneration) {
+                if (voiceRecording && currentVoiceResult(generation, voiceSession, voiceAccount)) {
                     voicePartialText = text == null ? "" : text.trim();
                     composer.setText(voicePartialText);
                     updateHostVoiceOverlay(true, voicePartialText);
@@ -1403,18 +1411,23 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
             }
             @Override public void recognized(String text, File file, int seconds) {
                 file.delete();
-                if (generation != voiceGeneration || text == null || text.trim().isEmpty()) return;
+                if (!currentVoiceResult(generation, voiceSession, voiceAccount)
+                    || text == null || text.trim().isEmpty()) return;
                 composer.setText(text.trim());
                 send();
             }
             @Override public void finished(File file, int seconds) {
+                if (!currentVoiceResult(generation, voiceSession, voiceAccount)) {
+                    file.delete();
+                    return;
+                }
                 if (speechRecognizer != null && speechRecognizer.isAvailable()) {
                     speechRecognizer.transcribe(file, file.getName().endsWith(".aac") ? "aac" : "m4a",
                         new SpeechRecognizer.Callback() {
                             @Override public void onText(String text) {
                                 file.delete();
-                                if (generation != voiceGeneration || text == null
-                                    || text.trim().isEmpty()) {
+                                if (!currentVoiceResult(generation, voiceSession, voiceAccount)) return;
+                                if (text == null || text.trim().isEmpty()) {
                                     Toast.makeText(activity, "没有识别到文字", Toast.LENGTH_LONG).show();
                                     return;
                                 }
@@ -1422,20 +1435,20 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
                             }
                             @Override public void onError(String message) {
                                 file.delete();
-                                if (generation == voiceGeneration)
+                                if (currentVoiceResult(generation, voiceSession, voiceAccount))
                                     Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
                             }
                         });
                 } else {
                     file.delete();
-                    if (generation == voiceGeneration)
+                    if (currentVoiceResult(generation, voiceSession, voiceAccount))
                         Toast.makeText(activity, "没有识别到文字", Toast.LENGTH_LONG).show();
                 }
             }
             @Override public void failed() {
+                if (!currentVoiceResult(generation, voiceSession, voiceAccount)) return;
                 updateHostVoiceOverlay(false, "");
-                if (generation == voiceGeneration)
-                    Toast.makeText(activity, "语音转文字失败", Toast.LENGTH_LONG).show();
+                Toast.makeText(activity, "语音转文字失败", Toast.LENGTH_LONG).show();
             }
         }, ticketProvider);
         if (!started) {
@@ -1445,6 +1458,11 @@ final class AIAssistantPanel extends LinearLayout implements AIAssistantControll
         voiceRecording = true; cancelVoice = false; voicePartialText = "";
         voiceHoldButton.setText("正在听，请说话…");
         updateHostVoiceOverlay(true, "");
+    }
+    // 回调属于录音开始时的账号和创作会话，不能覆盖切换后的草稿或主动发送。
+    private boolean currentVoiceResult(int generation, String voiceSession, String voiceAccount) {
+        return generation == voiceGeneration && visibleToUser && selected.equals(voiceSession)
+            && voiceAccount.equals(MaiChatAuthClient.shared(activity).accountId());
     }
     private void finishVoice(boolean cancel) {
         if (!voiceRecording) return;

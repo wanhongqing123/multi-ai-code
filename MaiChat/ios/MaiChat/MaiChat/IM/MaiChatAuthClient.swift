@@ -294,6 +294,11 @@ actor MaiChatAuthClient {
     private var accessExpiresAt = Date.distantPast
     private var refreshTask: Task<MaiChatAuthSession, Error>?
     private var sessionVersion: UInt64 = 0
+    // STS 凭据与当前账号共用认证代际；不写入 Keychain、配置、诊断或聊天记录。
+    private var asrCredentialCache = MaiChatASRCredentialCache()
+    private var asrCredentialTask: (
+        sessionVersion: UInt64, id: UUID, task: Task<MaiChatASRCredential, Error>
+    )?
 
     private func mobileDeviceFields() async -> [String: Any] {
         let slot = await MainActor.run {
@@ -327,7 +332,7 @@ actor MaiChatAuthClient {
                 "age_confirmed_14_plus": ageConfirmed
             ].merging(device) { _, new in new }
         )
-        sessionVersion &+= 1
+        advanceSessionVersion()
         try adopt(session)
         return session
     }
@@ -352,7 +357,7 @@ actor MaiChatAuthClient {
                 "age_confirmed_14_plus": ageConfirmed
             ].merging(identity) { _, new in new }.merging(device) { _, new in new }
         )
-        sessionVersion &+= 1
+        advanceSessionVersion()
         try adopt(session)
         return session
     }
@@ -369,7 +374,7 @@ actor MaiChatAuthClient {
                 "new_password": newPassword, "age_confirmed_14_plus": ageConfirmed
             ].merging(device) { _, new in new }
         )
-        sessionVersion &+= 1
+        advanceSessionVersion()
         try adopt(session)
         return session
     }
@@ -400,7 +405,7 @@ actor MaiChatAuthClient {
         switch status {
         case 200:
             let session: MaiChatAuthSession = try decodeResponse(data)
-            sessionVersion &+= 1
+            advanceSessionVersion()
             try adopt(session)
             return .signedIn(session)
         case 202:
@@ -432,7 +437,7 @@ actor MaiChatAuthClient {
                 "age_confirmed_14_plus": ageConfirmed
             ]
         )
-        sessionVersion &+= 1
+        advanceSessionVersion()
         try adopt(session)
         return session
     }
@@ -660,6 +665,62 @@ actor MaiChatAuthClient {
         }
     }
 
+    /// 登录预取、IM 与创作中心共用一个领取入口；并发领取合并请求，失败后允许重试。
+    func asrCredential() async throws -> MaiChatASRCredential {
+        guard accessToken != nil || !storedRefreshToken().isEmpty else {
+            throw MaiChatAuthError.sessionExpired
+        }
+        let version = sessionVersion
+        if let cached = asrCredentialCache.credential(for: version) { return cached }
+        let pending: (sessionVersion: UInt64, id: UUID, task: Task<MaiChatASRCredential, Error>)
+        if let existing = asrCredentialTask, existing.sessionVersion == version {
+            pending = existing
+        } else {
+            pending = (version, UUID(), Task {
+                try await self.requestASRCredential(expectedSessionVersion: version)
+            })
+            asrCredentialTask = pending
+        }
+        defer {
+            // 退出后旧请求可能迟到；它只能清理自己，不能取消新账号的领取任务。
+            if asrCredentialTask?.id == pending.id { asrCredentialTask = nil }
+        }
+        let credential = try await pending.task.value
+        try Task.checkCancellation()
+        guard sessionVersion == version else { throw MaiChatAuthError.identityMismatch }
+        guard asrCredentialCache.store(
+            credential, for: version, currentSessionVersion: sessionVersion
+        ) else { throw MaiChatAuthError.invalidServerResponse }
+        return credential
+    }
+
+    private func requestASRCredential(
+        expectedSessionVersion: UInt64
+    ) async throws -> MaiChatASRCredential {
+        let token = try await currentAccessToken()
+        guard sessionVersion == expectedSessionVersion else {
+            throw MaiChatAuthError.identityMismatch
+        }
+        do {
+            return try await request(
+                "asr/credential", method: "POST", body: [:], bearer: token
+            )
+        } catch MaiChatAuthError.requestFailed("Authentication required") {
+            guard sessionVersion == expectedSessionVersion else {
+                throw MaiChatAuthError.identityMismatch
+            }
+            // 与其他账号凭据接口一致，访问令牌提前失效时只刷新一次。
+            accessToken = nil
+            let renewed = try await currentAccessToken()
+            guard sessionVersion == expectedSessionVersion else {
+                throw MaiChatAuthError.identityMismatch
+            }
+            return try await request(
+                "asr/credential", method: "POST", body: [:], bearer: renewed
+            )
+        }
+    }
+
     func bailianCredentialIfAvailable() async throws -> MaiChatBailianCredential? {
         guard accessToken != nil || !storedRefreshToken().isEmpty else { return nil }
         let token = try await currentAccessToken()
@@ -750,13 +811,21 @@ actor MaiChatAuthClient {
     /// 先撤销本机登录，保证 App 在切换过程中被系统结束时不会恢复旧账号。
     func discardLocalSession() -> String? {
         let token = accessToken
-        sessionVersion &+= 1
+        advanceSessionVersion()
         refreshTask?.cancel()
         refreshTask = nil
         accessToken = nil
         accessExpiresAt = .distantPast
         try? saveRefreshToken("")
         return token
+    }
+
+    /// 认证更替时立即丢弃 STS；普通访问令牌刷新不推进账号代际。
+    private func advanceSessionVersion() {
+        sessionVersion &+= 1
+        asrCredentialCache.clear()
+        asrCredentialTask?.task.cancel()
+        asrCredentialTask = nil
     }
 
     func revokeServerSession(_ token: String) async {

@@ -7,6 +7,7 @@ import UIKit
 struct PhoneAccountLoginView: View {
     @EnvironmentObject private var appState: RemoteIMAppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var phone = ""
     @State private var code = ""
     @State private var password = ""
@@ -21,6 +22,7 @@ struct PhoneAccountLoginView: View {
     @State private var didInjectSocialCredential = false
     @State private var isSocialLoggingIn = false
     @State private var refreshingDeletionStatus = false
+    @State private var now = Date()
 
     private let accent = Color(red: 42 / 255, green: 211 / 255, blue: 142 / 255)
     private let termsURL = URL(string: "https://ichat.life/legal/terms.html")!
@@ -39,8 +41,22 @@ struct PhoneAccountLoginView: View {
             }
         }
         .task {
+            now = Date()
             await injectLocalSocialCredentialIfNeeded()
             await refreshDeletionStatus()
+        }
+        // 与绑定手机号页一样只用计时器刷新显示；真正的截止时间保存在账号状态中。
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { now = Date() }
+        }
+        .onChange(of: phone) { _ in
+            // 验证码属于发送时的号码，改号后必须重新获取；原号码的冷却仍由账号状态保留。
+            challengeId = nil
+            code = ""
+            information = nil
+            errorMessage = nil
+            now = Date()
         }
     }
 
@@ -142,9 +158,10 @@ struct PhoneAccountLoginView: View {
                                 .foregroundStyle(.secondary)
                             Spacer()
                             if challengeId != nil && !usesPassword {
-                                Button("重新获取") { Task { await sendCode() } }
-                                    .disabled(isBusy || !acceptedAgreement || !confirmedMinimumAge)
+                                Button(resendTitle) { Task { await sendCode() } }
+                                    .disabled(!canRequestCode)
                                     .foregroundStyle(accent)
+                                    .accessibilityIdentifier("account-resend")
                             } else {
                                 Button(usesPassword ? "验证码登录" : "密码登录") {
                                     usesPassword.toggle()
@@ -252,11 +269,25 @@ struct PhoneAccountLoginView: View {
             phone.filter(\.isNumber).count == 11) &&
             acceptedAgreement && confirmedMinimumAge && !isBusy &&
             (!usesPassword || !password.isEmpty) &&
-            (challengeId == nil || usesPassword || code.count == 6)
+            (challengeId == nil || usesPassword || code.count == 6) &&
+            (usesPassword || challengeId != nil || canRequestCode)
+    }
+
+    private var resendSeconds: Int { appState.accountCodeRetryAfter(phone: phone, at: now) }
+
+    private var resendTitle: String {
+        resendSeconds == 0 ? "重新获取" : "\(resendSeconds) 秒后重试"
+    }
+
+    private var canRequestCode: Bool {
+        phone.filter(\.isNumber).count == 11 && acceptedAgreement &&
+            confirmedMinimumAge && !isBusy && !appState.isRequestingAccountCode(phone: phone) &&
+            resendSeconds == 0
     }
 
     private var buttonTitle: String {
         if isBusy { return "请稍候…" }
+        if challengeId == nil && !usesPassword && resendSeconds > 0 { return resendTitle }
         return challengeId == nil && !usesPassword ? "获取验证码" : "登录"
     }
 
@@ -266,7 +297,8 @@ struct PhoneAccountLoginView: View {
     }
 
     private func sendCode() async {
-        guard confirmedMinimumAge, acceptedAgreement else { return }
+        guard canRequestCode else { return }
+        let requestedPhone = phone
         isBusy = true
         defer { isBusy = false }
         appState.errorMessage = nil
@@ -274,9 +306,13 @@ struct PhoneAccountLoginView: View {
         information = nil
         do {
             let challenge = try await appState.requestAccountCode(
-                phone: phone, ageConfirmed: confirmedMinimumAge
+                phone: requestedPhone, ageConfirmed: confirmedMinimumAge
             )
+            // 请求期间改号或切到密码登录时，不能把旧号码的 challenge 挂到当前输入上。
+            guard phone == requestedPhone, !usesPassword else { return }
             challengeId = challenge.challengeId
+            code = ""
+            now = Date()
             information = "验证码已发送，5 分钟内有效"
         } catch {
             errorMessage = error.localizedDescription

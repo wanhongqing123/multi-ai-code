@@ -14,6 +14,7 @@
     "@alicloud/openapi-client": "^0.4.15",
     "@juit/qrcode": "1.0.115",
     "better-sqlite3": "^12.4.1",
+    "tencentcloud-sdk-nodejs-sts": "4.1.100",
     "ws": "8.22.0"
   }
 }

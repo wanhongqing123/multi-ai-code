@@ -71,6 +71,58 @@ test('HTTP adapter rejects oversized and invalid requests without invoking auth'
   }
 });
 
+test('HTTP ASR STS responses require a session and never permit credential caching', async () => {
+  const db = openStore(':memory:');
+  let smsCode = '';
+  let fail = false;
+  const service = createAuthService({ db,
+    sms: { async send(_phone, code) { smsCode = code; } },
+    secret: 'test-only-auth-hmac-key-keep-on-server-123456',
+    imSecret: 'test-only-tencent-im-key-keep-on-server-123456',
+    sdkAppId: 123456789, now: () => 1_780_000_000_000,
+    issueAsrCredential: async () => {
+      if (fail) throw new Error('private-provider-details');
+      return { app_id: '1234567890', secret_id: 'AKIDTemporary12345678',
+        secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
+        expires_at: 1_780_001_800 };
+    } });
+  const challenge = await service.handle({ method: 'POST', path: '/v1/auth/sms/challenge',
+    body: { phone: '13900000001', age_confirmed_14_plus: true }, ip: '192.0.2.1' });
+  const signedIn = await service.handle({ method: 'POST', path: '/v1/auth/sms/verify',
+    body: { phone: '13900000001', challenge_id: challenge.body.challenge_id,
+      code: smsCode, device_slot: 'ios_phone', age_confirmed_14_plus: true } });
+  assert.equal(signedIn.statusCode, 200);
+  const server = createServer(service);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const endpoint = `http://127.0.0.1:${server.address().port}/v1/asr/credential`;
+    const request = token => fetch(endpoint, { method: 'POST', body: '{}',
+      headers: { 'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+    const unauthenticated = await request();
+    assert.equal(unauthenticated.status, 401);
+    assert.equal(unauthenticated.headers.get('cache-control'), 'no-store');
+    const issued = await request(signedIn.body.access_token);
+    assert.equal(issued.status, 200);
+    assert.equal(issued.headers.get('cache-control'), 'no-store');
+    assert.equal((await issued.json()).token, 'test-only-session-token');
+    fail = true;
+    const unavailable = await request(signedIn.body.access_token);
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await unavailable.json(), { error: 'Speech recognition is unavailable' });
+    // Retired URL signing is deliberately unavailable; older clients must upgrade.
+    const retired = await fetch(`http://127.0.0.1:${server.address().port}` +
+      '/v1/asr/realtime-url', { method: 'POST', body: '{}',
+      headers: { authorization: `Bearer ${signedIn.body.access_token}` } });
+    assert.equal(retired.status, 404);
+    assert.equal(retired.headers.get('cache-control'), 'no-store');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    db.close();
+  }
+});
+
 test('HTTP desktop request returns a renderable QR PNG and matching URI', async () => {
   const db = openStore(':memory:');
   const service = createAuthService({

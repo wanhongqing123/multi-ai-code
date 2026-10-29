@@ -44,22 +44,44 @@ import static org.junit.Assert.assertTrue;
 @RunWith(AndroidJUnit4.class)
 public class CurlRealtimeSpeechWebSocketInstrumentedTest {
     private static final String ASSET = "realtime_wss/";
+    private static final String STS_TOKEN = "local-fixture-token+/=123456";
     private static final MaiChatAuthTransport.ProxyRoute DIRECT =
         new MaiChatAuthTransport.ProxyRoute(MaiChatAuthTransport.ProxyRoute.DIRECT, "", 0);
     private static final String PARTIAL =
-        "{\"code\":0,\"result\":{\"index\":0,\"slice_type\":1,\"voice_text_str\":\"测试\"}}";
+        "{\"code\":0,\"sentences\":{\"voice_text_str\":\"测试\"}}";
     private static final String FINAL =
-        "{\"code\":0,\"result\":{\"index\":0,\"slice_type\":2,\"voice_text_str\":\"测试\"},\"final\":1}";
+        "{\"code\":0,\"sentences\":{\"voice_text_str\":\"测试完成\"},\"final\":1}";
 
     // 用自签本机 WSS 服务走真实 JNI/curl：服务端拆分 JSON 帧，同时记录 AAC 到达间隔。
     // 断言转写回调只收到完整 JSON，且音频按录音节奏发送，而不是连接后一次倾倒。
     @Test public void localWssStreamsAacAtRealtimePaceAndReassemblesJsonFrames() throws Exception {
+        // 同一握手契约先拒绝缺失/错误 token，再用真实 Stream 验证固定头与 V2 final。
+        for (String rejected : new String[] {"", "wrong-fixture-token"}) {
+            try (MockWssServer server = new MockWssServer(STS_TOKEN, (input, output, request) -> {
+                throw new AssertionError("Unauthorized WebSocket was upgraded");
+            })) {
+                CountDownLatch failed = new CountDownLatch(1);
+                AtomicInteger messages = new AtomicInteger();
+                CurlRealtimeSpeechWebSocket socket = new CurlRealtimeSpeechWebSocket(
+                    "wss://localhost:" + server.port() + "/asr/v2/123", rejected, ca(), DIRECT,
+                    new CurlRealtimeSpeechWebSocket.Listener() {
+                        @Override public void message(String value) { messages.incrementAndGet(); }
+                        @Override public void failed(int code) { failed.countDown(); }
+                        @Override public void closed() { }
+                    });
+                try {
+                    assertTrue("Missing/wrong STS header was accepted", failed.await(8, TimeUnit.SECONDS));
+                    assertEquals(0, messages.get());
+                    server.assertSucceeded();
+                } finally { socket.cancel(); }
+            }
+        }
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File audio = new File(context.getCacheDir(), "wss-synthetic-adts.aac");
         writeAdts(audio, 12);
         List<Long> arrivals = new ArrayList<>();
         AtomicReference<String> requestLine = new AtomicReference<>();
-        try (MockWssServer server = new MockWssServer((input, output, request) -> {
+        try (MockWssServer server = new MockWssServer(STS_TOKEN, (input, output, request) -> {
             // 首包使客户端进入 ready；随后在音频到来时故意把识别结果拆成两帧。
             requestLine.set(request);
             sendText(output, "{\"code\":0}");
@@ -79,6 +101,8 @@ public class CurlRealtimeSpeechWebSocketInstrumentedTest {
                     }
                 } else if (frame.opcode == 1) {
                     assertEquals("{\"type\":\"end\"}", new String(frame.payload, StandardCharsets.UTF_8));
+                    // V2 结束时仍可修正文；超过旧的一秒超时后必须交付 final 而非 partial。
+                    SystemClock.sleep(1300);
                     sendText(output, FINAL);
                     return;
                 }
@@ -91,15 +115,16 @@ public class CurlRealtimeSpeechWebSocketInstrumentedTest {
             List<String> events = new ArrayList<>();
             String url = "wss://localhost:" + server.port() + "/asr/v2/123?signature=a%2Bb%3D";
             TencentRealtimeSpeechStream stream = new TencentRealtimeSpeechStream(
-                audio, url, ca(), DIRECT, new TencentRealtimeSpeechStream.Listener() {
+                audio, url, STS_TOKEN, ca(), DIRECT, new TencentRealtimeSpeechStream.Listener() {
                     @Override public void partial(String value) { synchronized (partials) { partials.add(value); } }
                     @Override public void diagnostic(String value) { synchronized (events) { events.add(value); } }
                     @Override public void finished(String value) { text.set(value); done.countDown(); }
+                    @Override public void failed() { done.countDown(); }
                 });
             try {
                 stream.endAudio();
                 assertTrue("ASR stream did not finish", done.await(10, TimeUnit.SECONDS));
-                assertEquals("测试", text.get());
+                assertEquals("测试完成", text.get());
                 synchronized (partials) { assertTrue("No partial transcript", partials.contains("测试")); }
                 synchronized (events) {
                     assertTrue("No server final diagnostic",
@@ -300,10 +325,20 @@ public class CurlRealtimeSpeechWebSocketInstrumentedTest {
         private final SSLServerSocket server;
         private final Thread thread;
         private final AtomicReference<Throwable> failure = new AtomicReference<>();
+        private final String requiredToken;
 
-        MockWssServer(ServerAction action) throws Exception { this(0, action); }
+        MockWssServer(ServerAction action) throws Exception { this(0, null, action); }
 
         MockWssServer(long handshakeDelayMs, ServerAction action) throws Exception {
+            this(handshakeDelayMs, null, action);
+        }
+
+        MockWssServer(String requiredToken, ServerAction action) throws Exception {
+            this(0, requiredToken, action);
+        }
+
+        MockWssServer(long handshakeDelayMs, String requiredToken, ServerAction action) throws Exception {
+            this.requiredToken = requiredToken;
             KeyStore store = KeyStore.getInstance("PKCS12");
             char[] password = "local-test-only".toCharArray();
             try (InputStream input = InstrumentationRegistry.getInstrumentation().getContext()
@@ -330,9 +365,18 @@ public class CurlRealtimeSpeechWebSocketInstrumentedTest {
                 OutputStream output = socket.getOutputStream();
                 String request = readLine(input);
                 String key = null;
+                String token = null;
                 for (String line; !(line = readLine(input)).isEmpty(); ) {
                     if (line.regionMatches(true, 0, "Sec-WebSocket-Key:", 0, 18))
                         key = line.substring(18).trim();
+                    if (line.regionMatches(true, 0, "X-TC-Token:", 0, 11))
+                        token = line.substring(11).trim();
+                }
+                if (requiredToken != null && !requiredToken.equals(token)) {
+                    output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"
+                        .getBytes(StandardCharsets.US_ASCII));
+                    output.flush();
+                    return;
                 }
                 if (key == null) throw new IOException("Missing WebSocket key");
                 String accept = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-1")

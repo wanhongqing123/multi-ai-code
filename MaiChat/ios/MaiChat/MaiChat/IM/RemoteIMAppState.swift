@@ -189,6 +189,9 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
     }
     @Published var hasCompletedInitialLogin = false
     @Published private(set) var hasUnifiedAccount = false
+    // 登录短信的截止时间按号码保留在账号状态中，返回、切换登录方式或重建页面不会重置。
+    // 只限制发送短信；验证码校验和密码登录不经过此门禁。
+    @Published private var accountCodeCooldown = AccountCodeCooldown()
     // 真实登录 adopt 的代际独立于聊天/历史重建；同账号重新认证也要使旧安全表单失效。
     // 令牌后台刷新不经过 finishAccountLogin，不推进此值，也不会重建页面或清空草稿。
     @Published private var accountAuthenticationGeneration: UInt64 = 0
@@ -643,12 +646,34 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
         }
     }
 
+    /// 用绝对截止时间计算剩余秒数，后台暂停界面计时也不会延长一分钟的等待。
+    func accountCodeRetryAfter(phone: String, at date: Date = Date()) -> Int {
+        accountCodeCooldown.retryAfter(phone: phone, at: date)
+    }
+
+    func isRequestingAccountCode(phone: String) -> Bool {
+        accountCodeCooldown.isRequesting(phone: phone)
+    }
+
     func requestAccountCode(
         phone: String, purpose: String = "login", ageConfirmed: Bool
     ) async throws -> MaiChatAuthChallenge {
-        try await accountAuth.requestCode(
+        // 绑定手机沿用其已有流程；普通登录的所有发码入口共用此发送门禁。
+        guard purpose == "login" else {
+            return try await accountAuth.requestCode(
+                phone: phone, purpose: purpose, ageConfirmed: ageConfirmed
+            )
+        }
+        guard accountCodeCooldown.beginRequest(phone: phone) else {
+            throw MaiChatAuthError.requestFailed("请稍候再获取验证码")
+        }
+        var resendAfter: Int?
+        defer { accountCodeCooldown.finishRequest(phone: phone, resendAfter: resendAfter) }
+        let challenge = try await accountAuth.requestCode(
             phone: phone, purpose: purpose, ageConfirmed: ageConfirmed
         )
+        resendAfter = challenge.resendAfter
+        return challenge
     }
 
     func loginWithAccountCode(
@@ -703,6 +728,29 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
             code: code, ageConfirmed: ageConfirmed
         )
         try await finishAccountLogin(session)
+    }
+
+    /// 领取账号临时 ASR 凭据；两处输入栏共用账号会话，不创建独立密钥来源。
+    func asrCredential() async throws -> MaiChatASRCredential {
+        let identity = remoteDiagnosticsIdentity
+        guard hasUnifiedAccount else { throw MaiChatAuthError.sessionExpired }
+        let credential = try await accountAuth.asrCredential()
+        try Task.checkCancellation()
+        guard hasUnifiedAccount, remoteDiagnosticsIdentity == identity else {
+            throw MaiChatAuthError.identityMismatch
+        }
+        return credential
+    }
+
+    /// 登录与有效会话恢复后立即预取；转写启动复用账号客户端中的缓存或同一领取任务。
+    private func prefetchASRCredentialAfterLogin() {
+        let identity = remoteDiagnosticsIdentity
+        Task { @MainActor [weak self] in
+            guard let self, self.hasUnifiedAccount,
+                  self.remoteDiagnosticsIdentity == identity else { return }
+            // 凭据服务暂不可用不影响登录；不写页面错误，下次会话检查或长按时可重试。
+            _ = try? await self.asrCredential()
+        }
     }
 
     func setAccountPassword(_ password: String, expectedIdentity: String? = nil) async throws {
@@ -765,6 +813,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 expectedUserID: expectedUserID
             )
             guard hasUnifiedAccount, masterUserID == expectedUserID else { return }
+            prefetchASRCredentialAfterLogin()
             if maiChatAccountID != user.id || maiChatNickname != (user.nickname ?? "") {
                 maiChatAccountID = user.id
                 maiChatNickname = user.nickname ?? ""
@@ -990,6 +1039,7 @@ final class RemoteIMAppState: ObservableObject, RemoteDiagnosticsContextProvider
                 NSLocalizedDescriptionKey: "保存登录账号失败，请重试"
             ])
         }
+        prefetchASRCredentialAfterLogin()
         // 用户仍在 IM 页面时也让已登录的创作 Session 保持可发现和可接收远端操作。
         AIAssistantModel.shared.startSessionSyncForAccount()
         // 账号已经落地后领取主聊天 Key；失败不撤销 IM 登录，进入创作中心时可重试。

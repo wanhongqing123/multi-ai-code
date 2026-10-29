@@ -3481,6 +3481,7 @@ private struct MessageListView: View {
             .modifier(MessageInitialScrollAnchor())
             .accessibilityIdentifier("im-message-timeline")
             .scrollDismissesKeyboard(.interactively)
+            // 空会话直接显示消息区底色，收到消息后继续使用同一个时间线容器。
             .background(RemoteIMStyle.panelBackground, ignoresSafeAreaEdges: [])
             .overlay(alignment: .bottomTrailing) {
                 if hasNewerMessages {
@@ -3496,13 +3497,6 @@ private struct MessageListView: View {
                     .accessibilityLabel("回到最新消息")
                     .padding(.trailing, 16)
                     .padding(.bottom, 16)
-                }
-            }
-            .overlay {
-                if messages.isEmpty && activity == nil {
-                    // 空态放在可视消息区中央，不占用时间线的滚动高度。
-                    EmptyMessagesView()
-                        .allowsHitTesting(false)
                 }
             }
             .onAppear {
@@ -3887,23 +3881,6 @@ private func dismissKeyboard() {
         .flatMap(\.windows)
         .first(where: \.isKeyWindow)
     dismissKeyboard(in: activeWindow)
-}
-
-private struct EmptyMessagesView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "message")
-                .font(.system(size: 28))
-                .foregroundStyle(Color(red: 0.56, green: 0.59, blue: 0.64))
-            Text("暂无消息")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(RemoteIMStyle.textPrimary)
-            Text("发送一条消息开始远程任务。")
-                .font(.system(size: 13))
-                .foregroundStyle(RemoteIMStyle.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
 }
 
 private struct MessageBubbleView: View {
@@ -6753,11 +6730,7 @@ private struct ComposerView: View {
     @ObservedObject var draft: RemoteIMDraftState
     let transcriptionPresentation: VoiceTranscriptionPresentation
     @StateObject private var voiceRecorder = VoiceMessageRecorder()
-    @StateObject private var realtimeSpeechRecognizer = TencentRealtimeSpeechRecognizer(
-        appId: TencentASRCredentials.appId,
-        secretId: TencentASRCredentials.secretId,
-        secretKey: TencentASRCredentials.secretKey
-    )
+    @StateObject private var realtimeSpeechRecognizer = TencentRealtimeSpeechRecognizer()
     @State private var isVoiceMode = false
     @State private var isPressingVoice = false
     @State private var isCancellingVoice = false
@@ -6895,11 +6868,23 @@ private struct ComposerView: View {
                 guard transcriptionPresentation?.target != nil else { return }
                 transcriptionPresentation?.updateLiveText(text, sessionID: sessionID)
             }
+            realtimeSpeechRecognizer.onFailure = { error, _ in
+                // stop 前收到服务端错误同样结束长按，保留输入草稿且不发送部分识别结果。
+                isPressingVoice = false
+                isCancellingVoice = false
+                transcriptionPresentation.reset()
+                appState.errorMessage = "语音转文字失败，未发送：\(error.localizedDescription)"
+            }
+        }
+        .onChange(of: appState.remoteDiagnosticsIdentity) { _ in
+            // 账号更替连同等待中的凭据请求一起退出；迟到的识别结果不能写入新账号。
+            cancelVoiceLongPress()
         }
         .onDisappear {
             appState.updateHumanTyping(false, to: peerUserID)
             composerEditMenuState = nil
             realtimeSpeechRecognizer.onLiveTextUpdate = nil
+            realtimeSpeechRecognizer.onFailure = nil
             transcriptionPresentation.onCancel = nil
             transcriptionPresentation.onEdit = nil
             realtimeStartTask?.cancel()
@@ -7503,23 +7488,17 @@ private struct ComposerView: View {
 
     private func startRealtimeTranscription() async -> Bool {
         let diagnosticFields = transcriptionPresentation.diagnosticFields
-        guard realtimeSpeechRecognizer.isAvailable else {
-            transcriptionPresentation.target = nil
-            isPressingVoice = false
-            appState.errorMessage = "语音转文字凭证未配置"
-            return false
-        }
         do {
-            try await realtimeSpeechRecognizer.start(diagnosticFields: diagnosticFields)
-            guard !Task.isCancelled else {
-                realtimeSpeechRecognizer.cancel()
-                return false
+            try await realtimeSpeechRecognizer.start(diagnosticFields: diagnosticFields) {
+                try await appState.asrCredential()
             }
+            guard !Task.isCancelled else { return false }
             return true
         } catch is CancellationError {
-            realtimeSpeechRecognizer.cancel()
+            // 手势取消已同步关闭本轮会话；旧凭据请求迟到时不能再次取消新一轮识别。
             return false
         } catch {
+            guard !Task.isCancelled else { return false }
             transcriptionPresentation.reset()
             isPressingVoice = false
             isCancellingVoice = false

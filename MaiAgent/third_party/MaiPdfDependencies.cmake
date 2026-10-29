@@ -54,7 +54,7 @@ function(mai_add_pdf_dependencies)
   endforeach()
 
   # 显式列出本工程拥有的依赖目标，qpdf 不再走 pkg-config/find_library 猜路径。
-  # 编译定义与 zlibstatic 配对，使 qpdf 也使用同一份私有 z_ 前缀。
+  # 编译定义与 zlibstatic 配对；Windows 使用私有 mai_z_ 前缀，其它平台保留 z_。
   get_target_property(pdf_zlib_includes zlibstatic INTERFACE_INCLUDE_DIRECTORIES)
   if(MAI_OPENSSL_CRYPTO_TARGET)
     set(pdf_crypto_target "${MAI_OPENSSL_CRYPTO_TARGET}")
@@ -89,4 +89,8 @@ function(mai_add_pdf_dependencies)
   set_target_properties(libqpdf_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_compile_definitions(libqpdf_object PRIVATE POINTERHOLDER_TRANSITION=4
     Z_PREFIX z_errmsg=mai_z_errmsg)
+  if(WIN32)
+    # qpdf 从构建目录的 private-zlib 读取 zconf.h，避免使用源码目录里的公共 z_ 前缀。
+    target_compile_definitions(libqpdf_object PRIVATE ZLIB_BUILD)
+  endif()
 endfunction()

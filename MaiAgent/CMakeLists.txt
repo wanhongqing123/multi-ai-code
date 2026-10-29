@@ -232,8 +232,7 @@ endif()
 
 add_subdirectory(third_party/curl EXCLUDE_FROM_ALL)
 
-# A private prefixed zlib avoids colliding with Qt, FFmpeg, or platform zlib symbols.
-# Keep curl's transfer compression disabled; this copy serves explicit workspace tools.
+# 私有 zlib 不与平台、媒体库共用符号；curl 传输压缩关闭，此副本仅供工作区工具和 qpdf。
 set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
@@ -242,6 +241,33 @@ set(ZLIB_PREFIX ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/zlib EXCLUDE_FROM_ALL)
 # Z_PREFIX does not rename z_errmsg, which collides with the media libraries' zlib.
 target_compile_definitions(zlibstatic PRIVATE Z_PREFIX z_errmsg=mai_z_errmsg)
+if(WIN32)
+  # Qt5Core.dll 同样导出 z_deflate 等 z_ 符号；qpdf 拉入静态 zlib 后会与其导入库冲突。
+  # 从本次配置生成的 zconf.h 派生私有覆盖头，库和两个调用方都使用独立的 mai_z_ 名字。
+  set(mai_private_zlib_dir "${CMAKE_CURRENT_BINARY_DIR}/private-zlib")
+  set(mai_private_zconf "${mai_private_zlib_dir}/zconf.h")
+  file(MAKE_DIRECTORY "${mai_private_zlib_dir}")
+  file(READ "${CMAKE_CURRENT_BINARY_DIR}/third_party/zlib/zconf.h" mai_zconf)
+  string(REGEX REPLACE "(#[ \t]*define[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+)z_"
+    "\\1mai_z_" mai_private_zconf_contents "${mai_zconf}")
+  # zlib.h 的五个 init 包装宏仍叫 z_*，它们内部调用的真实函数已改为 mai_z_*。
+  # gzgetc 有真实导出函数，必须一起改名；不依赖它的旧内联包装宏。
+  foreach(mai_zlib_macro deflateInit inflateInit deflateInit2 inflateInit2
+      inflateBackInit)
+    string(REGEX REPLACE "(#[ \t]*define[ \t]+${mai_zlib_macro}[ \t]+)mai_z_"
+      "\\1z_" mai_private_zconf_contents "${mai_private_zconf_contents}")
+  endforeach()
+  if(mai_private_zconf_contents STREQUAL mai_zconf)
+    message(FATAL_ERROR "Could not namespace private zlib symbols")
+  endif()
+  if(EXISTS "${mai_private_zconf}")
+    file(READ "${mai_private_zconf}" mai_existing_zconf)
+  endif()
+  if(NOT mai_private_zconf_contents STREQUAL mai_existing_zconf)
+    file(WRITE "${mai_private_zconf}" "${mai_private_zconf_contents}")
+  endif()
+  target_include_directories(zlibstatic BEFORE PUBLIC "${mai_private_zlib_dir}")
+endif()
 
 # qpdf 固定为最后一个支持 C++17 的 12.2.0；与 VS2019 和移动工具链保持一致。
 # 仅编译进程内库，通过私有 provider/依赖目标复用现有 OpenSSL 与前缀 zlib。
@@ -381,7 +407,13 @@ target_include_directories(maiagent
 # sqlite、libcurl 和 md4c 都是 PRIVATE：它们是实现细节，公开头里不出现。
 target_link_libraries(maiagent PUBLIC Threads::Threads PRIVATE CURL::libcurl mai_curl_cli zlibstatic
   libssh2_static mai_sqlite mai_md4c ${CMAKE_DL_LIBS})
-set_source_files_properties(AgentTools/MaiZlibTool.cpp PROPERTIES COMPILE_DEFINITIONS Z_PREFIX)
+if(WIN32)
+  # zlib.h 仅在 ZLIB_BUILD 下从 include 路径读取上述覆盖头。
+  set_source_files_properties(AgentTools/MaiZlibTool.cpp PROPERTIES
+    COMPILE_DEFINITIONS "Z_PREFIX;ZLIB_BUILD")
+else()
+  set_source_files_properties(AgentTools/MaiZlibTool.cpp PROPERTIES COMPILE_DEFINITIONS Z_PREFIX)
+endif()
 if(MAI_OPENSSL_CLI_TARGET)
   target_sources(maiagent PRIVATE AgentTools/MaiOpenSslCliTool.cpp)
   target_compile_definitions(maiagent PRIVATE MAI_HAS_OPENSSL_CLI=1)

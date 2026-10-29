@@ -49,3 +49,9 @@
 - 执行者亲看 `23E6CE16-AE91-4116-A720-BC8CAF87E665.png` 当前会话选中并显示 `Pinned rename-45d1ea5b`，以及 `8972780F-E24F-42E1-9310-35A095621DA0.png` 重启后该名仍在列表。附件位于 `/private/tmp/maichat-ios139-session-rename-socket-attachments/`；录像 `/private/tmp/maichat-ios139-session-rename-socket.mp4`。截图IM70402来自本地假IM凭据，为已知fixture边界，不代表改名失败。
 - Android仅做新共享核心/SQLiteV6的完整隔离Debug编译，两个ABI实际库含 `session_rename` 与 `title_edited`，qpdf许可仍在包。APK177,560,135B，SHA-256 `7b452912a9747ea90fd95d31bb1f197498110768941f8d335eee7c5dfbcb34fa`，记录 `/private/tmp/maichat-android139-session-rename-artifact.json`；本轮未安装Android或重复先前已完成的PDF/账号UI验收。
 - 新iOS候选为2.2.4(139)。签名、手机安装与启动身份在完成后追加，不能把此前已装138写成包含此工具。
+
+## 139手机安装回执
+
+- 产品提交 `965179b5f54158aeae452de6eb0bcd084a7098fd` 已推main，generic Debug构建退出0、深度签名核验通过。清单 `/private/tmp/maichat-ios139-session-rename-candidate.json`：主文件91,856B，SHA-256 `0893c48a227776d0feab5d8d737b12e1b21b7c18569247d362bd415ab2326446`；调试dylib89,588,640B，SHA-256 `180b161fb14688b1f8572450bd63ed1316b55c95647ab720066472f1e1bd037f`。
+- 同一iPhone14ProMax/iOS27.2已覆盖安装2.2.4(139)，独立apps回读确认。安装目录 `/private/var/containers/Bundle/Application/0EC4116E-A58E-4EA6-97F9-1F7C3D49C746/MaiChat.app/`，普通无参数启动PID6609，executable与安装目录一致。回执 `/private/tmp/maichat-ios139-session-rename-install.json`、`...installed-app.json`、`...launch.json`。
+- 设备自身日志 `/private/tmp/maichat-ios139-session-rename-runtime.log` 记录 `2026-10-29T12:03:06.773Z app_version=2.2.4 build=139 ios=27.2 launch=e361e89b pid=6609`。执行者查看整个125秒模拟器录像的2秒取帧，覆盖权限设置、保留草稿、工具改名、切换、重启恢复；没有将该取帧范围称为真机连续UI验收。未修改真实用户会话名，真实手机只安装和正常启动。

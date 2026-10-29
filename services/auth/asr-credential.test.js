@@ -69,6 +69,18 @@ test('deduplicates concurrent STS requests and refreshes 90 seconds before expir
   assert.equal(calls, 2);
 });
 
+test('accepts opaque STS temporary IDs with symbols up to the documented 1024 bytes', async () => {
+  for (const secretId of ['TMP-fake+/=_:1234567890', 'T'.repeat(1024)]) {
+    const issue = createAsrCredentialIssuer(env, { currentTime: () => start,
+      createClient: () => ({ async GetFederationToken() {
+        return { ...certificate(), Credentials: { ...certificate().Credentials,
+          TmpSecretId: secretId } };
+      } }) });
+    assert.equal((await issue()).secret_id, secretId);
+    assert.equal((await issue()).secret_id, secretId);
+  }
+});
+
 test('a failed refresh drops stale credentials and the next request can recover', async () => {
   let current = start;
   let calls = 0;
@@ -90,6 +102,9 @@ test('invalid, expired or permanent credentials are rejected and never cached', 
     null, {}, certificate(start / 1000), certificate(start / 1000 + 90),
     certificate(start / 1000 + 3600),
     { ...certificate(), Credentials: { ...certificate().Credentials, Token: '' } },
+    ...['TMP has whitespace', 'TMP-has\ncontrol-byte', 'T'.repeat(1025)]
+      .map(secretId => ({ ...certificate(), Credentials: { ...certificate().Credentials,
+        TmpSecretId: secretId } })),
     { ...certificate(), Credentials: { ...certificate().Credentials,
       TmpSecretId: env.MAICHAT_ASR_SECRET_ID } },
     { ...certificate(), Credentials: { ...certificate().Credentials,

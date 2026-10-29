@@ -11,9 +11,10 @@ private struct ASRCredentialTests {
     }
 
     private static func fixture(
-        token: String = "test-session-token", expiresAt: Int = 2_000
+        token: String = "test-session-token", expiresAt: Int = 2_000,
+        secretId: String = "test-temporary-id"
     ) -> MaiChatASRCredential {
-        MaiChatASRCredential(appId: "1234567890", secretId: "test-temporary-id",
+        MaiChatASRCredential(appId: "1234567890", secretId: secretId,
                             secretKey: "test-temporary-key", token: token, expiresAt: expiresAt)
     }
 
@@ -29,6 +30,21 @@ private struct ASRCredentialTests {
         try require(decoded.appId == "1234567890" && decoded.token == "test-session-token" &&
                     decoded.expiresAt == 2_000, "Credential response contract changed")
         try require(decoded.isReusable(at: now), "Valid STS credential rejected")
+
+        // 真实 STS 控制面返回过含符号的 68 字节 ID；这里只用独立合成值重现其格式边界。
+        let opaqueSecretId = String(repeating: "x", count: 56) + "-._~+/=:@!$%"
+        try require(opaqueSecretId.utf8.count == 68 &&
+                    fixture(secretId: opaqueSecretId).isReusable(at: now),
+                    "Opaque temporary SecretId with symbols was rejected")
+        for validId in ["test-id!", String(repeating: "x", count: 1024)] {
+            try require(fixture(secretId: validId).isReusable(at: now),
+                        "Valid temporary SecretId length boundary was rejected")
+        }
+        for invalidId in [String(repeating: "x", count: 7), String(repeating: "x", count: 1025),
+                          "test id!", "test-id\n", "test\u{00}id!", "test\u{7F}id!", "test-idé"] {
+            try require(!fixture(secretId: invalidId).isReusable(at: now),
+                        "Invalid temporary SecretId characters or length were accepted")
+        }
 
         // token 是 STS 认证必填项，不能静默退回长期密钥形式。
         let missingToken = Data("""

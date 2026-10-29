@@ -511,7 +511,7 @@ test('phone lookup resolves one registered account to its IM identity', async ()
 });
 
 test('ASR STS issuance requires an active session, empty JSON and configured provider', async () => {
-  const credential = { app_id: '1234567890', secret_id: 'AKIDTemporary12345678',
+  const credential = { app_id: '1234567890', secret_id: 'TMP-fake+/=_:1234567890',
     secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
     expires_at: 1_780_001_800 };
   let calls = 0;

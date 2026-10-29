@@ -82,7 +82,7 @@ test('HTTP ASR STS responses require a session and never permit credential cachi
     sdkAppId: 123456789, now: () => 1_780_000_000_000,
     issueAsrCredential: async () => {
       if (fail) throw new Error('private-provider-details');
-      return { app_id: '1234567890', secret_id: 'AKIDTemporary12345678',
+      return { app_id: '1234567890', secret_id: 'TMP-fake+/=_:1234567890',
         secret_key: 'test-only-temporary-secret-key', token: 'test-only-session-token',
         expires_at: 1_780_001_800 };
     } });
@@ -105,7 +105,9 @@ test('HTTP ASR STS responses require a session and never permit credential cachi
     const issued = await request(signedIn.body.access_token);
     assert.equal(issued.status, 200);
     assert.equal(issued.headers.get('cache-control'), 'no-store');
-    assert.equal((await issued.json()).token, 'test-only-session-token');
+    const credential = await issued.json();
+    assert.equal(credential.token, 'test-only-session-token');
+    assert.equal(credential.secret_id, 'TMP-fake+/=_:1234567890');
     fail = true;
     const unavailable = await request(signedIn.body.access_token);
     assert.equal(unavailable.status, 503);

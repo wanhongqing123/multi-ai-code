@@ -12,9 +12,13 @@ const ASR_POLICY = JSON.stringify({ version: '2.0', statement: [{
 }] });
 
 function validAsrCredential(value, timestamp) {
+  // STS temporary IDs are opaque strings, unlike permanent AKID values. The
+  // official Credentials model permits up to 1024 bytes, including symbols.
+  // Restrict whitespace/control bytes without assuming an alphanumeric ID.
+  // https://cloud.tencent.com/document/product/1312/48198
   return value && typeof value.app_id === 'string' &&
     /^[0-9]{5,20}$/.test(value.app_id) &&
-    typeof value.secret_id === 'string' && /^[A-Za-z0-9]{8,128}$/.test(value.secret_id) &&
+    typeof value.secret_id === 'string' && /^[!-~]{8,1024}$/.test(value.secret_id) &&
     typeof value.secret_key === 'string' && /^[!-~]{16,256}$/.test(value.secret_key) &&
     typeof value.token === 'string' && /^[!-~]{16,8192}$/.test(value.token) &&
     Number.isSafeInteger(value.expires_at) &&

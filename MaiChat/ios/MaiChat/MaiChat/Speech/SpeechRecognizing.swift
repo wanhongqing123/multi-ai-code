@@ -24,8 +24,11 @@ struct MaiChatASRCredential: Decodable, Sendable {
 
     /// 与服务端相同地提前 90 秒领取下一份凭据，避免录音启动时刚好过期。
     func isReusable(at date: Date = Date()) -> Bool {
-        !appId.isEmpty && appId.utf8.allSatisfy { (48...57).contains($0) } &&
-            !secretId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        // STS SecretId 是 opaque 标识，合法值可含符号；SDK 负责 URL 编码，不能限制为字母数字。
+        let secretIdBytes = secretId.utf8
+        return !appId.isEmpty && appId.utf8.allSatisfy { (48...57).contains($0) } &&
+            (8...1024).contains(secretIdBytes.count) &&
+            secretIdBytes.allSatisfy { (33...126).contains($0) } &&
             !secretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             TimeInterval(expiresAt) > date.timeIntervalSince1970 + 90

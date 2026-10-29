@@ -52,8 +52,8 @@ final class AIMobileHostToolProvider {
         }
 
         switch name {
-        case "mobile_export_screen_frame":
-            return await exportScreenFrame(arguments)
+        case "mobile_retain_screen_frame":
+            return await retainScreenFrame(arguments)
         case "mobile_start_screen_share", "mobile_stop_screen_share", "mobile_capture_screen":
             return await executeScreenCapture(name: name, arguments: arguments)
         case "mobile_browser":
@@ -739,16 +739,16 @@ final class AIMobileHostToolProvider {
         return view
     }
 
-    // Native context-only bridge: the model sees mobile_screen_frames, while
-    // UI and tool exports share the ordinary file-copy and backup API.
-    private func exportScreenFrame(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+    // Native context-only bridge: UI and tools hold references to the same
+    // original PNG instead of creating a second screenshot file.
+    private func retainScreenFrame(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
         guard Set(arguments.keys) == ["workspace_path", "session_id", "batch_id", "frame_id"],
               let workspace = arguments["workspace_path"] as? String,
               (workspace as NSString).isAbsolutePath,
               let owner = arguments["session_id"] as? String, !owner.isEmpty,
               let batch = arguments["batch_id"] as? String,
               let frame = arguments["frame_id"] as? String else {
-            return .failure(code: "invalid_input", message: "screen frame export requires its Session context")
+            return .failure(code: "invalid_input", message: "screen frame selection requires its Session context")
         }
         let model = AIAssistantModel.shared
         let root = URL(fileURLWithPath: workspace, isDirectory: true)
@@ -759,28 +759,35 @@ final class AIMobileHostToolProvider {
             return .failure(code: "invalid_input", message: "screen frame belongs to another workspace")
         }
         let account = appState?.maiChatAccountID
+        var held: [AIMobileScreenArchiveReference] = []
         do {
             let context = AIMobileScreenArchiveContext(workspace: root,
                 ownerSessionID: owner, batchID: batch)
-            let files = try await AIMobileScreenFrameArchive.shared.exportSelected(
-                frameIDs: [frame], context: context)
-            guard files.count == 1 else {
-                return .failure(code: "internal", message: "screen frame export did not create one file")
+            held = try await AIMobileScreenFrameArchive.shared.retainSelected(
+                frameIDs: [frame], context: context, usageSessionID: owner)
+            guard held.count == 1 else {
+                try? await AIMobileScreenFrameArchive.shared.release(references: held)
+                return .failure(code: "internal", message: "screen frame selection did not retain one image")
             }
-            guard account == appState?.maiChatAccountID,
+            guard !Task.isCancelled, account == appState?.maiChatAccountID,
                   !model.workspacePath.isEmpty,
                   root == URL(fileURLWithPath: model.workspacePath, isDirectory: true)
                     .standardizedFileURL.resolvingSymlinksInPath() else {
-                try? FileManager.default.removeItem(at: files[0])
+                try? await AIMobileScreenFrameArchive.shared.release(references: held)
                 return .failure(code: "canceled", message: "screen frame account changed")
             }
-            return Self.jsonSuccess(["file_path": files[0].path,
+            return Self.jsonSuccess(["file_path": held[0].fileURL.path,
+                                     "path": held[0].relativePath,
+                                     "reference_id": held[0].referenceID,
                                      "batch_id": batch, "frame_id": frame])
         } catch let error as AIMobileScreenArchiveError {
+            try? await AIMobileScreenFrameArchive.shared.release(references: held)
             return .failure(code: error.code, message: error.localizedDescription)
         } catch is CancellationError {
-            return .failure(code: "canceled", message: "screen frame export was canceled")
+            try? await AIMobileScreenFrameArchive.shared.release(references: held)
+            return .failure(code: "canceled", message: "screen frame selection was canceled")
         } catch {
+            try? await AIMobileScreenFrameArchive.shared.release(references: held)
             return .failure(code: "internal", message: error.localizedDescription)
         }
     }

@@ -93,8 +93,9 @@ static Json request(const std::string& root, Json input, const std::string* byte
         bytes ? bytes->data() : nullptr, bytes ? bytes->size() : 0);
     CHECK(response); Json result = Json::parse(response); mai_screen_frame_archive_free(response); return result;
 }
-static Json ok(const std::string& root, Json input, const std::string* bytes = nullptr) {
-    const auto response = request(root, input, bytes);
+static Json ok(const std::string& root, Json input, const std::string* bytes = nullptr,
+               const char* session = owner) {
+    const auto response = request(root, input, bytes, session);
     if (response["ok"] != true) throw std::runtime_error(response.dump());
     return response["output"];
 }
@@ -221,14 +222,65 @@ static void reopen(const std::string& root) {
     const std::string batch = state["batch"];
     const auto listing = ok(root, {{"action", "list"}, {"batch_id", batch}});
     CHECK(listing["batches"][0]["status"] == "stopped" && listing["frames"].size() == 2);
+    const std::string framePath = state["frame"]["path"];
+    const std::string manifestPath = root + "/" + framePath.substr(0, framePath.find_last_of('/')) + "/manifest.json";
+    Json legacy = Json::parse(read(manifestPath));
+    for (auto& saved : legacy["frames"]) saved.erase("references");
+    write(manifestPath, legacy.dump());
     const auto frame = ok(root, {{"action", "get"}, {"batch_id", batch}, {"frame_id", state["frame"]["id"]}});
-    const std::string selected = root + "/selected-copy.png";
-    write(selected, read(root + "/" + frame["path"].get<std::string>()));
-    CHECK(ok(root, {{"action", "discard"}, {"batch_id", batch}})["removed_frames"] == 2);
-    CHECK(exists(selected));
-    CHECK(!exists(root + "/" + frame["path"].get<std::string>()));
+    const auto ref = [&](const char* action, const char* token) {
+        return Json{{"action", action}, {"batch_id", batch}, {"frame_id", frame["id"]}, {"reference_id", token}};
+    };
+    const std::string original = root + "/" + frame["path"].get<std::string>();
+    const auto selected = ok(root, ref("retain", "draft-selection"));
+    CHECK(selected["path"] == frame["path"] && selected["reference_id"] == "draft-selection");
+    CHECK(!selected.contains("references") && !selected.contains("sha256"));
+    CHECK(ok(root, ref("retain", "draft-selection"))["path"] == frame["path"]);
+    CHECK(ok(root, ref("release", "draft-selection"))["released"] == true && exists(original));
+    ok(root, ref("retain", "draft-selection"));
+    CHECK(!ok(root, {{"action", "list"}, {"batch_id", batch}})["frames"][0].contains("references"));
+    Json history = ref("retain", "history-image"); history["usage_session_id"] = "history-before-send";
+    ok(root, history);
+    history["reference_id"] = "draft-selection";
+    CHECK(request(root, history)["errorCode"] == "invalid_input");
+    CHECK(request(root, ref("retain", "wrong-owner"), nullptr, "another-owner")["errorCode"] == "not_found");
+    const auto cleared = ok(root, {{"action", "discard"}, {"batch_id", batch}});
+    CHECK(cleared["removed_frames"] == 1 && cleared["retained_frames"] == 1);
+    CHECK(exists(original) && read(original) == png());
+    CHECK(ok(root, {{"action", "list"}, {"batch_id", batch}})["frames"].empty());
+    CHECK(ok(root, {{"action", "get"}, {"batch_id", batch}, {"frame_id", frame["id"]}})["path"] == frame["path"]);
+    CHECK(!ok(root, ref("release", "not-my-token"))["released"].get<bool>());
+    CHECK(ok(root, ref("release", "draft-selection"))["released"] == true && exists(original));
+    CHECK(ok(root, ref("release", "draft-selection"))["released"] == false && exists(original));
+    Json assign = ref("assign_session", "history-image"); assign["usage_session_id"] = "actual-history-session";
+    CHECK(request(root, ref("assign_session", "history-image"))["errorCode"] == "invalid_input");
+    CHECK(ok(root, assign)["updated"] == true);
+    CHECK(ok(root, assign)["updated"] == false);
+    CHECK(ok(root, {{"action", "release_session"}}, nullptr, "history-before-send")["released_references"] == 0);
+    CHECK(exists(original));
+    // Session deletion finds matching usage tokens even when the archive was
+    // created under a different draft/owner, without releasing another history.
+    const char* otherOwner = "remote:another-owner";
+    const std::string otherBatch = ok(root, {{"action", "begin"}}, nullptr, otherOwner)["batch_id"];
+    const std::string tiny = png();
+    const auto otherFrame = ok(root, append(otherBatch, 0), &tiny, otherOwner)["frame"];
+    const std::string otherPath = root + "/" + otherFrame["path"].get<std::string>();
+    Json otherRef{{"action", "retain"}, {"batch_id", otherBatch}, {"frame_id", otherFrame["id"]},
+        {"reference_id", "same-session-other-owner"}, {"usage_session_id", "actual-history-session"}};
+    ok(root, otherRef, nullptr, otherOwner);
+    otherRef["reference_id"] = "unrelated-history"; otherRef["usage_session_id"] = "keep-history";
+    ok(root, otherRef, nullptr, otherOwner);
+    ok(root, {{"action", "discard"}, {"batch_id", otherBatch}}, nullptr, otherOwner);
+    const auto released = ok(root, {{"action", "release_session"}}, nullptr, "actual-history-session");
+    CHECK(released["released_references"] == 2 && released["removed_batches"] == 1);
+    CHECK(!exists(original) && exists(otherPath));
+    CHECK(ok(root, ref("release", "history-image"))["released"] == false);
+    CHECK(ok(root, {{"action", "release_session"}}, nullptr, "actual-history-session")["released_references"] == 0);
+    CHECK(ok(root, {{"action", "release_session"}}, nullptr, "keep-history")["removed_batches"] == 1);
+    CHECK(!exists(otherPath));
+    CHECK(request(root, {{"action", "release_session"}, {"batch_id", batch}})["errorCode"] == "invalid_input");
     CHECK(ok(root, {{"action", "list"}})["frames"].empty());
-    std::puts("PASS: fresh process reopen, stopped-frame retention and selected copy survives discard");
+    std::puts("PASS: process reopen, original-path pins, idempotent release and scoped history deletion");
 }
 static int entry(int argc, const std::vector<std::string>& args) {
     try { CHECK(argc == 3); if (args[1] == "--run") run(args[2]);

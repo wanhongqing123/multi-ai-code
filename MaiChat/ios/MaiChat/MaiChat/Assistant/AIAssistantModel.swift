@@ -943,6 +943,16 @@ struct AIImportedFile: Sendable, Equatable {
     let relativePath: String
     let mimeType: String
     let isImage: Bool
+    let archiveReference: AIMobileScreenArchiveReference?
+    var attachmentIdentity: String { archiveReference?.referenceID ?? relativePath }
+
+    init(relativePath: String, mimeType: String, isImage: Bool,
+         archiveReference: AIMobileScreenArchiveReference? = nil) {
+        self.relativePath = relativePath
+        self.mimeType = mimeType
+        self.isImage = isImage
+        self.archiveReference = archiveReference
+    }
 }
 struct AIAttachmentImportTarget: Sendable, Hashable {
     let sessionID: String
@@ -1328,6 +1338,9 @@ final class AIAssistantModel: ObservableObject {
     private static let lifecycleSessionID = "session_lifecycle"
 
     static func resetForAccountSwitch() {
+        let pending = Array(shared.pendingAttachments.values).flatMap { $0 } +
+            shared.remoteFilesByCommandID.values.flatMap { $0.files }
+        shared.discardImportedFiles(pending)
         Task { @MainActor in await AIMobileScreenCapture.shared.stop() }
         AIMobileLocalMediaRequests.shared.deactivate()
         shared.disappear()
@@ -1365,6 +1378,10 @@ final class AIAssistantModel: ObservableObject {
     @Published var quotedMessage: AIMessage?
     var drafts: [String: String] = [:]
     @Published private(set) var pendingAttachments: [String: [AIImportedFile]] = [:]
+    // Once submitted to the native sender, the token can also protect a
+    // persisted user message. A draft cleanup must not release that history.
+    private var screenFrameHistoryPins: [String: String] = [:]
+    private var screenFrameSubmissionPins: Set<String> = []
     @Published private(set) var screenFrameImportRevision = 0
     private var screenFrameImports: [AIScreenFrameImportBinding] = []
     private(set) var firstMessageSessionID = ""
@@ -2360,7 +2377,9 @@ final class AIAssistantModel: ObservableObject {
                       sessions.contains(where: { $0.id == target }) else {
                     throw AIBackendError(message: "对话已不存在")
                 }
+                let archiveWorkspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
                 _ = try await backend.request("delete", values: ["session": target])
+                await releaseScreenFrameHistory(sessionID: target, workspace: archiveWorkspace)
                 deletedDraftSessions.insert(target)
                 discardImportedFiles(pendingAttachments.removeValue(forKey: target) ?? [])
                 drafts.removeValue(forKey: target)
@@ -2876,10 +2895,11 @@ final class AIAssistantModel: ObservableObject {
                         FileManager.default.fileExists(atPath: path.path) else {
                         throw AIBackendError(message: "附件文件已丢失，请移除后重新选择")
                     }
-                    let name = file.relativePath.count > 9 &&
+                    let name = file.archiveReference?.fileURL.lastPathComponent ??
+                        (file.relativePath.count > 9 &&
                         file.relativePath[file.relativePath.index(
                             file.relativePath.startIndex, offsetBy: 8)] == "-"
-                        ? String(file.relativePath.dropFirst(9)) : file.relativePath
+                        ? String(file.relativePath.dropFirst(9)) : file.relativePath)
                     let receipt = try await MaiCloudDriveClient.shared
                         .uploadSessionAttachment(fileURL: path,
                                                  displayName: name, room: room)
@@ -2965,6 +2985,8 @@ final class AIAssistantModel: ObservableObject {
             }
         }
         do {
+            let references = attachments.compactMap(\.archiveReference)
+            try await prepareScreenFrameHistory(references, sessionID: targetSession)
             _ = try await backend.send(
                 session: targetSession,
                 text: text,
@@ -2972,8 +2994,8 @@ final class AIAssistantModel: ObservableObject {
                 videos: attachments.filter { $0.mimeType.hasPrefix("video/") },
                 quoteMessageId: quoteMessageId
             )
-            let sentNames = Set(attachments.map(\.relativePath))
-            pendingAttachments[targetSession]?.removeAll { sentNames.contains($0.relativePath) }
+            let sentIDs = Set(attachments.map(\.attachmentIdentity))
+            pendingAttachments[targetSession]?.removeAll { sentIDs.contains($0.attachmentIdentity) }
             if pendingAttachments[targetSession]?.isEmpty == true {
                 pendingAttachments.removeValue(forKey: targetSession)
             }
@@ -3016,9 +3038,13 @@ final class AIAssistantModel: ObservableObject {
         }
         let target = selected
         let closeCamera = op == "stop" && AIMobileLocalMediaRequests.shared.cameraSessionID == target
+        let archiveWorkspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
         do {
             var values = values; values["session"] = target
             _ = try await backend.request(op, values: values)
+            if op == "delete" || op == "clear" {
+                await releaseScreenFrameHistory(sessionID: target, workspace: archiveWorkspace)
+            }
             if closeCamera { AIMobileLocalMediaRequests.shared.closeCamera(in: target) }
             if op == "delete" {
                 deletedDraftSessions.insert(target)
@@ -3254,21 +3280,22 @@ final class AIAssistantModel: ObservableObject {
             throw AIBackendError(message: capacity == 0 ? "原会话草稿已有 10 项附件，请先移除部分附件" :
                 "原会话草稿还可添加 \(capacity) 张图片")
         }
-        let files = try await AIMobileScreenFrameArchive.shared.exportSelected(
-            frameIDs: frameIDs, context: binding.context)
+        let references = try await AIMobileScreenFrameArchive.shared.retainSelected(
+            frameIDs: frameIDs, context: binding.context,
+            usageSessionID: "draft:" + UUID().uuidString.lowercased())
         do {
             try Task.checkCancellation()
             try validateScreenFrameImport(binding)
-            guard files.count <= screenFrameAttachmentCapacity(binding) else {
+            guard references.count <= screenFrameAttachmentCapacity(binding) else {
                 throw AIBackendError(message: "原会话草稿的附件数量已变化，请减少选择后重试")
             }
         }
         catch {
-            for file in files { try? FileManager.default.removeItem(at: file) }
+            try? await AIMobileScreenFrameArchive.shared.release(references: references)
             throw error
         }
-        let imported = files.map { AIImportedFile(relativePath: "screenshots/" + $0.lastPathComponent,
-                                                 mimeType: "image/png", isImage: true) }
+        let imported = references.map { AIImportedFile(relativePath: $0.relativePath,
+            mimeType: "image/png", isImage: true, archiveReference: $0) }
         return addAttachments(imported, to: binding.snapshot.importTarget)
     }
 
@@ -3291,13 +3318,29 @@ final class AIAssistantModel: ObservableObject {
         }
         let key = target.remoteRoomKey ?? session
         let remaining = max(0, 10 - pendingAttachments[key, default: []].count)
-        pendingAttachments[key, default: []].append(contentsOf: files.prefix(remaining))
-        let extra = Array(files.dropFirst(remaining))
-        if !extra.isEmpty {
-            discardImportedFiles(extra)
-            showTransientError("每条消息最多添加 10 项附件，超出的文件未加入草稿")
+        var seen = Set(pendingAttachments[key, default: []].map(\.relativePath))
+        let existingTokens = Set(pendingAttachments[key, default: []]
+            .compactMap { $0.archiveReference?.referenceID })
+        var accepted: [AIImportedFile] = []
+        var extra: [AIImportedFile] = []
+        for file in files {
+            let duplicateFrame = file.archiveReference != nil && seen.contains(file.relativePath)
+            if accepted.count < remaining && !duplicateFrame {
+                accepted.append(file)
+                seen.insert(file.relativePath)
+            } else { extra.append(file) }
         }
-        return min(files.count, remaining)
+        pendingAttachments[key, default: []].append(contentsOf: accepted)
+        if !extra.isEmpty {
+            discardImportedFiles(extra.filter {
+                guard let reference = $0.archiveReference else { return true }
+                return !existingTokens.contains(reference.referenceID)
+            })
+            if accepted.count == remaining {
+                showTransientError("每条消息最多添加 10 项附件，超出的文件未加入草稿")
+            }
+        }
+        return accepted.count
     }
 
     func discardImportedFile(_ file: AIImportedFile) {
@@ -3305,20 +3348,74 @@ final class AIAssistantModel: ObservableObject {
     }
 
     private func discardImportedFiles(_ files: [AIImportedFile]) {
-        let urls = files.compactMap {
-            AIAssistantPathPolicy.resolve($0.relativePath, workspacePath: workspacePath)
+        let references = files.compactMap(\.archiveReference).filter {
+            screenFrameHistoryPins[$0.referenceID] == nil &&
+                !screenFrameSubmissionPins.contains($0.referenceID)
         }
+        let archiveRoot = URL(fileURLWithPath: workspacePath, isDirectory: true)
+            .appendingPathComponent(".maichat/screen-frame-archive", isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        let urls = files.filter { $0.archiveReference == nil }.compactMap {
+            AIAssistantPathPolicy.resolve($0.relativePath, workspacePath: workspacePath)
+        }.filter { !$0.path.hasPrefix(archiveRoot) }
         Task.detached(priority: .utility) {
+            try? await AIMobileScreenFrameArchive.shared.release(references: references)
             for url in urls { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    private func prepareScreenFrameHistory(_ references: [AIMobileScreenArchiveReference],
+                                           sessionID: String) async throws {
+        guard !references.isEmpty else { return }
+        let expectedAccount = screenFrameCurrentAccountID
+        let expectedWorkspace = workspacePath
+        let pending = references.filter { screenFrameHistoryPins[$0.referenceID] == nil }
+        screenFrameSubmissionPins.formUnion(pending.map(\.referenceID))
+        do {
+            try await AIMobileScreenFrameArchive.shared.assignSession(
+                references: references, usageSessionID: sessionID)
+            guard self === Self.shared, screenFrameCurrentAccountID == expectedAccount,
+                  workspacePath == expectedWorkspace, !deletedDraftSessions.contains(sessionID) else {
+                throw AIBackendError(message: "账号或工作区已变化，未发送截图")
+            }
+            for reference in references { screenFrameHistoryPins[reference.referenceID] = sessionID }
+            screenFrameSubmissionPins.subtract(pending.map(\.referenceID))
+        } catch {
+            screenFrameSubmissionPins.subtract(pending.map(\.referenceID))
+            let stillPending = Set(pendingAttachments.values.flatMap { $0 }
+                .compactMap { $0.archiveReference?.referenceID })
+            let abandoned = pending.filter { self !== Self.shared || !stillPending.contains($0.referenceID) }
+            try? await AIMobileScreenFrameArchive.shared.release(references: abandoned)
+            throw error
+        }
+    }
+
+    private func releaseScreenFrameHistory(sessionID: String, workspace: URL) async {
+        do {
+            try await AIMobileScreenFrameArchive.shared.releaseSession(
+                workspace: workspace, sessionID: sessionID)
+            let released = Set(screenFrameHistoryPins.filter { $0.value == sessionID }.keys)
+            screenFrameHistoryPins = screenFrameHistoryPins.filter { $0.value != sessionID }
+            // An uncertain native send can leave its already-pinned item in
+            // the draft. Explicit history cleanup also removes that stale
+            // draft item; newer selections have different tokens and remain.
+            for key in Array(pendingAttachments.keys) {
+                pendingAttachments[key]?.removeAll {
+                    $0.archiveReference.map { released.contains($0.referenceID) } ?? false
+                }
+                if pendingAttachments[key]?.isEmpty == true { pendingAttachments.removeValue(forKey: key) }
+            }
+        } catch {
+            showTransientError("对话已清理，但截图引用清理失败：" + error.localizedDescription)
         }
     }
 
     func removeAttachment(_ file: AIImportedFile, from session: String) {
         let key = attachmentKey(for: session)
         let removed = pendingAttachments[key]?.filter {
-            $0.relativePath == file.relativePath
+            $0.attachmentIdentity == file.attachmentIdentity
         } ?? []
-        pendingAttachments[key]?.removeAll { $0.relativePath == file.relativePath }
+        pendingAttachments[key]?.removeAll { $0.attachmentIdentity == file.attachmentIdentity }
         if pendingAttachments[key]?.isEmpty == true {
             pendingAttachments.removeValue(forKey: key)
         }

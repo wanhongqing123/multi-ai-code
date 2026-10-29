@@ -104,6 +104,7 @@ struct ScreenCaptureProbe {
     std::atomic<bool>* cancel = nullptr;
     bool cancelOnReturn = false;
     std::string expectedTool = "mobile_capture_screen";
+    std::string referenceID;
     Json arguments;
 };
 
@@ -119,25 +120,23 @@ static const char* captureHostHandler(void* context, const char* tool, const cha
     }
     Json output{{"captured", true}};
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    if (probe->expectedTool == "mobile_export_screen_frame") {
+    if (probe->expectedTool == "mobile_retain_screen_frame") {
         const std::string root = probe->arguments.at("workspace_path");
         const std::string owner = probe->arguments.at("session_id");
-        const Json request{{"action", "get"}, {"batch_id", probe->arguments.at("batch_id")},
-                           {"frame_id", probe->arguments.at("frame_id")}};
+        probe->referenceID = MaiIdGenerator::newEventId();
+        const Json request{{"action", "retain"}, {"batch_id", probe->arguments.at("batch_id")},
+                           {"frame_id", probe->arguments.at("frame_id")},
+                           {"reference_id", probe->referenceID}, {"usage_session_id", owner}};
         char* encoded = mai_screen_frame_archive_request(root.c_str(), owner.c_str(),
             request.dump().c_str(), nullptr, 0);
         CHECK(encoded != nullptr);
         const Json reply = Json::parse(encoded);
         mai_screen_frame_archive_free(encoded);
         CHECK(reply.value("ok", false));
-        const auto source = MaiFilePath::fromUtf8(root).append(
+        const auto original = MaiFilePath::fromUtf8(root).append(
             MaiFilePath::fromUtf8(reply.at("output").at("path").get<std::string>()));
-        std::string png;
-        CHECK(!MaiFileSystem::readFile(source, png).hasError());
-        const auto copy = MaiFilePath::fromUtf8(root).append(MaiFilePath::fromUtf8("screenshots"))
-            .append(MaiFilePath::fromUtf8("mobile_screen_export_" + MaiIdGenerator::newEventId() + ".png"));
-        CHECK(!MaiFileSystem::writeFile(copy, png).hasError());
-        output["file_path"] = copy.toUtf8();
+        output["file_path"] = original.toUtf8();
+        output["reference_id"] = probe->referenceID;
     }
 #endif
     if (probe->cancelOnReturn && probe->cancel) probe->cancel->store(true);
@@ -331,11 +330,21 @@ static void captureContract() {
     CHECK(listing.at("frames").size() == 1);
     CHECK(listing.at("batches").at(0).at("status") == "stopped");
     const std::string id = listing.at("frames").at(0).at("id").get<std::string>();
-    probe.expectedTool = "mobile_export_screen_frame";
+    probe.expectedTool = "mobile_retain_screen_frame";
     const auto opened = frames->execute(Json{{"action", "open"}, {"batch_id", batch},
                                              {"frame_id", id}}.dump(), context);
     CHECK(!opened.hasError() && opened.images().size() == 1);
-    CHECK(MaiFileSystem::exists(MaiFilePath::fromUtf8(opened.images()[0].path)));
+    const auto openedPath = workspace.path.append(MaiFilePath::fromUtf8(opened.images()[0].path));
+    CHECK(MaiFileSystem::exists(openedPath));
+    CHECK(opened.images()[0].path == listing.at("frames").at(0).at("path").get<std::string>());
+    probe.cancelOnReturn = true;
+    auto canceledSelection = frames->execute(Json{{"action", "open"}, {"batch_id", batch},
+                                                  {"frame_id", id}}.dump(), context);
+    CHECK(canceledSelection.hasError() && canceledSelection.error().code() == MaiErrorCode::Canceled);
+    cancel.store(false);
+    probe.cancelOnReturn = false;
+    CHECK(archive({{"action", "release"}, {"batch_id", batch}, {"frame_id", id},
+                   {"reference_id", probe.referenceID}}).at("released") == false);
     context.sessionId = "another-session";
     auto rejected = frames->execute(Json{{"action", "open"}, {"batch_id", batch},
                                          {"frame_id", id}}.dump(), context);
@@ -346,8 +355,11 @@ static void captureContract() {
     CHECK(!frames->execute(discard.dump(), context).hasError());
     CHECK(MaiFileSystem::exists(retained));
     std::string selectedPNG;
-    CHECK(!MaiFileSystem::readFile(MaiFilePath::fromUtf8(opened.images()[0].path), selectedPNG).hasError());
+    CHECK(!MaiFileSystem::readFile(openedPath, selectedPNG).hasError());
     CHECK(selectedPNG == png.value());
+    archive({{"action", "release_session"}});
+    CHECK(!MaiFileSystem::exists(openedPath));
+    CHECK(MaiFileSystem::exists(retained));
 #else
     CHECK(registry.findForModel("mobile_screen_frames") == nullptr);
 #endif

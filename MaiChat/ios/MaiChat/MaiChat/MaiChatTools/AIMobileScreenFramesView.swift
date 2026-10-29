@@ -1,5 +1,5 @@
-// 文件作用：查看一批屏幕共享截图，明确选择后才复制到开始共享的原会话草稿。
-// 关闭界面保留原图；只有“清空本批”会删除档案，已加入草稿的副本不受影响。
+// 文件作用：查看一批屏幕共享截图，明确选择后以原图引用加入开始共享的会话草稿。
+// 关闭界面保留原图；清理只删除未被会话或消息引用的图片。
 import SwiftUI
 
 struct AIMobileScreenFramesView: View {
@@ -110,8 +110,11 @@ struct AIMobileScreenFramesView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Button("清空本批", role: .destructive) { Task { await discard() } }
-                            .disabled(isRecording || importing)
+                        Button("清理未选图片", role: .destructive) { Task { await discard() } }
+                            .disabled(isRecording || importing || !selected.isEmpty)
+                        if !selected.isEmpty {
+                            Text("请先把选图加入草稿，再清理未选图片")
+                        }
                     } label: { Image(systemName: "ellipsis.circle") }
                     .accessibilityLabel("截图操作")
                     .accessibilityIdentifier("ai-screen-frames-actions")
@@ -183,7 +186,7 @@ struct AIMobileScreenFramesView: View {
             frames = listing.frames.filter { $0.batchID == binding.id }.sorted { $0.elapsedMS < $1.elapsedMS }
             selected.formIntersection(Set(frames.map(\.id)))
             unavailable = []
-            error = batches.contains { $0.id == binding.id } ? "" : "这批截图已被清空。"
+            error = batches.contains { $0.id == binding.id } ? "" : "这批截图已清理，已加入会话的图片仍保留。"
         } catch is CancellationError { }
         catch { self.error = error.localizedDescription }
     }
@@ -232,7 +235,7 @@ struct AIMobileScreenFramesView: View {
         case "interrupted": return "上次共享意外中断，已保留截取的图片。"
         case "user", "stopped", "user_stopped": return nil
         case "batch_frames", "batch_bytes", "owner_bytes", "workspace_bytes", "limit":
-            return "已达到截图存储上限并停止共享。选图后可清空不再需要的批次。"
+            return "已达到截图存储上限并停止共享。将需要的图片加入草稿后，可清理未选图片。"
         default: return "共享已停止，已截取的图片仍保留。"
         }
     }
@@ -296,41 +299,29 @@ private struct AIMobileScreenArchiveLargeImage: View {
     @State private var failed = false
     @State private var revision = 0
     var body: some View {
-        GeometryReader { geometry in
+        // Only the image canvas ignores safe areas. Its fit calculation must use
+        // the full viewport; a screen-sized PNG already contains status/home bars.
+        // Keep the close control in the outer, safe-area-aware container.
+        GeometryReader { safeGeometry in
             ZStack(alignment: .topTrailing) {
-                Color.black.ignoresSafeArea()
-                Group {
-                    if let url {
-                        RemoteIMAsyncImage(filePath: url.path,
-                            maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(for: geometry.size)) { image in
-                            let scale = min(geometry.size.width / max(1, image.size.width),
-                                            geometry.size.height / max(1, image.size.height))
-                            let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-                            Image(uiImage: image).resizable().scaledToFit()
-                                .frame(width: fitted.width, height: fitted.height)
-                                .modifier(ImagePreviewZoomModifier(enabled: true,
-                                    imageSize: fitted, viewportSize: geometry.size))
-                                .accessibilityLabel("截图大图")
-                                .accessibilityIdentifier("ai-screen-frame-large-image")
-                        } placeholder: { decodeFailed in
-                            if decodeFailed { Text("图片无法显示").foregroundStyle(.white) }
-                            else { ProgressView().tint(.white) }
+                GeometryReader { viewport in
+                    ZStack {
+                        Color.black
+                        if let url {
+                            ImagePreviewBackdrop(filePath: url.path, viewportSize: viewport.size)
                         }
-                    } else if failed {
-                        VStack(spacing: 12) {
-                            Text("图片不可用或已删除").foregroundStyle(.white)
-                            Button("重试") { revision += 1 }
-                        }
-                    } else { ProgressView().tint(.white) }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        previewCanvas(viewport.size)
+                    }.frame(width: viewport.size.width, height: viewport.size.height)
+                }.ignoresSafeArea()
                 Button(action: close) {
                     Image(systemName: "xmark").font(.headline).padding(15)
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .padding(16).accessibilityLabel("关闭大图")
                 .accessibilityIdentifier("ai-screen-frame-large-close")
-            }
+            }.frame(width: safeGeometry.size.width, height: safeGeometry.size.height)
         }
+        .statusBarHidden()
         .task(id: revision) {
             failed = false
             do { url = try await aiScreenArchiveURL(context: context, frame: frame) }
@@ -338,6 +329,34 @@ private struct AIMobileScreenArchiveLargeImage: View {
             catch { failed = true }
         }
     }
+
+    @ViewBuilder private func previewCanvas(_ viewport: CGSize) -> some View {
+        Group {
+            if let url {
+                RemoteIMAsyncImage(filePath: url.path,
+                    maximumPointSize: ImagePreviewZoomModifier.maximumDecodePointSize(for: viewport)) { image in
+                    let scale = min(viewport.width / max(1, image.size.width),
+                                    viewport.height / max(1, image.size.height))
+                    let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .frame(width: fitted.width, height: fitted.height)
+                        .modifier(ImagePreviewZoomModifier(enabled: true,
+                            imageSize: fitted, viewportSize: viewport))
+                        .accessibilityLabel("截图大图")
+                        .accessibilityIdentifier("ai-screen-frame-large-image")
+                } placeholder: { decodeFailed in
+                    if decodeFailed { Text("图片无法显示").foregroundStyle(.white) }
+                    else { ProgressView().tint(.white) }
+                }
+            } else if failed {
+                VStack(spacing: 12) {
+                    Text("图片不可用或已删除").foregroundStyle(.white)
+                    Button("重试") { revision += 1 }
+                }
+            } else { ProgressView().tint(.white) }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
 }
 
 #if DEBUG && targetEnvironment(simulator)
@@ -348,7 +367,8 @@ struct AIScreenFramesUITestRoot: View {
     @State private var presentation: AIScreenFrameImportBinding?
     @State private var result = "未运行"
     @State private var busy = false
-    @State private var hostCopy: URL?
+    @State private var hostReference: AIMobileScreenArchiveReference?
+    @State private var originalFrames: [AIMobileScreenArchiveFrame] = []
 
     var body: some View {
         VStack(spacing: 18) {
@@ -370,7 +390,7 @@ struct AIScreenFramesUITestRoot: View {
             Button("验证账号隔离") { Task { await verifyAccountIsolation() } }
                 .disabled(binding == nil || busy)
                 .accessibilityIdentifier("screen-frames-fixture-account")
-            Button("验证清空后副本") { Task { await verifyCopies() } }
+            Button("验证原图引用与回收") { Task { await verifyReferences() } }
                 .disabled(binding == nil || busy)
                 .accessibilityIdentifier("screen-frames-fixture-verify")
             Text(result).font(.caption).accessibilityIdentifier("screen-frames-fixture-result")
@@ -392,25 +412,39 @@ struct AIScreenFramesUITestRoot: View {
             model.installScreenFrameUITestWorkspace(workspace.path, accountID: "screen-frame-test-a")
             let original = try model.makeScreenFrameImportSnapshot()
             let context = try await AIMobileScreenFrameArchive.shared.prepareScreenArchiveUITest(
-                workspace: workspace, sessionID: original.ownerSessionID)
+                workspace: workspace, sessionID: original.ownerSessionID,
+                pixelSize: CGSize(width: UIScreen.main.bounds.width * UIScreen.main.scale,
+                                  height: UIScreen.main.bounds.height * UIScreen.main.scale))
             let listing = try await AIMobileScreenFrameArchive.shared.list(
                 workspace: workspace, sessionID: original.ownerSessionID, batchID: context.batchID)
             guard let first = listing.frames.first else { throw AIBackendError(message: "缺少采样图片") }
             let payload = ["workspace_path": workspace.path, "session_id": original.ownerSessionID,
                            "batch_id": context.batchID, "frame_id": first.id]
             let encoded = String(data: try JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
-            let exported = await AIMobileHostToolProvider.shared.execute(
-                name: "mobile_export_screen_frame", argumentsJSON: encoded)
-            guard exported.errorCode == nil, let data = exported.output?.data(using: .utf8),
+            let retained = await AIMobileHostToolProvider.shared.execute(
+                name: "mobile_retain_screen_frame", argumentsJSON: encoded)
+            guard retained.errorCode == nil, let data = retained.output?.data(using: .utf8),
                   let receipt = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let file = receipt["file_path"] as? String else {
-                throw AIBackendError(message: exported.errorMessage ?? "宿主未导出截图")
+                  let file = receipt["file_path"] as? String,
+                  let referenceID = receipt["reference_id"] as? String,
+                  receipt["path"] as? String == first.path,
+                  receipt["batch_id"] as? String == first.batchID,
+                  receipt["frame_id"] as? String == first.id else {
+                throw AIBackendError(message: retained.errorMessage ?? "宿主未保留原图引用")
             }
-            hostCopy = URL(fileURLWithPath: file)
+            let source = context.workspace.appendingPathComponent(first.path).standardizedFileURL
+            guard URL(fileURLWithPath: file).standardizedFileURL == source,
+                  first.path.hasPrefix(".maichat/screen-frame-archive/"),
+                  !first.path.hasPrefix("screenshots/") else {
+                throw AIBackendError(message: "宿主没有使用采样原图路径")
+            }
+            hostReference = AIMobileScreenArchiveReference(context: context, frame: first,
+                referenceID: referenceID, fileURL: source)
+            originalFrames = listing.frames.sorted { $0.elapsedMS < $1.elapsedMS }
             var foreign = payload
             foreign["session_id"] = original.ownerSessionID + ":another-owner"
             let rejected = await AIMobileHostToolProvider.shared.execute(
-                name: "mobile_export_screen_frame", argumentsJSON: String(data:
+                name: "mobile_retain_screen_frame", argumentsJSON: String(data:
                     try JSONSerialization.data(withJSONObject: foreign), encoding: .utf8)!)
             guard rejected.errorCode == "not_found" else {
                 throw AIBackendError(message: "宿主接受了其他会话的采样图片")
@@ -446,32 +480,82 @@ struct AIScreenFramesUITestRoot: View {
         } catch { result = "FAIL: " + error.localizedDescription }
     }
 
-    @MainActor private func verifyCopies() async {
+    @MainActor private func verifyReferences() async {
         guard let binding else { return }
         busy = true
         defer { busy = false }
         do {
-            let originals = try await AIMobileScreenFrameArchive.shared.list(
-                workspace: binding.context.workspace, sessionID: binding.context.ownerSessionID)
+            let archive = AIMobileScreenFrameArchive.shared
+            let originals = try await archive.list(workspace: binding.context.workspace,
+                                                   sessionID: binding.context.ownerSessionID)
+            let attachments = model.attachments(for: "switch-A")
             guard !originals.batches.contains(where: { $0.id == binding.id }),
-                  model.attachments(for: "switch-A").count == 2,
-                  model.attachments(for: "switch-B").isEmpty else {
-                throw AIBackendError(message: "清空档案或原会话附件数量不正确")
+                  attachments.count == 2, model.attachments(for: "switch-B").isEmpty,
+                  originalFrames.count >= 4, let hostReference else {
+                throw AIBackendError(message: "清理状态或原会话附件数量不正确")
             }
-            guard let hostCopy else { throw AIBackendError(message: "宿主未保留导出副本") }
-            let copies = model.attachments(for: "switch-A").map {
-                binding.context.workspace.appendingPathComponent($0.relativePath)
-            } + [hostCopy]
+            let references = attachments.compactMap(\.archiveReference)
+            guard references.count == 2,
+                  Set(references.map { $0.frame.id }) == Set(originalFrames.prefix(2).map(\.id)),
+                  references.allSatisfy({ $0.referenceID != hostReference.referenceID }),
+                  zip(attachments, references).allSatisfy({ file, reference in
+                      file.relativePath == reference.frame.path &&
+                          file.relativePath == reference.relativePath &&
+                          reference.fileURL == binding.context.workspace
+                              .appendingPathComponent(reference.frame.path).standardizedFileURL
+                  }) else { throw AIBackendError(message: "选图没有保留独立的原路径引用") }
+            let expectedFiles = Set(originalFrames.prefix(2).map(\.path))
+            let context = binding.context
+            let frames = originalFrames
             try await Task.detached(priority: .utility) {
-                for file in copies {
-                    let data = try Data(contentsOf: file)
-                    guard data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) else {
-                        throw AIBackendError(message: "清空档案删除了草稿副本")
+                let directory = context.workspace.appendingPathComponent("screenshots", isDirectory: true)
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+                guard !names.contains(where: { $0.lowercased().hasSuffix(".png") }) else {
+                    throw AIBackendError(message: "选图创建了重复PNG")
+                }
+                for frame in frames {
+                    let file = context.workspace.appendingPathComponent(frame.path)
+                    if expectedFiles.contains(frame.path) {
+                        let data = try Data(contentsOf: file)
+                        guard data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) else {
+                            throw AIBackendError(message: "被引用原图已损坏或被清理")
+                        }
+                    } else if FileManager.default.fileExists(atPath: file.path) {
+                        throw AIBackendError(message: "未选原图没有回收")
                     }
                 }
             }.value
-            result = "PASS: 原会话2张、其他会话0张、档案已清空且副本可读"
+
+            // Removing the draft token must not invalidate the independent
+            // host/history token for the very same original PNG.
+            guard let first = attachments.first(where: { $0.archiveReference?.frame.id == hostReference.frame.id }),
+                  let second = attachments.first(where: { $0.archiveReference?.frame.id != hostReference.frame.id }),
+                  let secondReference = second.archiveReference else {
+                throw AIBackendError(message: "缺少多引用测试图片")
+            }
+            model.removeAttachment(first, from: "switch-A")
+            _ = try await archive.get(context: hostReference.context, frameID: hostReference.frame.id)
+            model.removeAttachment(second, from: "switch-A")
+            try await waitForRemoval(secondReference.fileURL)
+            _ = try await archive.get(context: hostReference.context, frameID: hostReference.frame.id)
+            try await archive.releaseSession(workspace: binding.context.workspace, sessionID: "switch-A")
+            try await waitForRemoval(hostReference.fileURL)
+            result = "PASS: 原图无重复、独立引用安全、未选清理及会话回收通过"
         } catch { result = "FAIL: " + error.localizedDescription }
     }
+
+    private func waitForRemoval(_ file: URL) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while clock.now < deadline {
+            let exists = await Task.detached(priority: .utility) {
+                FileManager.default.fileExists(atPath: file.path)
+            }.value
+            if !exists { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw AIBackendError(message: "最后一个引用释放后原图未在3秒内回收")
+    }
+
 }
 #endif

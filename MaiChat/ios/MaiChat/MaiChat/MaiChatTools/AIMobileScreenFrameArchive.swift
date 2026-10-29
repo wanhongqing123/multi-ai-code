@@ -1,4 +1,4 @@
-// 文件作用：通过共享 C++ 核心保存、浏览和明确丢弃屏幕截图批次；会话附件使用独立副本。
+// 文件作用：通过共享 C++ 核心保存、浏览和清理屏幕截图批次；草稿与历史按引用持有同一张原图。
 import CoreImage
 import CoreVideo
 import Foundation
@@ -34,7 +34,7 @@ struct AIMobileScreenArchiveBatch: Decodable, Identifiable, Sendable {
     }
 }
 
-struct AIMobileScreenArchiveFrame: Decodable, Identifiable, Sendable {
+struct AIMobileScreenArchiveFrame: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let batchID: String
     let capturedAtMS: Int64
@@ -49,6 +49,26 @@ struct AIMobileScreenArchiveFrame: Decodable, Identifiable, Sendable {
         case sizeBytes = "size_bytes"
     }
 }
+
+struct AIMobileScreenArchiveReference: Equatable, Sendable {
+    let context: AIMobileScreenArchiveContext
+    let frame: AIMobileScreenArchiveFrame
+    let referenceID: String
+    let fileURL: URL
+    var relativePath: String { frame.path }
+}
+
+private struct AIMobileScreenArchiveRetainReply: Decodable {
+    let frame: AIMobileScreenArchiveFrame
+    let referenceID: String
+    enum CodingKeys: String, CodingKey { case referenceID = "reference_id" }
+    init(from decoder: Decoder) throws {
+        frame = try AIMobileScreenArchiveFrame(from: decoder)
+        referenceID = try decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .referenceID)
+    }
+}
+
+private struct AIMobileScreenArchiveAcknowledgement: Decodable, Sendable {}
 
 struct AIMobileScreenArchiveListing: Decodable, Sendable {
     let batches: [AIMobileScreenArchiveBatch]
@@ -137,33 +157,79 @@ final class AIMobileScreenFrameArchive: @unchecked Sendable {
         return try Self.checkedFrameURL(verified, context: context)
     }
 
-    func exportSelected(frameIDs: [String], context: AIMobileScreenArchiveContext) async throws -> [URL] {
+    func retainSelected(frameIDs: [String], context: AIMobileScreenArchiveContext,
+                        usageSessionID: String? = nil) async throws -> [AIMobileScreenArchiveReference] {
         let worker = Task.detached(priority: .utility) {
-            var copied: [URL] = []
+            var retained: [AIMobileScreenArchiveReference] = []
+            var attempted: [(frame: String, reference: String)] = []
             var visited = Set<String>()
             do {
                 for id in frameIDs where visited.insert(id).inserted {
                     try Task.checkCancellation()
-                    let frame: AIMobileScreenArchiveFrame = try self.requestBlocking(
+                    let reference = UUID().uuidString.lowercased()
+                    attempted.append((id, reference))
+                    var payload: [String: Any] = ["action": "retain", "batch_id": context.batchID,
+                                                  "frame_id": id, "reference_id": reference]
+                    if let usageSessionID { payload["usage_session_id"] = usageSessionID }
+                    let reply: AIMobileScreenArchiveRetainReply = try self.requestBlocking(
                         workspace: context.workspace, sessionID: context.ownerSessionID,
-                        payload: ["action": "get", "batch_id": context.batchID, "frame_id": id])
-                    let source = try Self.checkedFrameURL(frame, context: context)
-                    let png = try Data(contentsOf: source, options: .mappedIfSafe)
-                    let output = context.workspace.appendingPathComponent("screenshots", isDirectory: true)
-                        .appendingPathComponent("mobile_screen_" + UUID().uuidString + ".png")
-                    try Self.writeScreenshot(png, to: output, workspace: context.workspace)
-                    copied.append(output)
+                        payload: payload)
+                    guard reply.referenceID == reference, reply.frame.id == id else {
+                        throw AIMobileScreenArchiveError(code: "internal", message: "截图引用响应无效",
+                                                         terminal: false, limitReason: nil)
+                    }
+                    let source = try Self.checkedFrameURL(reply.frame, context: context)
+                    retained.append(AIMobileScreenArchiveReference(context: context, frame: reply.frame,
+                        referenceID: reference, fileURL: source))
                 }
                 try Task.checkCancellation()
-                return copied
+                return retained
             } catch {
-                for file in copied { try? FileManager.default.removeItem(at: file) }
+                for attempt in attempted {
+                    let _: AIMobileScreenArchiveAcknowledgement? = try? self.requestBlocking(
+                        workspace: context.workspace, sessionID: context.ownerSessionID,
+                        payload: ["action": "release", "batch_id": context.batchID,
+                                  "frame_id": attempt.frame, "reference_id": attempt.reference])
+                }
                 throw error
             }
         }
         return try await withTaskCancellationHandler {
             try await worker.value
         } onCancel: { worker.cancel() }
+    }
+
+    func release(references: [AIMobileScreenArchiveReference]) async throws {
+        // Cleanup must finish even if the importing task was canceled. Each
+        // token is idempotent and belongs only to this acquisition.
+        try await Task.detached(priority: .utility) {
+            var failure: Error?
+            for reference in references {
+                do {
+                    let _: AIMobileScreenArchiveAcknowledgement = try self.requestBlocking(
+                        workspace: reference.context.workspace,
+                        sessionID: reference.context.ownerSessionID,
+                        payload: ["action": "release", "batch_id": reference.context.batchID,
+                                  "frame_id": reference.frame.id, "reference_id": reference.referenceID])
+                } catch { failure = error }
+            }
+            if let failure { throw failure }
+        }.value
+    }
+
+    func assignSession(references: [AIMobileScreenArchiveReference], usageSessionID: String) async throws {
+        for reference in references {
+            let _: AIMobileScreenArchiveAcknowledgement = try await request(
+                workspace: reference.context.workspace, sessionID: reference.context.ownerSessionID,
+                payload: ["action": "assign_session", "batch_id": reference.context.batchID,
+                          "frame_id": reference.frame.id, "reference_id": reference.referenceID,
+                          "usage_session_id": usageSessionID])
+        }
+    }
+
+    func releaseSession(workspace: URL, sessionID: String) async throws {
+        let _: AIMobileScreenArchiveAcknowledgement = try await request(
+            workspace: workspace, sessionID: sessionID, payload: ["action": "release_session"])
     }
 
     func discard(context: AIMobileScreenArchiveContext) async throws {
@@ -489,7 +555,9 @@ private final class AIMobileScreenSamplerFixtureProbe: @unchecked Sendable {
 enum AIMobileScreenArchiveSimulatorFixture {
     // Uses the production sampler and ordinary C-backed archive APIs. Only the
     // source pixel buffer is safe generated content; timing and files are real.
-    static func prepare(workspace root: URL, sessionID: String) async throws -> AIMobileScreenArchiveContext {
+    static func prepare(workspace root: URL, sessionID: String,
+                        pixelSize: CGSize = CGSize(width: 320, height: 180)) async throws
+        -> AIMobileScreenArchiveContext {
         let archive = AIMobileScreenFrameArchive.shared
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let (context, _) = try await archive.begin(workspace: root, sessionID: sessionID)
@@ -516,26 +584,31 @@ enum AIMobileScreenArchiveSimulatorFixture {
             }
         }
         do {
-            var allocated: CVPixelBuffer?
-            let status = CVPixelBufferCreate(kCFAllocatorDefault, 320, 180,
-                kCVPixelFormatType_32BGRA, [kCVPixelBufferCGImageCompatibilityKey: true,
-                    kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary, &allocated)
-            try require(status == kCVReturnSuccess && allocated != nil, "pixel buffer allocation failed")
-            let pixels = allocated!
-            CVPixelBufferLockBaseAddress(pixels, [])
-            let memory = CVPixelBufferGetBaseAddress(pixels)!.assumingMemoryBound(to: UInt8.self)
-            let stride = CVPixelBufferGetBytesPerRow(pixels)
-            for y in 0..<180 {
-                for x in 0..<320 {
-                    let offset = y * stride + x * 4
-                    memory[offset] = x < 160 ? 35 : 240
-                    memory[offset + 1] = 80
-                    memory[offset + 2] = x < 160 ? 240 : 35
-                    memory[offset + 3] = 255
+            func makePixels(width: Int, height: Int) throws -> AIMobileScreenSamplerFixturePixels {
+                try require(width > 0 && height > 0 && width <= 4096 && height <= 4096,
+                            "fixture pixel size is out of bounds")
+                var allocated: CVPixelBuffer?
+                let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+                    kCVPixelFormatType_32BGRA, [kCVPixelBufferCGImageCompatibilityKey: true,
+                        kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary, &allocated)
+                try require(status == kCVReturnSuccess && allocated != nil, "pixel buffer allocation failed")
+                let pixels = allocated!
+                CVPixelBufferLockBaseAddress(pixels, [])
+                let memory = CVPixelBufferGetBaseAddress(pixels)!.assumingMemoryBound(to: UInt8.self)
+                let stride = CVPixelBufferGetBytesPerRow(pixels)
+                for y in 0..<height {
+                    for x in 0..<width {
+                        let offset = y * stride + x * 4
+                        memory[offset] = x < width / 2 ? 35 : 240
+                        memory[offset + 1] = 80
+                        memory[offset + 2] = x < width / 2 ? 240 : 35
+                        memory[offset + 3] = 255
+                    }
                 }
+                CVPixelBufferUnlockBaseAddress(pixels, [])
+                return AIMobileScreenSamplerFixturePixels(buffer: pixels)
             }
-            CVPixelBufferUnlockBaseAddress(pixels, [])
-            let immutablePixels = AIMobileScreenSamplerFixturePixels(buffer: pixels)
+            let immutablePixels = try makePixels(width: Int(pixelSize.width), height: Int(pixelSize.height))
             sampler.bind(context: context)
             sampler.setPhase(.active)
             sampler.start(context: context)
@@ -549,7 +622,10 @@ enum AIMobileScreenArchiveSimulatorFixture {
             try await Task.sleep(for: .milliseconds(2_200))
             try require(probe.count == activeCount, "old phase buffer was reused")
             sampler.setPhase(.background)
-            queue.async { sampler.accept(immutablePixels.buffer) }
+            // Keep a landscape source as well: full-viewport fitting must not
+            // stretch or crop media whose aspect ratio differs from the device.
+            let landscapePixels = try makePixels(width: 320, height: 180)
+            queue.async { sampler.accept(landscapePixels.buffer) }
             try await waitForFrames(activeCount + 2)
             let external = try sampler.latestExternal()
             try require(!external.0.isEmpty, "independent background frame cache was not updated")
@@ -563,9 +639,19 @@ enum AIMobileScreenArchiveSimulatorFixture {
                             "archive minimum interval was violated")
             }
             let first = listing.frames[0]
-            let exported = try await archive.exportSelected(frameIDs: [first.id], context: context)
-            try require(exported.count == 1 && FileManager.default.fileExists(atPath: exported[0].path) &&
-                        !exported[0].path.contains("screen-frame-archive"), "selected frame was not copied")
+            let references = try await archive.retainSelected(frameIDs: [first.id], context: context)
+            do {
+                let expected = root.standardizedFileURL.resolvingSymlinksInPath()
+                    .appendingPathComponent(first.path)
+                try require(references.count == 1 && references[0].relativePath == first.path &&
+                            references[0].fileURL == expected &&
+                            FileManager.default.fileExists(atPath: expected.path),
+                            "selected frame did not retain its original path")
+                try await archive.release(references: references)
+            } catch {
+                try? await archive.release(references: references)
+                throw error
+            }
             let foreign = AIMobileScreenArchiveContext(workspace: root,
                 ownerSessionID: sessionID + ":another-owner", batchID: context.batchID)
             do {
@@ -583,9 +669,11 @@ enum AIMobileScreenArchiveSimulatorFixture {
 }
 
 extension AIMobileScreenFrameArchive {
-    func prepareScreenArchiveUITest(workspace: URL, sessionID: String) async throws
+    func prepareScreenArchiveUITest(workspace: URL, sessionID: String,
+                                   pixelSize: CGSize = CGSize(width: 320, height: 180)) async throws
         -> AIMobileScreenArchiveContext {
-        try await AIMobileScreenArchiveSimulatorFixture.prepare(workspace: workspace, sessionID: sessionID)
+        try await AIMobileScreenArchiveSimulatorFixture.prepare(workspace: workspace,
+            sessionID: sessionID, pixelSize: pixelSize)
     }
 }
 #endif

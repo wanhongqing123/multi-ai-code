@@ -473,7 +473,9 @@ Json batchPublic(const Json& manifest) {
         {"started_at_ms", manifest["started_at_ms"]}, {"finished_at_ms", manifest["finished_at_ms"]},
         {"finish_reason", manifest["finish_reason"]}};
 }
-Json framePublic(Json frame) { frame.erase("sha256"); frame.erase("saved_at_ms"); return frame; }
+Json framePublic(Json frame) {
+    frame.erase("sha256"); frame.erase("saved_at_ms"); frame.erase("references"); return frame;
+}
 struct Archive {
     std::string root;
     std::string owner;
@@ -505,14 +507,15 @@ struct Archive {
         if (!info(folder).exists) throw Failure("not_found", "screen frame batch was not found in this session");
         if (!info(folder).directory) invalid("archive batch is not a directory");
         const std::string bytes = readFile(join(folder, "manifest.json"), kMaxManifest);
-        const Json value = Json::parse(bytes, nullptr, false);
+        Json value = Json::parse(bytes, nullptr, false);
         if (!value.is_object() || value.value("version", 0) != 1 || value.value("id", "") != id ||
             value.value("owner_session_id", "") != owner ||
             value.value("workspace_key", "") != hash(root.data(), root.size()) ||
             !value.contains("frames") || !value["frames"].is_array() || value["frames"].size() > 300)
             invalid("archive manifest ownership or structure is invalid");
         const std::string status = value.value("status", "");
-        if (status != "recording" && status != "stopped") invalid("archive batch state is invalid");
+        if (status != "recording" && status != "stopped" && status != "retained")
+            invalid("archive batch state is invalid");
         integer(value, "started_at_ms", 1, 9'007'199'254'740'991LL);
         if (!value.contains("finished_at_ms") || !value.contains("finish_reason")) invalid("archive batch metadata is missing");
         if (status == "recording") {
@@ -524,7 +527,8 @@ struct Archive {
         uint64_t total = 0;
         int64_t elapsed = -kInterval;
         std::vector<std::string> ids;
-        for (const auto& frame : value["frames"]) {
+        size_t referenceCount = 0;
+        for (auto& frame : value["frames"]) {
             const std::string frameID = text(frame, "id");
             if (!idValid(frameID, "frame_") || text(frame, "batch_id") != id ||
                 text(frame, "path") != frameRelative(id, frameID) ||
@@ -546,6 +550,19 @@ struct Archive {
             const auto sha = text(frame, "sha256");
             if (sha.size() != 64 || !std::all_of(sha.begin(), sha.end(), [](char c) {
                 return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) invalid("frame digest is invalid");
+            if (!frame.contains("references")) frame["references"] = Json::array();
+            if (!frame["references"].is_array()) invalid("frame references must be an array");
+            referenceCount += frame["references"].size();
+            if (referenceCount > 4096) invalid("archive has too many references");
+            std::vector<std::string> references;
+            for (const auto& reference : frame["references"]) {
+                fields(reference, {"id", "usage_session_id"});
+                const std::string token = text(reference, "id");
+                if (!textValid(token, 128) || !textValid(text(reference, "usage_session_id"), 512) ||
+                    std::find(references.begin(), references.end(), token) != references.end())
+                    invalid("frame reference identity is invalid");
+                references.push_back(token);
+            }
         }
         if (total > kBatchBytes || integer(value, "total_bytes", 0, kBatchBytes) != int64_t(total))
             invalid("archive batch byte count is invalid");
@@ -580,18 +597,113 @@ struct Archive {
     void save(const std::string& id, const Json& value) const {
         const std::string bytes = value.dump();
         if (bytes.size() > kMaxManifest) invalid("archive manifest is too large");
-        atomicWrite(join(batchPath(id), "manifest.json"), bytes.data(), bytes.size(), true);
+        const std::string path = join(batchPath(id), "manifest.json");
+        int64_t previousBytes = 0;
+        if (info(path).exists) {
+            const std::string previous = readFile(path, kMaxManifest);
+            previousBytes = int64_t(previous.size());
+            const Json parsed = Json::parse(previous, nullptr, false);
+            if (parsed.is_object() && parsed.value("status", "") == "recording")
+                previousBytes += kManifestReserve;
+        }
+        const int64_t nextBytes = int64_t(bytes.size()) +
+            (value["status"] == "recording" ? int64_t(kManifestReserve) : 0);
+        if (nextBytes > previousBytes &&
+            archiveBytesExceeded(uint64_t(nextBytes - previousBytes))) limit("workspace_bytes");
+        atomicWrite(path, bytes.data(), bytes.size(), true);
+    }
+    bool archiveBytesExceeded(uint64_t additional) const {
+        const uint64_t used = occupied(base);
+        return used > kWorkspaceBytes || additional > kWorkspaceBytes - used;
     }
 };
+Json checkedFrame(const Archive& archive, const Json& frame) {
+    const std::string bytes = readFile(join(archive.root, text(frame, "path")), kMaxPngBytes);
+    if (bytes.size() != uint64_t(frame["size_bytes"]) || hash(bytes.data(), bytes.size()) != frame["sha256"])
+        invalid("archived PNG content no longer matches its manifest");
+    const auto size = validatePNG(bytes.data(), bytes.size());
+    if (size.width != uint64_t(frame["width"]) || size.height != uint64_t(frame["height"]))
+        invalid("archived PNG dimensions no longer match metadata");
+    return framePublic(frame);
+}
+struct Removal { size_t frames = 0; size_t batches = 0; };
+Removal saveReferences(const Archive& archive, Json& manifest) {
+    const std::string id = manifest["id"];
+    Removal removed;
+    if (manifest["status"] != "retained") {
+        archive.save(id, manifest);
+        return removed;
+    }
+    Json retained = Json::array();
+    uint64_t total = 0;
+    for (const auto& frame : manifest["frames"]) {
+        if (frame["references"].empty()) { ++removed.frames; continue; }
+        retained.push_back(frame); total += uint64_t(frame["size_bytes"]);
+    }
+    if (retained.empty()) {
+        eraseTree(archive.batchPath(id)); removed.batches = 1; return removed;
+    }
+    manifest["frames"] = std::move(retained); manifest["total_bytes"] = total;
+    // Publish the protected set before unlinking anything. A crash can leave
+    // unreferenced files, but never remove a PNG still named by a reference.
+    archive.save(id, manifest);
+    for (const auto& name : children(archive.batchPath(id))) {
+        if (name.size() <= 4 || name.substr(name.size() - 4) != ".png" ||
+            !idValid(name.substr(0, name.size() - 4), "frame_")) continue;
+        bool protectedFile = false;
+        for (const auto& frame : manifest["frames"])
+            if (name == frame["id"].get<std::string>() + ".png") protectedFile = true;
+        if (!protectedFile) eraseFile(join(archive.batchPath(id), name));
+    }
+    return removed;
+}
+Json releaseSession(const Archive& archive) {
+    size_t references = 0, frames = 0, batches = 0;
+    for (const auto& ownerDirectory : children(archive.base)) {
+        if (ownerDirectory.size() != 70 || ownerDirectory.rfind("owner_", 0) != 0 ||
+            !std::all_of(ownerDirectory.begin() + 6, ownerDirectory.end(), [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) continue;
+        const std::string path = join(archive.base, ownerDirectory);
+        if (!info(path).directory) invalid("archive owner directory is invalid");
+        for (const auto& id : children(path)) {
+            if (!idValid(id, "batch_")) continue;
+            const Json header = Json::parse(readFile(join(join(path, id), "manifest.json"), kMaxManifest), nullptr, false);
+            const std::string owner = text(header, "owner_session_id");
+            if (!textValid(owner, 512) || "owner_" + hash(owner.data(), owner.size()) != ownerDirectory)
+                invalid("archive owner directory does not match its manifest");
+            Archive scoped(archive.root.c_str(), owner.c_str());
+            Json manifest = scoped.load(id, false);
+            bool changed = false;
+            for (auto& frame : manifest["frames"]) {
+                auto& refs = frame["references"];
+                for (auto ref = refs.begin(); ref != refs.end();) {
+                    if ((*ref)["usage_session_id"] == archive.owner) {
+                        ref = refs.erase(ref); ++references; changed = true;
+                    } else ++ref;
+                }
+            }
+            if (changed) {
+                const auto removed = saveReferences(scoped, manifest);
+                frames += removed.frames; batches += removed.batches;
+            }
+        }
+    }
+    return {{"released_references", references}, {"removed_frames", frames}, {"removed_batches", batches}};
+}
 Json perform(const char* workspace, const char* owner, const Json& request,
              const void* png, size_t pngSize) {
     const std::string action = text(request, "action");
     if (action != "begin" && action != "append" && action != "finish" &&
-        action != "list" && action != "get" && action != "discard")
+        action != "list" && action != "get" && action != "discard" &&
+        action != "retain" && action != "release" && action != "assign_session" &&
+        action != "release_session")
         invalid("unknown screen archive action");
     if (action != "append" && (png || pngSize)) invalid("PNG bytes are accepted only by append");
     Archive archive(workspace, owner);
     WorkspaceLock workspaceLock(archive.base);
+    if (action == "release_session") {
+        fields(request, {"action"}); return releaseSession(archive);
+    }
     if (action == "begin") {
         fields(request, {"action"});
         const std::string id = newID("batch_");
@@ -621,13 +733,23 @@ Json perform(const char* workspace, const char* owner, const Json& request,
             return a["id"] < b["id"];
         });
         for (const auto& manifest : manifests) {
+            if (manifest["status"] == "retained") continue;
             batches.push_back(batchPublic(manifest));
             for (const auto& frame : manifest["frames"]) frames.push_back(framePublic(frame));
         }
         return {{"batches", batches}, {"frames", frames}};
     }
     const std::string id = text(request, "batch_id");
-    Json manifest = archive.load(id, action != "discard");
+    if (action == "release") fields(request, {"action", "batch_id", "frame_id", "reference_id"});
+    Json manifest;
+    try { manifest = archive.load(id, action != "discard" && action != "release" && action != "assign_session"); }
+    catch (const Failure& failure) {
+        if (action != "release" || failure.code != "not_found") throw;
+        const std::string frameID = text(request, "frame_id"), token = text(request, "reference_id");
+        if (!idValid(frameID, "frame_") || !textValid(token, 128)) invalid("frame reference identity is invalid");
+        return {{"batch_id", id}, {"frame_id", frameID}, {"reference_id", token},
+            {"released", false}, {"removed_frames", 0}, {"removed_batches", 0}};
+    }
     if (action == "append") {
         fields(request, {"action", "batch_id", "width", "height", "captured_at_ms", "elapsed_ms"});
         if (manifest["status"] != "recording") invalid("cannot append to a stopped screen batch");
@@ -654,7 +776,8 @@ Json perform(const char* workspace, const char* owner, const Json& request,
         const std::string relative = archive.frameRelative(id, frameID);
         Json frame{{"id", frameID}, {"batch_id", id}, {"captured_at_ms", captured},
             {"elapsed_ms", elapsed}, {"saved_at_ms", saved}, {"size_bytes", pngSize},
-            {"width", width}, {"height", height}, {"path", relative}, {"sha256", hash(png, pngSize)}};
+            {"width", width}, {"height", height}, {"path", relative}, {"sha256", hash(png, pngSize)},
+            {"references", Json::array()}};
         const size_t oldManifestSize = manifest.dump().size();
         frames.push_back(frame);
         manifest["total_bytes"] = uint64_t(manifest["total_bytes"]) + pngSize;
@@ -690,21 +813,66 @@ Json perform(const char* workspace, const char* owner, const Json& request,
         if (!idValid(frameID, "frame_")) invalid("frame_id is invalid");
         for (const auto& frame : manifest["frames"]) {
             if (frame["id"] != frameID) continue;
-            const std::string bytes = readFile(join(archive.root, text(frame, "path")), kMaxPngBytes);
-            if (bytes.size() != uint64_t(frame["size_bytes"]) || hash(bytes.data(), bytes.size()) != frame["sha256"])
-                invalid("archived PNG content no longer matches its manifest");
-            const auto size = validatePNG(bytes.data(), bytes.size());
-            if (size.width != uint64_t(frame["width"]) || size.height != uint64_t(frame["height"]))
-                invalid("archived PNG dimensions no longer match metadata");
-            return framePublic(frame);
+            return checkedFrame(archive, frame);
+        }
+        throw Failure("not_found", "screen frame was not found in this session batch");
+    }
+    if (action == "retain" || action == "release" || action == "assign_session") {
+        if (action == "retain" || action == "assign_session")
+            fields(request, {"action", "batch_id", "frame_id", "reference_id", "usage_session_id"});
+        const std::string frameID = text(request, "frame_id"), token = text(request, "reference_id");
+        if (!idValid(frameID, "frame_") || !textValid(token, 128)) invalid("frame reference identity is invalid");
+        const std::string usage = action == "release" ? std::string() :
+            request.contains("usage_session_id") ? text(request, "usage_session_id") :
+            action == "retain" ? archive.owner : std::string();
+        if (action != "release" && !textValid(usage, 512)) invalid("usage_session_id must be bounded UTF-8");
+        for (auto& frame : manifest["frames"]) {
+            if (frame["id"] != frameID) continue;
+            auto& refs = frame["references"];
+            auto found = std::find_if(refs.begin(), refs.end(), [&](const Json& ref) { return ref["id"] == token; });
+            if (action == "retain") {
+                Json output = checkedFrame(archive, frame);
+                if (found != refs.end() && (*found)["usage_session_id"] != usage)
+                    invalid("reference token already belongs to another usage session");
+                if (found == refs.end()) {
+                    size_t total = 0;
+                    for (const auto& item : manifest["frames"]) total += item["references"].size();
+                    if (total >= 4096) throw Failure("limit", "screen archive reference limit reached",
+                        {{"terminal", false}, {"limit_reason", "reference_tokens"}});
+                    refs.push_back({{"id", token}, {"usage_session_id", usage}}); archive.save(id, manifest);
+                }
+                output["reference_id"] = token; output["retained"] = true; return output;
+            }
+            if (action == "assign_session") {
+                if (found == refs.end()) throw Failure("not_found", "screen frame reference was not found");
+                const bool changed = (*found)["usage_session_id"] != usage;
+                if (changed) { (*found)["usage_session_id"] = usage; archive.save(id, manifest); }
+                return {{"batch_id", id}, {"frame_id", frameID}, {"reference_id", token}, {"updated", changed}};
+            }
+            const bool released = found != refs.end();
+            if (released) refs.erase(found);
+            const auto removed = released || manifest["status"] == "retained" ?
+                saveReferences(archive, manifest) : Removal{};
+            return {{"batch_id", id}, {"frame_id", frameID}, {"reference_id", token},
+                {"released", released}, {"removed_frames", removed.frames}, {"removed_batches", removed.batches}};
+        }
+        if (action == "release") {
+            const auto removed = manifest["status"] == "retained" ?
+                saveReferences(archive, manifest) : Removal{};
+            return {{"batch_id", id}, {"frame_id", frameID}, {"reference_id", token},
+                {"released", false}, {"removed_frames", removed.frames}, {"removed_batches", removed.batches}};
         }
         throw Failure("not_found", "screen frame was not found in this session batch");
     }
     if (action == "discard") {
         fields(request, {"action", "batch_id"});
-        const size_t count = manifest["frames"].size();
-        eraseTree(archive.batchPath(id));
-        return {{"batch_id", id}, {"discarded", true}, {"removed_frames", count}};
+        manifest["status"] = "retained";
+        if (manifest["finished_at_ms"].is_null()) {
+            manifest["finished_at_ms"] = nowMs(); manifest["finish_reason"] = "discarded";
+        }
+        const auto removed = saveReferences(archive, manifest);
+        return {{"batch_id", id}, {"discarded", true}, {"removed_frames", removed.frames},
+            {"retained_frames", removed.batches ? size_t(0) : manifest["frames"].size()}};
     }
     invalid("unknown screen archive action");
 }

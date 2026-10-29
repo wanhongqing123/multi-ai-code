@@ -178,7 +178,8 @@ public:
                "After sharing stops, list the batch and ask which numbered/timestamped images the "
                "user needs. Listing returns metadata without sending all images to the model. "
                "Open only the requested frame with batch_id and frame_id from that list. "
-               "delete_batch permanently clears only a stopped batch when the user requests cleanup. "
+               "delete_batch clears a stopped batch when the user requests cleanup; images still "
+               "referenced by drafts or messages keep their original file. "
                "This tool does not start or restart sharing, and stopped batches remain available.";
     }
     std::string parametersSchema() const override {
@@ -218,8 +219,10 @@ public:
             if (checked.hasError()) return checked;
             const Json listing = Json::parse(checked.output(), nullptr, false);
             if (!listing.is_object() || !listing.contains("batches") ||
-                !listing["batches"].is_array() || listing["batches"].size() != 1)
+                !listing["batches"].is_array())
                 return MaiToolResult::failure(MaiErrorCode::Protocol, "screen frame batch is missing");
+            if (listing["batches"].empty())
+                return MaiToolResult::failure(MaiErrorCode::NotFound, "screen frame batch was already cleared");
             if (listing["batches"][0].value("status", "") == "recording")
                 return MaiToolResult::failure(MaiErrorCode::Busy,
                                               "stop screen sharing before deleting its batch");
@@ -230,42 +233,51 @@ public:
         const Json frame = Json::parse(result.output(), nullptr, false);
         if (!frame.is_object() || !frame.contains("path") || !frame["path"].is_string())
             return MaiToolResult::failure(MaiErrorCode::Protocol, "screen frame path is missing");
-        // The ordinary iOS exporter owns copy/backup handling. A tool result
-        // must survive a later deletion of the temporary capture batch.
-        const MaiToolResult exported = callMaiMobileHostTool(mDispatcher, "mobile_export_screen_frame",
+        // UI and tools retain an independent reference to the same original.
+        // Releasing a canceled result must never delete another holder's file.
+        const MaiToolResult retained = callMaiMobileHostTool(mDispatcher, "mobile_retain_screen_frame",
             Json{{"workspace_path", context.root}, {"session_id", context.sessionId},
                  {"batch_id", args["batch_id"]}, {"frame_id", args["frame_id"]}}.dump());
-        if (exported.hasError()) return exported;
-        const Json saved = Json::parse(exported.output(), nullptr, false);
-        if (!saved.is_object() || !saved.contains("file_path") || !saved["file_path"].is_string())
-            return MaiToolResult::failure(MaiErrorCode::Protocol, "exported screen frame path is missing");
+        if (retained.hasError()) return retained;
+        const Json saved = Json::parse(retained.output(), nullptr, false);
+        if (!saved.is_object() || !saved.contains("reference_id") || !saved["reference_id"].is_string() ||
+            saved["reference_id"].get_ref<const std::string&>().empty())
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "screen frame reference is missing");
+        const auto release = [&] {
+            const Json request{{"action", "release"}, {"batch_id", args["batch_id"]},
+                {"frame_id", args["frame_id"]}, {"reference_id", saved["reference_id"]}};
+            char* reply = mai_screen_frame_archive_request(context.root.c_str(), context.sessionId.c_str(),
+                request.dump().c_str(), nullptr, 0);
+            if (reply) mai_screen_frame_archive_free(reply);
+        };
+        if (!saved.contains("file_path") || !saved["file_path"].is_string()) {
+            release();
+            return MaiToolResult::failure(MaiErrorCode::Protocol, "retained screen frame path is missing");
+        }
         const std::string path = maiResolvePathWithinRoot(context.root, saved["file_path"].get<std::string>());
-        if (path.empty())
+        const std::string original = maiResolvePathWithinRoot(context.root, frame["path"].get<std::string>());
+        if (path.empty() || path != original) {
+            release();
             return MaiToolResult::failure(MaiErrorCode::InvalidInput, "screen frame is outside this workspace");
+        }
         const MaiFilePath file = MaiFilePath::fromUtf8(path);
-        const MaiFilePath directory = MaiFileSystem::resolve(
-            MaiFilePath::fromUtf8(context.root).append(MaiFilePath::fromUtf8("screenshots")));
-        const std::string filename = file.baseName().toUtf8();
-        if (file.dirName() != directory || filename.rfind("mobile_screen_", 0) != 0 ||
-            filename.size() < 4 || filename.substr(filename.size() - 4) != ".png")
-            return MaiToolResult::failure(MaiErrorCode::Protocol, "exported frame is outside the screenshot area");
         std::uint64_t size = 0;
         std::string header;
         bool clipped = false;
         const MaiError read = MaiFileSystem::readFile(file, header, 8, &clipped);
         if (!MaiFileSystem::fileSize(file, size) || size == 0 || size > 20 * 1024 * 1024 ||
             read.hasError() || header.compare(0, 8, "\x89PNG\r\n\x1a\n", 8) != 0) {
-            MaiFileSystem::removeFile(file);
+            release();
             return MaiToolResult::failure(MaiErrorCode::Protocol, "saved screen frame is not a bounded PNG");
         }
         if (context.isCanceled()) {
-            MaiFileSystem::removeFile(file);
+            release();
             return MaiToolResult::failure(MaiErrorCode::Canceled, "screen frame request was canceled");
         }
         Json output = frame;
-        output["path"] = "screenshots/" + filename;
-        output["file_path"] = path;
-        return MaiToolResult::successWithImages(output.dump(), {MaiToolImage{path, "image/png"}});
+        const std::string relative = frame["path"].get<std::string>();
+        output["file_path"] = relative;
+        return MaiToolResult::successWithImages(output.dump(), {MaiToolImage{relative, "image/png"}});
     }
 private:
     std::shared_ptr<MaiMobileHostDispatcher> mDispatcher;

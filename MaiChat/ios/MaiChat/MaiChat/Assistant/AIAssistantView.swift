@@ -2962,7 +2962,7 @@ private struct AIComposer: View, Equatable {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(alignment: .top, spacing: 10) {
                                 ForEach(Array(snapshot.attachments.enumerated()),
-                                        id: \.element.relativePath) { entry in
+                                        id: \.element.attachmentIdentity) { entry in
                                     let file = entry.element
                                     AIDraftAttachmentTile(
                                         file: file,

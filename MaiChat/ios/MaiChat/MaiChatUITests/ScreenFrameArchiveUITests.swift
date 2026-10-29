@@ -2,7 +2,7 @@ import XCTest
 
 final class ScreenFrameArchiveUITests: XCTestCase {
     @MainActor
-    func testRealSamplerSelectionStaysOnOriginalDraftAndDiscardKeepsCopies() throws {
+    func testRealSamplerSelectionUsesOriginalFramesAndCleanupKeepsReferences() throws {
         #if targetEnvironment(simulator)
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -21,12 +21,37 @@ final class ScreenFrameArchiveUITests: XCTestCase {
         app.buttons["ai-screen-frame-preview-0"].tap()
         XCTAssertTrue(app.images["ai-screen-frame-large-image"].waitForExistence(timeout: 15),
                       "大图必须经过真实PNG验证和解码")
+        let screen = app.frame
+        let portrait = app.images["ai-screen-frame-large-image"].frame
+        XCTAssertEqual(portrait.minX, screen.minX, accuracy: 1.5)
+        XCTAssertEqual(portrait.maxX, screen.maxX, accuracy: 1.5)
+        XCTAssertEqual(portrait.minY, screen.minY, accuracy: 1.5)
+        XCTAssertEqual(portrait.maxY, screen.maxY, accuracy: 1.5,
+                       "屏幕同纵横比截图应适配完整viewport，不缩进safeArea形成四边黑框")
+        XCTAssertFalse(app.statusBars.firstMatch.exists, "原图已有状态栏，预览不应叠加第二个系统状态栏")
+        XCTAssertTrue(app.buttons["ai-screen-frame-large-close"].isHittable)
         let fullImage = XCTAttachment(screenshot: app.screenshot())
         fullImage.name = "screen-archive-decoded-preview"
         fullImage.lifetime = .keepAlways
         add(fullImage)
         app.buttons["ai-screen-frame-large-close"].tap()
+        app.buttons["ai-screen-frame-preview-2"].tap()
+        XCTAssertTrue(app.images["ai-screen-frame-large-image"].waitForExistence(timeout: 15))
+        let landscape = app.images["ai-screen-frame-large-image"].frame
+        XCTAssertEqual(landscape.width, screen.width, accuracy: 1.5)
+        XCTAssertEqual(landscape.width / landscape.height, 320.0 / 180.0, accuracy: 0.02,
+                       "横图保留完整比例，不能裁图或拉伸以填满竖屏")
+        let landscapeImage = XCTAttachment(screenshot: app.screenshot())
+        landscapeImage.name = "screen-archive-landscape-fit-preview"
+        landscapeImage.lifetime = .keepAlways
+        add(landscapeImage)
+        app.buttons["ai-screen-frame-large-close"].tap()
         app.buttons["ai-screen-frame-select-0"].tap()
+        app.buttons["ai-screen-frames-actions"].tap()
+        XCTAssertTrue(app.buttons["清理未选图片"].exists)
+        XCTAssertFalse(app.buttons["清理未选图片"].isEnabled,
+                       "尚未加入草稿的勾选图片不能被清理操作悄悄删除")
+        app.staticTexts["ai-screen-frames-summary"].tap()
         app.buttons["ai-screen-frames-close"].tap()
         XCTAssertTrue(app.buttons["screen-frames-fixture-open-from-b"].waitForExistence(timeout: 10))
 
@@ -46,10 +71,10 @@ final class ScreenFrameArchiveUITests: XCTestCase {
         app.buttons["screen-frames-fixture-open"].tap()
         XCTAssertTrue(app.buttons["ai-screen-frames-actions"].waitForExistence(timeout: 10))
         app.buttons["ai-screen-frames-actions"].tap()
-        app.buttons["清空本批"].tap()
+        app.buttons["清理未选图片"].tap()
         XCTAssertTrue(app.buttons["screen-frames-fixture-verify"].waitForExistence(timeout: 10))
         app.buttons["screen-frames-fixture-verify"].tap()
-        XCTAssertTrue(app.staticTexts["PASS: 原会话2张、其他会话0张、档案已清空且副本可读"]
+        XCTAssertTrue(app.staticTexts["PASS: 原图无重复、独立引用安全、未选清理及会话回收通过"]
             .waitForExistence(timeout: 15))
         #else
         throw XCTSkip("仅使用隔离模拟器和生成的安全画面，不操作真机")

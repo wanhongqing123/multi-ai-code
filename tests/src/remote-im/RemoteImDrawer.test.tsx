@@ -123,7 +123,9 @@ describe('RemoteImDrawer', () => {
     }
     const markup = renderDrawer({ messages: [failed], selectedPeerUserId: 'phone_admin' })
     expect(markup).toContain('重新下载图片')
-    const otherProject = renderDrawer({ messages: [{ ...failed, projectId: 'other' }], selectedPeerUserId: 'phone_admin' })
+    const otherProject = renderDrawer({
+      messages: [{ ...failed, projectId: 'other' }], selectedPeerUserId: 'phone_admin'
+    })
     expect(otherProject).not.toContain('重新下载图片')
   })
   it('moves a selected conversation scroll container to its latest message', () => {

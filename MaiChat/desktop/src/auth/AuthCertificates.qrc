@@ -1,5 +1,0 @@
-<RCC>
-  <qresource prefix="/maichat/auth">
-    <file alias="cacert.pem">../../../../MaiAgent/certs/cacert.pem</file>
-  </qresource>
-</RCC>

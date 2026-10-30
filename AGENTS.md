@@ -1,39 +1,22 @@
 # multi-ai-code
 
-这个仓库里有好几个独立的子项目，**各自有各自的规矩**。先认准你在哪个
-目录下干活，再去读那个目录的约定。
+本仓库维护 Multi-AI Code 的 Electron 应用与远程 IM 能力。MaiChat 客户端、
+MaiAgent 核心及其服务已迁至 [MaiChat 仓库](https://github.com/wanhongqing123/MaiChat)。
 
 | 目录 | 是什么 | 约定在哪 |
 |---|---|---|
-| `MaiAgent/` | agent 核心，纯 C++，可移植的库 | **`MaiAgent/CLAUDE.md`** → `MaiAgent/docs/CodingStyle.md` |
-| `MaiChat/` | iOS、Android 与 Qt 桌面端产品 | **`MaiChat/AGENTS.md`**；桌面代码风格照 `MaiChat/desktop/src` |
-| `electron/` | 主仓库的 Electron 外壳（TS） | 无独立约定文件 |
-| `third_party/aicli/codex/` | codex 源码，**只读参考**，不要改 | 上游的 |
+| `electron/` | Electron 主进程与原生能力（TS） | 遵循本文件及现有代码风格 |
+| `src/` | Electron 界面与客户端逻辑（TS） | 遵循本文件及现有代码风格 |
+| `third_party/aicli/codex/` | 定制 Codex 子模块 | 子模块自身规范与提交历史 |
 
-## 动 MaiAgent 的代码
+## 参照系与互操作
 
-那边的编码规范是硬约束，而且每条背后都有一次真实的代价：
+- Agent 协议与词汇参考 `third_party/aicli/codex/codex-rs`；通用基础组件可参考 Chromium `base`。
+- 远程 IM、远程桌面和控制命令需要与 MaiChat 互操作。修改协议、凭据或消息格式时，
+  核对 [MaiChat 仓库](https://github.com/wanhongqing123/MaiChat) 中的对应实现及兼容性，
+  不因仓库拆分改变已部署客户端之间的协议。
 
-**[`MaiAgent/docs/CodingStyle.md`](MaiAgent/docs/CodingStyle.md)**
-
-开头有一张 22 条的速查表。最容易想当然做错的是这两条：代码里除注释外
-不出现中文；碰文件不要用 `std::filesystem`。
-
-## 参照系
-
-写代码拿不准的时候去看，不要自己发挥：
-
-- **agent 的形状、协议取值、词汇** → `third_party/aicli/codex/codex-rs`
-- **通用基础组件**（路径、文件、线程、字符串、容器） →
-  `E:\OpenSource\chromium\src\base`
-- **图像、视频渲染与 effect** → 本地 `obs-studio` 的 `libobs` 实现；
-  先读 [`MaiAgent/Graphics/README.md`](MaiAgent/Graphics/README.md) 和
-  [`MaiAgent/Graphics/UPSTREAM.md`](MaiAgent/Graphics/UPSTREAM.md)。
-
-理由见 `MaiAgent/docs/CodingStyle.md` 的第 0 和 0.5 节——那里记了两次
-"自己想当然、结果是错的"的具体经过。
-
-## 交付与排障（跨子项目）
+## 交付与排障
 
 - **执行者自己验收。** 动手前把用户描述写成可复现操作和预期结果；交付前在目标平台、
   实际要运行的构建上亲自走通，并检查相关旧功能。核对源码提交、产物和运行进程的
@@ -59,10 +42,6 @@
 - **每次写代码都同步维护注释。** 新增或修改代码时，写清作用、设计原因、关键约束和边界；
   调整行为时同步更新相关旧注释，提交前检查注释与实现一致。复杂或容易误用的分支必须说明，
   不用逐行复述语法代替解释。注释语言和格式遵守对应子项目规范。
-- **MaiChat 不建设模型代理服务器。** 主聊天与媒体模型请求由客户端直接访问供应商；
-  服务端只做账号鉴权、API Key 或临时凭据下发等控制面工作，不转发模型请求、
-  流式响应或媒体字节。用户已明确多次否定模型代理；密钥保护按用户后续确定的
-  方案处理，不得自行以安全或统一接入为由改成代理架构。
 - 独立功能必须同时提供普通代码调用入口和大模型工具调用入口；两种入口复用同一份
   核心实现。界面、IM、后台任务等非大模型模块不得被迫通过工具协议调用功能。
 - 直接在 `main` 上开发，不要自作主张新建分支。
@@ -71,4 +50,4 @@
 ---
 
 > `CLAUDE.md` 和这个文件内容一致，是给认那个名字的工具看的。
-> 两份内容保持一致：除子项目约定的路由外，也包含上述跨项目执行要求。
+> 两份内容保持一致，并包含上述交付与排障要求。

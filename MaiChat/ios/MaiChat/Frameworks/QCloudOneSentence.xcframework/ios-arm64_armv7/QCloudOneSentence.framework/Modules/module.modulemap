@@ -1,6 +1,0 @@
-framework module QCloudOneSentence {
-  header "QCloudSentenceRecognizeParams.h"
-  header "QCloudSentenceRecognizer.h"
-  header "sdk_version.h"
-  export *
-}

@@ -3,14 +3,13 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Upload macOS release artifacts to GitHub Releases.
+Upload Multi-AI Code macOS release artifacts to GitHub Releases.
 
 Usage:
   scripts/upload-macos-releases.sh [--date YYYYMMDD] [--dry-run]
 
 Environment:
   ELECTRON_RELEASE_TAG  Override Electron release tag. Defaults to electron-<date>.
-  QT_IM_RELEASE_TAG     Override Qt IM release tag. Defaults to qt-im-<date>.
 
 Options:
   --date YYYYMMDD       Release date suffix. Defaults to today.
@@ -53,7 +52,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 electron_tag="${ELECTRON_RELEASE_TAG:-electron-$release_date}"
-qt_im_tag="${QT_IM_RELEASE_TAG:-qt-im-$release_date}"
 
 latest_file() {
   local pattern="$1"
@@ -68,24 +66,18 @@ latest_file() {
   rm -f "$file_list"
 }
 
+# 产品已拆仓；本仓库发布只检查 Multi-AI Code 的安装包和更新元数据。
 electron_dmg="$(latest_file './release/MultiAICode-*-arm64.dmg')"
 electron_blockmap="$(latest_file './release/MultiAICode-*-arm64.dmg.blockmap')"
-qt_im_dmg="$(latest_file "./MaiChat/desktop/dist/MaiChat-macos-arm64-v*-$release_date-*.dmg")"
 
 if [[ -z "$electron_dmg" || -z "$electron_blockmap" ]]; then
   echo "Missing Electron macOS artifacts under release/." >&2
   exit 1
 fi
 
-if [[ -z "$qt_im_dmg" ]]; then
-  echo "Missing Qt IM macOS artifact for $release_date under MaiChat/desktop/dist/." >&2
-  exit 1
-fi
-
 if [[ "$dry_run" -eq 1 ]]; then
   echo "Dry run:"
   echo "  gh release upload $electron_tag $electron_dmg $electron_blockmap --clobber"
-  echo "  gh release upload $qt_im_tag $qt_im_dmg --clobber"
   exit 0
 fi
 
@@ -100,9 +92,7 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 gh release upload "$electron_tag" "$electron_dmg" "$electron_blockmap" --clobber
-gh release upload "$qt_im_tag" "$qt_im_dmg" --clobber
 
 echo
 echo "Uploaded macOS release artifacts:"
 echo "  $electron_tag: $electron_dmg, $electron_blockmap"
-echo "  $qt_im_tag: $qt_im_dmg"

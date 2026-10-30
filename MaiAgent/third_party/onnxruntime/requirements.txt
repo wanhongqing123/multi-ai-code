@@ -1,4 +1,0 @@
-flatbuffers
-numpy >= 1.21.6
-packaging
-protobuf

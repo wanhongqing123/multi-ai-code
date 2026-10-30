@@ -96,7 +96,9 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
       if (sql.includes('UPDATE remote_im_messages') && sql.includes('SET attachment_json')) {
         return {
           run: (...args: unknown[]) => {
-            const row = rows.find((item) => item.id === args[1] && item.project_id === args[2] && item.status === 'failed')
+            const row = rows.find((item) =>
+              item.id === args[1] && item.project_id === args[2] && item.status === 'failed'
+            )
             if (row) {
               row.attachment_json = args[0] as string
               row.status = 'received'

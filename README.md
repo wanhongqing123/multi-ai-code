@@ -6,11 +6,11 @@
 
 > **`codex` 只用随应用打包的内置版本**（已做大量定制，不再兼容宿主机上自行安装的版本）；缺少内置二进制会直接报错、绝不回退宿主机版本。`claude` 仍使用你本机安装并登录的版本。
 
-![Qt 桌面 IM 客户端：多台机器作为联系人，AICLI 回传控制命令结果](docs/readme/qt-im-remote.png)
+![远程 IM 客户端：多台机器作为联系人，AICLI 回传控制命令结果](docs/readme/qt-im-remote.png)
 
 ## IM 控制命令
 
-任意 IM 客户端（iOS App、Qt 桌面 IM，或 AICLI 通过 `imcli`）给目标机器发消息即可。除直接发任务文本外：
+MaiChat iOS、Android 或桌面客户端，以及通过 `imcli` 的 AICLI，均可给目标机器发消息。MaiChat 客户端、MaiAgent 与配套服务的源码位于独立的 [MaiChat 仓库](https://github.com/wanhongqing123/MaiChat)；双方沿用远程 IM 互操作协议。除直接发任务文本外：
 
 | 命令 | 作用 |
 | --- | --- |
@@ -34,4 +34,4 @@ npm run build    # 构建
 
 `codex` 用随应用打包的内置定制版——源码开发需先构建：`git submodule update --init --recursive && npm run build:aicli`（生成 `bin/aicli`），否则启动会报「未找到内置可执行文件」。`claude` 需本机安装并登录。数据按 IM 账号隔离存本机。
 
-安装包见 [Releases](https://github.com/wanhongqing123/multi-ai-code/releases)（Electron tag `electron-<日期>`、Qt IM tag `qt-im-<日期>`）。
+Multi-AI Code 安装包见本仓库的 [Releases](https://github.com/wanhongqing123/multi-ai-code/releases)（Electron tag `electron-<日期>`）。MaiChat 的源码和发布信息见 [MaiChat 仓库](https://github.com/wanhongqing123/MaiChat)。

@@ -6,12 +6,6 @@ const extensions = new Set(['c', 'cpp', 'h', 'hpp', 'java', 'js', 'jsx', 'mjs', 
 const upstreamParts = [
   '/third_party/', '/vendor/', '/Frameworks/', '/build/', '/generated/', '/node_modules/', '/dist/'
 ]
-const upstreamPaths = [
-  'MaiAgent/Graphics/metal/',
-  'MaiAgent/Graphics/opengl/',
-  'MaiChat/Media/ffplay.c',
-  'MaiChat/desktop/src/model/PinyinInitials.cpp'
-]
 
 const tracked = execFileSync('git', ['ls-files', '-z'], {
   encoding: 'utf8', maxBuffer: 16 * 1024 * 1024
@@ -20,7 +14,7 @@ let violations = 0
 for (const path of tracked) {
   const extension = path.split('.').pop()
   if (!extensions.has(extension) || upstreamParts.some(part => path.includes(part)) ||
-      upstreamPaths.some(prefix => path.startsWith(prefix)) || !existsSync(path)) continue
+      !existsSync(path)) continue
   const lines = readFileSync(path, 'utf8').split(/\r?\n/)
   lines.forEach((line, index) => {
     const width = Array.from(line).length

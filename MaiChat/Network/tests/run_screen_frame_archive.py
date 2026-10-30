@@ -15,3 +15,6 @@ with tempfile.TemporaryDirectory(prefix="maichat-screen-archive-") as directory:
     assert all(process.returncode == 0 for process in races)
     assert sorted(results) == ["race.accepted", "race.rate_limited"], results
     subprocess.run([sys.argv[1], "--reopen", str(workspace)], check=True, timeout=60)
+    stale_workspace = pathlib.Path(directory) / "moved-workspace"
+    stale_workspace.mkdir()
+    subprocess.run([sys.argv[1], "--stale-batch", str(stale_workspace)], check=True, timeout=60)

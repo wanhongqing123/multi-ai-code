@@ -3,6 +3,7 @@
 import SwiftUI
 
 struct AIMobileScreenFramesView: View {
+    enum Kind { case screen, camera }
     @ObservedObject var model: AIAssistantModel
     @ObservedObject private var capture = AIMobileScreenCapture.shared
     @Environment(\.dismiss) private var dismiss
@@ -14,17 +15,21 @@ struct AIMobileScreenFramesView: View {
     @State private var loading = false
     @State private var importing = false
     @State private var error = ""
+    @State private var archiveWarning = ""
     @State private var revision = 0
     @State private var preview: AIMobileScreenArchivePreview?
+    private let kind: Kind
 
-    init(model: AIAssistantModel, binding: AIScreenFrameImportBinding) {
+    init(model: AIAssistantModel, binding: AIScreenFrameImportBinding, kind: Kind = .screen) {
         self.model = model
+        self.kind = kind
         _binding = State(initialValue: binding)
     }
 
     private var isRecording: Bool {
         batch?.status == "recording" ||
-            ((capture.isSharing || capture.isStarting) && capture.archiveContext == binding.context)
+            (kind == .screen && (capture.isSharing || capture.isStarting) && capture.archiveContext == binding.context) ||
+            (kind == .camera && AIMobileCameraCapture.shared.archiveContext == binding.context)
     }
     private var batch: AIMobileScreenArchiveBatch? { batches.first { $0.id == binding.id } }
     private var capacity: Int { model.screenFrameAttachmentCapacity(binding) }
@@ -50,8 +55,12 @@ struct AIMobileScreenFramesView: View {
                             }
                             .accessibilityIdentifier("ai-screen-frames-batches")
                         }
-                        if let reason = batch?.finishReason, let message = Self.finishMessage(reason) {
+                        if let reason = batch?.finishReason, let message = finishMessage(reason) {
                             Text(message).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        if !archiveWarning.isEmpty {
+                            Text(archiveWarning).font(.footnote).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("ai-screen-frames-archive-warning")
                         }
                         if !error.isEmpty {
                             HStack(alignment: .top) {
@@ -71,7 +80,8 @@ struct AIMobileScreenFramesView: View {
                             Image(systemName: "photo.on.rectangle.angled").font(.largeTitle)
                                 .foregroundStyle(RemoteIMStyle.blue)
                             Text(isRecording ? "尚未截取画面" : "本次没有截取到图片").font(.headline)
-                            Text(isRecording ? "共享期间每 2 秒保存可用的新画面。" : "可以关闭此页后重新开启屏幕共享。")
+                            Text(isRecording ? "每 2 秒保存可用的新画面。" :
+                                (kind == .camera ? "可以关闭此页后重新开启相机。" : "可以关闭此页后重新开启屏幕共享。"))
                                 .font(.footnote).foregroundStyle(.secondary)
                             Button("刷新") { revision += 1 }
                         }
@@ -106,7 +116,7 @@ struct AIMobileScreenFramesView: View {
                 .remoteIMBarBackground(edges: .bottom)
                 .overlay(alignment: .top) { RemoteIMBarSeparator() }
             }
-            .navigationTitle("屏幕截图").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(kind == .camera ? "相机图片" : "屏幕截图").navigationBarTitleDisplayMode(.inline)
             .remoteIMNavigationBarMaterial()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -189,6 +199,8 @@ struct AIMobileScreenFramesView: View {
             guard current == binding.context, model.screenFrameBinding(id: binding.id) != nil else { return }
             batches = listing.batches.sorted { $0.startedAtMS > $1.startedAtMS }
             frames = listing.frames.filter { $0.batchID == binding.id }.sorted { $0.elapsedMS < $1.elapsedMS }
+            archiveWarning = (listing.unavailableBatches?.isEmpty ?? true) ? "" :
+                "部分旧批次不可读取，原图片仍保留。"
             selected.formIntersection(Set(frames.map(\.id)))
             unavailable = []
             error = batches.contains { $0.id == binding.id } ? "" : "这批截图已清理，已加入会话的图片仍保留。"
@@ -200,8 +212,10 @@ struct AIMobileScreenFramesView: View {
         do {
             let context = AIMobileScreenArchiveContext(workspace: binding.context.workspace,
                 ownerSessionID: binding.context.ownerSessionID, batchID: batch.id)
-            binding = try model.registerScreenFrameArchive(context: context, snapshot: binding.snapshot)
-            selected = []; frames = []; error = ""
+            binding = try kind == .camera ?
+                model.registerCameraFrameArchive(context: context, snapshot: binding.snapshot) :
+                model.registerScreenFrameArchive(context: context, snapshot: binding.snapshot)
+            selected = []; frames = []; error = ""; archiveWarning = ""
         } catch { self.error = error.localizedDescription }
     }
 
@@ -235,13 +249,14 @@ struct AIMobileScreenFramesView: View {
         Date(timeIntervalSince1970: Double(batch.startedAtMS) / 1000)
             .formatted(date: .abbreviated, time: .shortened)
     }
-    private static func finishMessage(_ reason: String) -> String? {
+    private func finishMessage(_ reason: String) -> String? {
         switch reason {
-        case "interrupted": return "上次共享意外中断，已保留截取的图片。"
+        case "interrupted": return kind == .camera ? "上次拍摄意外中断，已保留图片。" : "上次共享意外中断，已保留截取的图片。"
         case "user", "stopped", "user_stopped": return nil
         case "batch_frames", "batch_bytes", "owner_bytes", "workspace_bytes", "limit":
-            return "已达到截图存储上限并停止共享。将需要的图片加入草稿后，可清理未选图片。"
-        default: return "共享已停止，已截取的图片仍保留。"
+            return kind == .camera ? "已达到存储上限并停止拍摄。将需要的图片加入草稿后，可清理未选图片。" :
+                "已达到截图存储上限并停止共享。将需要的图片加入草稿后，可清理未选图片。"
+        default: return kind == .camera ? "拍摄已停止，图片仍保留。" : "共享已停止，已截取的图片仍保留。"
         }
     }
 }

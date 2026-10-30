@@ -151,6 +151,181 @@ static void releaseCaptureContext(void* context) {
     static_cast<ScreenCaptureProbe*>(context)->released = true;
 }
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+struct CameraArchiveProbe {
+    std::string root;
+    std::string session;
+    std::string owner;
+    std::string reference;
+    Json arguments;
+    std::atomic<bool>* cancel = nullptr;
+    bool cancelOnReturn = false;
+    int calls = 0;
+};
+static void releaseCameraArchiveContext(void*) {}
+
+// The fake enforces one selected Session, while the real archive stores the
+// image and token. This checks the C++ tool's native context and ownership contract.
+static const char* cameraArchiveHandler(void* context, const char* tool, const char* arguments) {
+    auto& probe = *static_cast<CameraArchiveProbe*>(context);
+    probe.arguments = Json::parse(arguments);
+    ++probe.calls;
+    Json response;
+    if (probe.arguments.value("workspace_path", "") != probe.root ||
+        probe.arguments.value("session_id", "") != probe.session) {
+        response = {{"ok", false}, {"errorCode", "invalid_input"}, {"error", "wrong Session or workspace"}};
+    } else if (std::string(tool) == "maichat_camera_command") {
+        const std::string action = probe.arguments.at("action");
+        Json output{{"state", action == "close" ? "stopping" : action == "status" ? "captured" : "opening"}};
+        if (action == "close") {
+            output["was_open"] = true;
+            output["batch_id"] = "batch-example";
+            output["next_step"] = "wait for captured";
+        } else if (action == "status") {
+            output["batch_id"] = "batch-example";
+            output["frame_count"] = "2";
+        }
+        response = {{"ok", true}, {"output", output}};
+    } else {
+        CHECK(std::string(tool) == "mobile_camera_archive");
+        const std::string action = probe.arguments.at("action");
+        Json request{{"action", action == "open" ? "retain" : action == "delete_batch" ? "discard" : action}};
+        if (probe.arguments.contains("batch_id")) request["batch_id"] = probe.arguments["batch_id"];
+        if (action == "open") {
+            probe.reference = MaiIdGenerator::newEventId();
+            request["frame_id"] = probe.arguments.at("frame_id");
+            request["reference_id"] = probe.reference;
+            request["usage_session_id"] = probe.session;
+        }
+        char* encoded = mai_screen_frame_archive_request(probe.root.c_str(), probe.owner.c_str(),
+            request.dump().c_str(), nullptr, 0);
+        CHECK(encoded != nullptr);
+        response = Json::parse(encoded);
+        mai_screen_frame_archive_free(encoded);
+        if (action == "open" && response.value("ok", false))
+            response["output"]["archive_owner"] = probe.owner;
+    }
+    if (probe.cancelOnReturn && probe.cancel) probe.cancel->store(true);
+    const std::string bytes = response.dump();
+    auto* owned = static_cast<char*>(std::malloc(bytes.size() + 1));
+    CHECK(owned != nullptr);
+    std::memcpy(owned, bytes.c_str(), bytes.size() + 1);
+    return owned;
+}
+
+static void cameraArchiveContract() {
+    struct Workspace {
+        MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
+            MaiFilePath::fromUtf8("mai-mobile-camera-test-" + MaiIdGenerator::newEventId()));
+        ~Workspace() { MaiFileSystem::removeRecursively(path); }
+    } workspace;
+    CHECK(!MaiFileSystem::createDirectories(workspace.path).hasError());
+    CameraArchiveProbe probe;
+    probe.root = workspace.path.toUtf8();
+    probe.session = "camera-session-A";
+    probe.owner = "camera:account-A-session-A";
+    auto dispatcher = makeMaiMobileHostDispatcher();
+    CHECK(setMaiMobileHostToolHandler(dispatcher, &probe, cameraArchiveHandler,
+                                     freeHostToolResponse, releaseCameraArchiveContext));
+    MaiToolRegistry registry;
+    registerMobilePhotoTools(registry, dispatcher);
+    MaiTool* command = registry.findForModel("maichat_camera_command");
+    MaiTool* frames = registry.findForModel("mobile_camera_frames");
+    CHECK(command && frames);
+    std::atomic<bool> cancel{false};
+    probe.cancel = &cancel;
+    MaiToolContext context;
+    context.root = probe.root; context.sessionId = probe.session; context.cancel = &cancel;
+    CHECK(!command->execute(R"({"action":"open"})", context).hasError());
+    CHECK(probe.arguments == Json({{"action", "open"}, {"workspace_path", probe.root},
+                                   {"session_id", probe.session}}));
+    // A close only initiates finalization. The tool must preserve the host's
+    // stopping state and expose captured through a subsequent status call.
+    const auto closing = command->execute(R"({"action":"close"})", context);
+    CHECK(!closing.hasError());
+    const Json closingStatus = Json::parse(closing.output());
+    CHECK(closingStatus.at("state") == "stopping" && closingStatus.at("was_open") == true &&
+          closingStatus.at("batch_id") == "batch-example" && closingStatus.contains("next_step"));
+    const auto finished = command->execute(R"({"action":"status"})", context);
+    CHECK(!finished.hasError());
+    const Json finishedStatus = Json::parse(finished.output());
+    CHECK(finishedStatus.at("state") == "captured" && finishedStatus.at("frame_count") == "2");
+    CHECK(command->description().find("stopping") != std::string::npos &&
+          command->description().find("captured") != std::string::npos);
+    const int calls = probe.calls;
+    CHECK(command->execute(R"({"action":"open","session_id":"camera-session-B"})", context).hasError());
+    CHECK(probe.calls == calls);
+    context.sessionId = "camera-session-B";
+    CHECK(command->execute(R"({"action":"close"})", context).hasError());
+    CHECK(probe.arguments.at("session_id") == "camera-session-B");
+    context.sessionId = probe.session;
+    context.root = probe.root + "/another-workspace";
+    CHECK(command->execute(R"({"action":"status"})", context).hasError());
+    CHECK(probe.arguments.at("workspace_path") == context.root);
+    context.root = probe.root;
+    CHECK(frames->execute(R"({"action":"list","session_id":"camera-session-B"})", context).hasError());
+
+    const auto archive = [&](const std::string& owner, const Json& request, const std::string& png = std::string()) {
+        char* encoded = mai_screen_frame_archive_request(probe.root.c_str(), owner.c_str(), request.dump().c_str(),
+            png.empty() ? nullptr : png.data(), png.size());
+        CHECK(encoded != nullptr);
+        const Json reply = Json::parse(encoded);
+        mai_screen_frame_archive_free(encoded);
+        return reply;
+    };
+    const Json begun = archive(probe.owner, {{"action", "begin"}});
+    CHECK(begun.value("ok", false));
+    const std::string batch = begun.at("output").at("batch").at("id");
+    const auto png = maiEncodeQrCodePng("camera archive original");
+    CHECK(png.isOk());
+    const auto dimension = [&](std::size_t offset) {
+        std::uint32_t value = 0;
+        for (std::size_t index = 0; index < 4; ++index)
+            value = (value << 8) | static_cast<unsigned char>(png.value()[offset + index]);
+        return value;
+    };
+    const auto nowMS = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const Json appended = archive(probe.owner, {{"action", "append"}, {"batch_id", batch},
+        {"width", dimension(16)}, {"height", dimension(20)}, {"captured_at_ms", nowMS}, {"elapsed_ms", 2000}}, png.value());
+    CHECK(appended.value("ok", false));
+    const Json original = appended.at("output").at("frame");
+    const std::string id = original.at("id");
+    CHECK(archive(probe.owner, {{"action", "finish"}, {"batch_id", batch}, {"reason", "stopped"}}).value("ok", false));
+    // Screen and another account/session owner cannot enumerate or retrieve this batch.
+    for (const std::string& other : {probe.session, std::string("camera:account-B-session-A"),
+                                    std::string("camera:account-A-session-B")}) {
+        CHECK(archive(other, {{"action", "list"}}).at("output").at("batches").empty());
+        CHECK(!archive(other, {{"action", "get"}, {"batch_id", batch}, {"frame_id", id}}).value("ok", true));
+    }
+    const auto listed = frames->execute(Json{{"action", "list"}, {"batch_id", batch}}.dump(), context);
+    CHECK(!listed.hasError() && Json::parse(listed.output()).at("frames").size() == 1);
+    context.sessionId = "camera-session-B";
+    CHECK(frames->execute(Json{{"action", "open"}, {"batch_id", batch}, {"frame_id", id}}.dump(), context).hasError());
+    context.sessionId = probe.session;
+    const auto opened = frames->execute(Json{{"action", "open"}, {"batch_id", batch}, {"frame_id", id}}.dump(), context);
+    CHECK(!opened.hasError() && opened.images().size() == 1);
+    CHECK(opened.images()[0].path == original.at("path").get<std::string>());
+    const auto file = workspace.path.append(MaiFilePath::fromUtf8(opened.images()[0].path));
+    CHECK(!Json::parse(opened.output()).contains("archive_owner"));
+    probe.cancelOnReturn = true;
+    const auto canceled = frames->execute(Json{{"action", "open"}, {"batch_id", batch}, {"frame_id", id}}.dump(), context);
+    CHECK(canceled.hasError() && canceled.error().code() == MaiErrorCode::Canceled);
+    cancel.store(false); probe.cancelOnReturn = false;
+    CHECK(archive(probe.owner, {{"action", "release"}, {"batch_id", batch}, {"frame_id", id},
+        {"reference_id", probe.reference}}).at("output").at("released") == false);
+    const Json discard{{"action", "delete_batch"}, {"batch_id", batch}};
+    CHECK(frames->requiresApproval(discard.dump()));
+    CHECK(!frames->execute(discard.dump(), context).hasError());
+    std::string saved;
+    CHECK(!MaiFileSystem::readFile(file, saved).hasError() && saved == png.value());
+    CHECK(archive(probe.session, {{"action", "release_session"}}).value("ok", false));
+    CHECK(!MaiFileSystem::exists(file));
+    clearMaiMobileHostToolHandler(dispatcher);
+    std::puts("PASS: camera tool context, archive isolation, original reference and cancellation");
+}
+#endif
+
 static void captureContract() {
     struct Workspace {
         MaiFilePath path = MaiFileSystem::temporaryDirectory().append(
@@ -375,9 +550,14 @@ int main(int argc, char** argv) {
         std::fputs("usage: MaiMobileAgentTests [--capture-contract-only]\n", stderr);
         return 2;
     }
-    try { captureContract(); }
+    try {
+        captureContract();
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        cameraArchiveContract();
+#endif
+    }
     catch (const std::exception& error) {
-        std::fprintf(stderr, "FAIL: screen capture contract: %s\n", error.what());
+        std::fprintf(stderr, "FAIL: capture contract: %s\n", error.what());
         return 1;
     }
     if (captureOnly) return 0;

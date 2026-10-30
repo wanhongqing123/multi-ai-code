@@ -70,9 +70,19 @@ private struct AIMobileScreenArchiveRetainReply: Decodable {
 
 private struct AIMobileScreenArchiveAcknowledgement: Decodable, Sendable {}
 
+private struct AIMobileScreenArchiveSessionRelease: Decodable, Sendable {
+    let unavailableBatchCount: Int
+    enum CodingKeys: String, CodingKey { case unavailableBatchCount = "unavailable_batch_count" }
+}
+
 struct AIMobileScreenArchiveListing: Decodable, Sendable {
     let batches: [AIMobileScreenArchiveBatch]
     let frames: [AIMobileScreenArchiveFrame]
+    let unavailableBatches: [String]?
+    enum CodingKeys: String, CodingKey {
+        case batches, frames
+        case unavailableBatches = "unavailable_batches"
+    }
 }
 
 struct AIMobileScreenArchiveError: LocalizedError, Sendable {
@@ -227,9 +237,11 @@ final class AIMobileScreenFrameArchive: @unchecked Sendable {
         }
     }
 
-    func releaseSession(workspace: URL, sessionID: String) async throws {
-        let _: AIMobileScreenArchiveAcknowledgement = try await request(
+    @discardableResult
+    func releaseSession(workspace: URL, sessionID: String) async throws -> Int {
+        let reply: AIMobileScreenArchiveSessionRelease = try await request(
             workspace: workspace, sessionID: sessionID, payload: ["action": "release_session"])
+        return reply.unavailableBatchCount
     }
 
     func discard(context: AIMobileScreenArchiveContext) async throws {
@@ -274,7 +286,8 @@ final class AIMobileScreenFrameArchive: @unchecked Sendable {
         }
     }
 
-    fileprivate func appendPNG(_ png: Data, context: AIMobileScreenArchiveContext,
+    // Both capture sources use the same bounded archive writer and retain the original PNG.
+    func appendPNG(_ png: Data, context: AIMobileScreenArchiveContext,
                                width: Int, height: Int, capturedAtMS: Int64, elapsedMS: Int64)
         throws -> (AIMobileScreenArchiveBatch, Bool, String?) {
         let reply: AIMobileScreenArchiveAppendReply = try requestBlocking(
@@ -285,7 +298,7 @@ final class AIMobileScreenFrameArchive: @unchecked Sendable {
         return (reply.batch, reply.limitReached, reply.limitReason)
     }
 
-    fileprivate func finishBlocking(context: AIMobileScreenArchiveContext, reason: String)
+    func finishBlocking(context: AIMobileScreenArchiveContext, reason: String)
         throws -> AIMobileScreenArchiveBatch {
         let reply: AIMobileScreenArchiveBatchReply = try requestBlocking(
             workspace: context.workspace, sessionID: context.ownerSessionID,

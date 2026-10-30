@@ -77,6 +77,8 @@ final class AIMobileHostToolProvider {
             }
         case "mobile_retain_screen_frame":
             return await retainScreenFrame(arguments)
+        case "mobile_camera_archive":
+            return await cameraArchive(arguments)
         case "mobile_start_screen_share", "mobile_stop_screen_share", "mobile_capture_screen":
             return await executeScreenCapture(name: name, arguments: arguments)
         case "mobile_browser":
@@ -155,6 +157,16 @@ final class AIMobileHostToolProvider {
             let action = Self.string(arguments, key: "action")
             let model = AIAssistantModel.shared
             let camera = AIMobileLocalMediaRequests.shared
+            guard Set(arguments.keys) == ["action", "workspace_path", "session_id"],
+                  let workspace = arguments["workspace_path"] as? String,
+                  (workspace as NSString).isAbsolutePath,
+                  let session = arguments["session_id"] as? String, !session.isEmpty,
+                  let snapshot = try? model.makeCameraFrameImportSnapshot(),
+                  snapshot.importTarget.sessionID == session,
+                  snapshot.workspace == URL(fileURLWithPath: workspace, isDirectory: true)
+                    .standardizedFileURL.resolvingSymlinksInPath() else {
+                return .failure(code: "invalid_input", message: "camera belongs to another Session or workspace")
+            }
             switch action {
             case "open":
                 do {
@@ -171,7 +183,14 @@ final class AIMobileHostToolProvider {
                 return Self.jsonSuccess(camera.cameraStatus(in: model.selected))
             case "close":
                 let wasOpen = camera.closeCamera(in: model.selected)
-                return Self.jsonSuccess(["state": "closed", "was_open": wasOpen])
+                // Closing requests an asynchronous queue drain; report the
+                // actual archive state until the last frame is committed.
+                var status: [String: Any] = camera.cameraStatus(in: model.selected).mapValues { $0 }
+                status["was_open"] = wasOpen
+                if status["state"] as? String == "stopping" {
+                    status["next_step"] = "封存仍在进行，请调用 status 等待 captured 后再列出或打开图片。"
+                }
+                return Self.jsonSuccess(status)
             default:
                 return .failure(code: "invalid_input", message: "action must be open, status, or close")
             }
@@ -761,6 +780,115 @@ final class AIMobileHostToolProvider {
               var view = window.rootViewController else { return nil }
         while let presented = view.presentedViewController { view = presented }
         return view
+    }
+
+    // Context fields originate from the native Agent, not the model. Resolve the
+    // account-scoped owner here so model arguments cannot select another archive.
+    private func cameraArchive(_ arguments: [String: Any]) async -> AIMaiChatHostToolExecution {
+        guard Set(arguments.keys).isSubset(of: ["action", "workspace_path", "session_id", "batch_id", "frame_id"]),
+              let action = arguments["action"] as? String,
+              let workspace = arguments["workspace_path"] as? String,
+              (workspace as NSString).isAbsolutePath,
+              let session = arguments["session_id"] as? String, !session.isEmpty else {
+            return .failure(code: "invalid_input", message: "camera archive requires its Session context")
+        }
+        let model = AIAssistantModel.shared
+        let archive = AIMobileScreenFrameArchive.shared
+        var retained: [AIMobileScreenArchiveReference] = []
+        do {
+            let snapshot = try model.makeCameraFrameImportSnapshot()
+            guard snapshot.importTarget.sessionID == session,
+                  snapshot.workspace == URL(fileURLWithPath: workspace, isDirectory: true)
+                    .standardizedFileURL.resolvingSymlinksInPath() else {
+                return .failure(code: "invalid_input", message: "camera archive belongs to another Session or workspace")
+            }
+            let batch = arguments["batch_id"] as? String
+            let frame = arguments["frame_id"] as? String
+            func validate() throws {
+                guard !Task.isCancelled, try model.makeCameraFrameImportSnapshot() == snapshot else {
+                    throw CancellationError()
+                }
+            }
+            func batchJSON(_ value: AIMobileScreenArchiveBatch) -> [String: Any] {
+                var result: [String: Any] = ["id": value.id, "status": value.status,
+                    "frame_count": value.frameCount, "total_bytes": value.totalBytes,
+                    "started_at_ms": value.startedAtMS]
+                if let finished = value.finishedAtMS { result["finished_at_ms"] = finished }
+                if let reason = value.finishReason { result["finish_reason"] = reason }
+                return result
+            }
+            func frameJSON(_ value: AIMobileScreenArchiveFrame) -> [String: Any] {
+                ["id": value.id, "batch_id": value.batchID, "captured_at_ms": value.capturedAtMS,
+                 "elapsed_ms": value.elapsedMS, "size_bytes": value.sizeBytes,
+                 "width": value.width, "height": value.height, "path": value.path]
+            }
+            if action == "list", frame == nil {
+                let listing = try await archive.list(workspace: snapshot.workspace,
+                    sessionID: snapshot.ownerSessionID, batchID: batch)
+                try validate()
+                let unavailableCount = listing.unavailableBatches?.count ?? 0
+                var output: [String: Any] = ["batches": listing.batches.map(batchJSON),
+                    "frames": listing.frames.map(frameJSON), "unavailable_batch_count": unavailableCount]
+                if unavailableCount > 0 {
+                    output["warning"] = "部分旧批次不可读取，原图片仍保留。"
+                }
+                return Self.jsonSuccess(output)
+            }
+            guard let batch, !batch.isEmpty else {
+                return .failure(code: "invalid_input", message: "camera batch is required")
+            }
+            let context = AIMobileScreenArchiveContext(workspace: snapshot.workspace,
+                ownerSessionID: snapshot.ownerSessionID, batchID: batch)
+            if action == "delete_batch", frame == nil {
+                let listing = try await archive.list(workspace: snapshot.workspace,
+                    sessionID: snapshot.ownerSessionID, batchID: batch)
+                try validate()
+                guard let saved = listing.batches.first else {
+                    return .failure(code: "not_found", message: "camera batch was already cleared")
+                }
+                guard saved.status != "recording" else {
+                    return .failure(code: "busy", message: "stop the camera before deleting its batch")
+                }
+                try await archive.discard(context: context)
+                try validate()
+                return Self.jsonSuccess(["discarded": true])
+            }
+            guard let frame, !frame.isEmpty else {
+                return .failure(code: "invalid_input", message: "camera frame is required")
+            }
+            guard action == "open" else {
+                return .failure(code: "invalid_input", message: "invalid camera archive action")
+            }
+            let listing = try await archive.list(workspace: snapshot.workspace,
+                sessionID: snapshot.ownerSessionID, batchID: batch)
+            try validate()
+            guard let saved = listing.batches.first else {
+                return .failure(code: "not_found", message: "camera batch was already cleared")
+            }
+            guard saved.status != "recording" else {
+                return .failure(code: "busy", message: "stop the camera before opening a frame")
+            }
+            retained = try await archive.retainSelected(frameIDs: [frame], context: context, usageSessionID: session)
+            try validate()
+            guard let reference = retained.first, retained.count == 1 else {
+                throw AIBackendError(message: "无法保留相机图片")
+            }
+            var output = frameJSON(reference.frame)
+            output["reference_id"] = reference.referenceID
+            output["file_path"] = reference.relativePath
+            // Only the native tool bridge consumes this identity for cancellation cleanup.
+            output["archive_owner"] = snapshot.ownerSessionID
+            return Self.jsonSuccess(output)
+        } catch let error as AIMobileScreenArchiveError {
+            try? await archive.release(references: retained)
+            return .failure(code: error.code, message: error.localizedDescription)
+        } catch is CancellationError {
+            try? await archive.release(references: retained)
+            return .failure(code: "canceled", message: "camera account, Session or workspace changed")
+        } catch {
+            try? await archive.release(references: retained)
+            return .failure(code: "internal", message: error.localizedDescription)
+        }
     }
 
     // Native context-only bridge: UI and tools hold references to the same

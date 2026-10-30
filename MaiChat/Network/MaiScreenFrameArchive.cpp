@@ -510,9 +510,12 @@ struct Archive {
         Json value = Json::parse(bytes, nullptr, false);
         if (!value.is_object() || value.value("version", 0) != 1 || value.value("id", "") != id ||
             value.value("owner_session_id", "") != owner ||
-            value.value("workspace_key", "") != hash(root.data(), root.size()) ||
             !value.contains("frames") || !value["frames"].is_array() || value["frames"].size() > 300)
             invalid("archive manifest ownership or structure is invalid");
+        const std::string workspaceKey = value.value("workspace_key", "");
+        if (workspaceKey.size() != 64 || !std::all_of(workspaceKey.begin(), workspaceKey.end(), [](char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        })) invalid("archive manifest workspace key is invalid");
         const std::string status = value.value("status", "");
         if (status != "recording" && status != "stopped" && status != "retained")
             invalid("archive batch state is invalid");
@@ -524,6 +527,9 @@ struct Archive {
             integer(value, "finished_at_ms", 1, 9'007'199'254'740'991LL);
             if (!value["finish_reason"].is_string() || !textValid(value["finish_reason"], 256)) invalid("stop reason is invalid");
         }
+        if (workspaceKey != hash(root.data(), root.size()))
+            throw Failure("invalid_input", "archive workspace does not match its current location",
+                          {{"workspace_mismatch", true}});
         uint64_t total = 0;
         int64_t elapsed = -kInterval;
         std::vector<std::string> ids;
@@ -658,7 +664,7 @@ Removal saveReferences(const Archive& archive, Json& manifest) {
     return removed;
 }
 Json releaseSession(const Archive& archive) {
-    size_t references = 0, frames = 0, batches = 0;
+    size_t references = 0, frames = 0, batches = 0, unavailable = 0;
     for (const auto& ownerDirectory : children(archive.base)) {
         if (ownerDirectory.size() != 70 || ownerDirectory.rfind("owner_", 0) != 0 ||
             !std::all_of(ownerDirectory.begin() + 6, ownerDirectory.end(), [](char c) {
@@ -672,7 +678,15 @@ Json releaseSession(const Archive& archive) {
             if (!textValid(owner, 512) || "owner_" + hash(owner.data(), owner.size()) != ownerDirectory)
                 invalid("archive owner directory does not match its manifest");
             Archive scoped(archive.root.c_str(), owner.c_str());
-            Json manifest = scoped.load(id, false);
+            Json manifest;
+            try { manifest = scoped.load(id, false); }
+            catch (const Failure& failure) {
+                // A moved workspace cannot authenticate these old references.
+                // Leave that batch untouched and report incomplete cleanup while
+                // continuing to release references in the current workspace.
+                if (failure.details.value("workspace_mismatch", false)) { ++unavailable; continue; }
+                throw;
+            }
             bool changed = false;
             for (auto& frame : manifest["frames"]) {
                 auto& refs = frame["references"];
@@ -688,7 +702,8 @@ Json releaseSession(const Archive& archive) {
             }
         }
     }
-    return {{"released_references", references}, {"removed_frames", frames}, {"removed_batches", batches}};
+    return {{"released_references", references}, {"removed_frames", frames}, {"removed_batches", batches},
+            {"unavailable_batch_count", unavailable}};
 }
 Json perform(const char* workspace, const char* owner, const Json& request,
              const void* png, size_t pngSize) {
@@ -721,12 +736,21 @@ Json perform(const char* workspace, const char* owner, const Json& request,
     }
     if (action == "list") {
         fields(request, {"action", "batch_id"});
-        Json batches = Json::array(), frames = Json::array();
+        Json batches = Json::array(), frames = Json::array(), unavailable = Json::array();
         std::vector<Json> manifests;
         if (request.contains("batch_id")) manifests.push_back(archive.load(text(request, "batch_id")));
         else {
-            for (const auto& name : children(archive.ownerPath()))
-                if (idValid(name, "batch_")) manifests.push_back(archive.load(name));
+            for (const auto& name : children(archive.ownerPath())) {
+                if (!idValid(name, "batch_")) continue;
+                try { manifests.push_back(archive.load(name)); }
+                catch (const Failure& failure) {
+                    // App container migration can leave old manifests bound to a
+                    // different absolute workspace. Preserve them and report the
+                    // omission; all direct reads and mutations remain forbidden.
+                    if (failure.details.value("workspace_mismatch", false)) unavailable.push_back(name);
+                    else throw;
+                }
+            }
         }
         std::sort(manifests.begin(), manifests.end(), [](const Json& a, const Json& b) {
             if (a["started_at_ms"] != b["started_at_ms"]) return a["started_at_ms"] > b["started_at_ms"];
@@ -737,7 +761,7 @@ Json perform(const char* workspace, const char* owner, const Json& request,
             batches.push_back(batchPublic(manifest));
             for (const auto& frame : manifest["frames"]) frames.push_back(framePublic(frame));
         }
-        return {{"batches", batches}, {"frames", frames}};
+        return {{"batches", batches}, {"frames", frames}, {"unavailable_batches", unavailable}};
     }
     const std::string id = text(request, "batch_id");
     if (action == "release") fields(request, {"action", "batch_id", "frame_id", "reference_id"});

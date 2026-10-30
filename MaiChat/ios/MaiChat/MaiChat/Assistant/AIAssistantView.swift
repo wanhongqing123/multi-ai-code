@@ -2890,7 +2890,9 @@ private struct AIComposer: View, Equatable {
     @State private var importing = false
     @ObservedObject private var music = MaiLocalMusicPlayer.shared
     @ObservedObject private var screenCapture = AIMobileScreenCapture.shared
+    @ObservedObject private var agentCamera = AIMobileCameraCapture.shared
     @ObservedObject private var localMediaRequests = AIMobileLocalMediaRequests.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var importingMusic = false
     @State private var showingMusicSource = false
     @State private var showingMusicLibrary = false
@@ -2909,6 +2911,15 @@ private struct AIComposer: View, Equatable {
     @State private var draftVideoPreview: AIVideoPreviewItem?
     @State private var draftFilePreview: URL?
     @State private var screenFrameSelection: AIScreenFrameImportBinding?
+    @State private var cameraFrameSelection: AIScreenFrameImportBinding?
+    @State private var cameraBinding: AIScreenFrameImportBinding?
+    @State private var cameraReviewAfterDismiss: AIScreenFrameImportBinding?
+    @State private var cameraFinishing = false
+    @State private var toolCameraRequestID: UUID?
+    #if DEBUG && targetEnvironment(simulator)
+    @State private var cameraFixtureInstalled = false
+    @State private var cameraOwnershipFixtureResult = ""
+    #endif
     @State private var draftSession = ""
     @State private var draftImportTarget: AIAttachmentImportTarget?
     @State private var isVoiceMode = false
@@ -3025,6 +3036,24 @@ private struct AIComposer: View, Equatable {
                 .accessibilityIdentifier("ai-music-mini-player")
             }
             screenFramesStrip
+            cameraFramesStrip
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--agent-camera-ui-test") {
+                Button("模拟 Agent 打开相机") {
+                    do {
+                        _ = try localMediaRequests.openCamera(in: model.selected,
+                                                             workspacePath: model.workspacePath)
+                    } catch { model.showTransientError(error.localizedDescription) }
+                }.accessibilityIdentifier("ai-camera-fixture-open")
+                Button("验证相机请求代次") {
+                    cameraOwnershipFixtureResult = AIMobileLocalMediaRequests.verifyCameraRequestOwnership()
+                        ? "相机请求代次通过" : "相机请求代次失败"
+                }.accessibilityIdentifier("ai-camera-fixture-race")
+                if !cameraOwnershipFixtureResult.isEmpty {
+                    Text(cameraOwnershipFixtureResult).accessibilityIdentifier("ai-camera-fixture-race-result")
+                }
+            }
+            #endif
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     composerEditMenuState = nil
@@ -3221,8 +3250,49 @@ private struct AIComposer: View, Equatable {
                 matching: .any(of: [.images, .videos]),
                 photoLibrary: .shared()
             )
-            .fullScreenCover(isPresented: $isCameraPresented) {
-                RemoteIMCameraPicker(
+            .fullScreenCover(isPresented: $isCameraPresented, onDismiss: {
+                if let binding = cameraReviewAfterDismiss {
+                    cameraReviewAfterDismiss = nil
+                    cameraFrameSelection = binding
+                }
+            }) {
+                if cameraTarget == nil {
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+                        #if DEBUG && targetEnvironment(simulator)
+                        if ProcessInfo.processInfo.arguments.contains("--agent-camera-ui-test") {
+                            Color.blue.opacity(0.7).ignoresSafeArea()
+                            Text("模拟相机画面").foregroundStyle(.white)
+                        } else if let session = agentCamera.previewSession {
+                            AIMobileAgentCameraPreview(session: session) {
+                                agentCamera.setOrientation($0)
+                            }.ignoresSafeArea()
+                        } else { ProgressView().tint(.white) }
+                        #else
+                        if let session = agentCamera.previewSession {
+                            AIMobileAgentCameraPreview(session: session) {
+                                agentCamera.setOrientation($0)
+                            }.ignoresSafeArea()
+                        } else { ProgressView().tint(.white) }
+                        #endif
+                        VStack {
+                            HStack {
+                                Text("每 2 秒拍摄一张 · 已拍摄 \(agentCamera.count) 张")
+                                Spacer()
+                                Button("停止拍摄") {
+                                    if let id = toolCameraRequestID {
+                                        Task { await finishToolCamera(reason: "stopped", requestID: id) }
+                                    }
+                                }
+                                    .accessibilityIdentifier("ai-camera-stop")
+                            }
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                            .padding().background(.black.opacity(0.6))
+                            Spacer()
+                        }
+                    }
+                } else {
+                    RemoteIMCameraPicker(
                     onCapture: { image in
                         isCameraPresented = false
                         if localMediaRequests.cameraRequestID != nil {
@@ -3237,7 +3307,8 @@ private struct AIComposer: View, Equatable {
                         localMediaRequests.failCamera(.canceled)
                     }
                 )
-                .ignoresSafeArea()
+                    .ignoresSafeArea()
+                }
             }
             .fullScreenCover(item: $draftVideoPreview) { item in
                 MaiFfplayVideoScreen(path: item.path) { draftVideoPreview = nil }
@@ -3246,8 +3317,12 @@ private struct AIComposer: View, Equatable {
             .sheet(item: $screenFrameSelection) { binding in
                 AIMobileScreenFramesView(model: model, binding: binding)
             }
+            .sheet(item: $cameraFrameSelection) { binding in
+                AIMobileScreenFramesView(model: model, binding: binding, kind: .camera)
+            }
             .task(id: "\(snapshot.screenFrameAccountID)|\(snapshot.workspacePath)|\(snapshot.screenFrameOwnerID)") {
                 await model.restoreScreenFrameArchivesForCurrentDraft()
+                await model.restoreCameraFrameArchivesForCurrentDraft()
                 adoptScreenArchive()
             }
             .onChange(of: screenCapture.archiveContext?.batchID) { _ in adoptScreenArchive() }
@@ -3257,7 +3332,26 @@ private struct AIComposer: View, Equatable {
             .onChange(of: screenCapture.archiveBatch?.status) { status in
                 if status == "stopped" { presentFinishedScreenFrames() }
             }
-            .onChange(of: snapshot.screenFrameAccountID) { _ in screenFrameSelection = nil }
+            .onChange(of: snapshot.screenFrameAccountID) { _ in
+                screenFrameSelection = nil
+                cameraFrameSelection = nil
+                cameraReviewAfterDismiss = nil
+            }
+            .onChange(of: agentCamera.count) { count in
+                if let requestID = toolCameraRequestID {
+                    localMediaRequests.updateCameraCount(count, requestID: requestID)
+                }
+            }
+            .onChange(of: agentCamera.error) { error in
+                guard !error.isEmpty, let id = toolCameraRequestID else { return }
+                model.showTransientError(error)
+                Task { await finishToolCamera(reason: "camera_error", requestID: id) }
+            }
+            .onChange(of: scenePhase) { phase in
+                if phase == .background, let id = toolCameraRequestID {
+                    Task { await finishToolCamera(reason: "interrupted", requestID: id) }
+                }
+            }
             .fileImporter(
                 isPresented: $importing,
                 allowedContentTypes: model.selectedRemote == nil
@@ -3355,11 +3449,14 @@ private struct AIComposer: View, Equatable {
                 MaiLocalMusicPlayerView(music: music)
             }
             .onChange(of: localMediaRequests.cameraRequestID) { request in
-                guard request != nil else {
-                    if cameraTarget == nil { isCameraPresented = false }
+                guard let request else {
+                    if cameraTarget == nil, localMediaRequests.cameraRequestID == nil,
+                       let id = toolCameraRequestID {
+                        Task { await finishToolCamera(reason: "stopped", requestID: id) }
+                    }
                     return
                 }
-                Task { await openToolCamera() }
+                Task { await openToolCamera(requestID: request) }
             }
             .onChange(of: localMediaRequests.musicRequestID) { request in
                 guard request != nil else { return }
@@ -3399,6 +3496,13 @@ private struct AIComposer: View, Equatable {
                 Task { await importSelectedMedia(items, to: target) }
             }
             .onAppear {
+                #if DEBUG && targetEnvironment(simulator)
+                if ProcessInfo.processInfo.arguments.contains("--agent-camera-ui-test"),
+                   !cameraFixtureInstalled {
+                    cameraFixtureInstalled = true
+                    model.installHistoryUITestFixture()
+                }
+                #endif
                 #if targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--ai-music-mini-ui-test"),
                    let sample = Bundle.main.url(forResource: "ffplay-seek-sample",
@@ -3436,9 +3540,16 @@ private struct AIComposer: View, Equatable {
             .onChange(of: appState.remoteDiagnosticsIdentity) { _ in
                 // 当前页面即使复用相同 Session，也不能沿用上一轮账号认证的识别会话。
                 cancelVoiceTranscription(restoresDraft: true)
+                cameraFrameSelection = nil
+                if let id = toolCameraRequestID {
+                    Task { await finishToolCamera(reason: "interrupted", requestID: id) }
+                }
             }
             .onDisappear {
                 music.stop()
+                if !isCameraPresented, let id = toolCameraRequestID {
+                    Task { await finishToolCamera(reason: "interrupted", requestID: id) }
+                }
                 if isCameraPresented || importingMusic {
                     localMediaRequests.presenterActive = false
                 } else {
@@ -3459,6 +3570,9 @@ private struct AIComposer: View, Equatable {
             }
             .onChange(of: snapshot.selected) { selected in
                 cancelVoiceTranscription(restoresDraft: true)
+                if let id = toolCameraRequestID {
+                    Task { await finishToolCamera(reason: "interrupted", requestID: id) }
+                }
                 let previousSession = draftSession
                 let storageSession = draftStorageSession
                 if let storageSession {
@@ -3488,6 +3602,11 @@ private struct AIComposer: View, Equatable {
     @ViewBuilder private var screenFramesStrip: some View {
         let saved = model.screenFrameBindingsForCurrentDraft()
         let active = screenCapture.isSharing || screenCapture.isStarting
+        if model.screenFrameArchiveUnavailableCountForCurrentDraft() > 0 {
+            Text("部分旧屏幕截图批次不可读取，原文件仍保留。")
+                .font(.footnote).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+        }
         if active || !saved.isEmpty {
             HStack(spacing: 10) {
                 Image(systemName: "rectangle.on.rectangle")
@@ -3518,6 +3637,27 @@ private struct AIComposer: View, Equatable {
             .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 11))
             .padding(.horizontal, 16)
             .accessibilityIdentifier("ai-screen-share-status")
+        }
+    }
+
+    @ViewBuilder private var cameraFramesStrip: some View {
+        if model.cameraFrameArchiveUnavailableCountForCurrentDraft() > 0 {
+            Text("部分旧相机图片批次不可读取，原文件仍保留。")
+                .font(.footnote).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+        }
+        if let latest = model.cameraFrameBindingsForCurrentDraft().last {
+            HStack {
+                Image(systemName: "camera").foregroundStyle(RemoteIMStyle.blue)
+                Text("相机图片已保留 · 选择需要的图片")
+                Spacer()
+                Button("选择图片") { cameraFrameSelection = latest }
+                    .accessibilityIdentifier("ai-camera-review")
+            }
+            .font(.system(size: 12, weight: .semibold)).buttonStyle(.plain)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(RemoteIMStyle.blueSoft, in: RoundedRectangle(cornerRadius: 11))
+            .padding(.horizontal, 16)
         }
     }
 
@@ -3607,22 +3747,131 @@ private struct AIComposer: View, Equatable {
         isCameraPresented = true
     }
 
-    private func openToolCamera() async {
-        guard let requestID = localMediaRequests.cameraRequestID,
-              model.selected == localMediaRequests.cameraSessionID,
-              UIImagePickerController.isSourceTypeAvailable(.camera) else {
-            localMediaRequests.failCamera(.unavailable)
+    private func openToolCamera(requestID: UUID) async {
+        #if DEBUG && targetEnvironment(simulator)
+        let simulated = ProcessInfo.processInfo.arguments.contains("--agent-camera-ui-test")
+        #else
+        let simulated = false
+        #endif
+        // 异步启动任务只属于派发它的请求，旧任务不能接管稍后创建的新请求。
+        guard localMediaRequests.beginCameraOpening(requestID: requestID) else { return }
+        defer { localMediaRequests.finishCameraOpening(requestID: requestID) }
+        guard model.selected == localMediaRequests.cameraSessionID,
+              simulated || AVCaptureDevice.default(for: .video) != nil else {
+            localMediaRequests.failCamera(.unavailable, requestID: requestID)
             return
         }
-        guard await requestCameraPermission() else {
-            localMediaRequests.failCamera(.permissionDenied)
-            return
+        toolCameraRequestID = requestID
+        if !simulated {
+            let granted = await requestCameraPermission()
+            guard localMediaRequests.cameraRequestID == requestID,
+                  toolCameraRequestID == requestID else { return }
+            guard granted else {
+                localMediaRequests.failCamera(.permissionDenied, requestID: requestID)
+                if toolCameraRequestID == requestID { toolCameraRequestID = nil }
+                return
+            }
         }
         guard localMediaRequests.cameraRequestID == requestID,
-              model.selected == localMediaRequests.cameraSessionID else { return }
-        cameraTarget = nil
-        isCameraPresented = true
-        localMediaRequests.markCameraVisible(requestID)
+              toolCameraRequestID == requestID,
+              model.selected == localMediaRequests.cameraSessionID,
+              UIApplication.shared.applicationState == .active else {
+            await finishToolCamera(reason: "interrupted", requestID: requestID)
+            return
+        }
+        var pendingContext: AIMobileScreenArchiveContext?
+        var ownedBinding: AIScreenFrameImportBinding?
+        do {
+            let snapshot = try model.makeCameraFrameImportSnapshot()
+            let (context, _) = try await AIMobileScreenFrameArchive.shared.begin(
+                workspace: snapshot.workspace, sessionID: snapshot.ownerSessionID)
+            pendingContext = context
+            // 授权或磁盘操作期间用户可能已关闭相机，空批次不应留下。
+            guard localMediaRequests.cameraRequestID == requestID,
+                  toolCameraRequestID == requestID,
+                  model.selected == localMediaRequests.cameraSessionID,
+                  UIApplication.shared.applicationState == .active else {
+                _ = try? await AIMobileScreenFrameArchive.shared.finish(context: context, reason: "canceled")
+                try? await AIMobileScreenFrameArchive.shared.discard(context: context)
+                return
+            }
+            let binding = try model.registerCameraFrameArchive(context: context, snapshot: snapshot)
+            ownedBinding = binding
+            cameraBinding = binding
+            localMediaRequests.recordCameraBatch(context.batchID, requestID: requestID)
+            cameraTarget = nil
+            isCameraPresented = true
+            try await agentCamera.start(context: context)
+            guard localMediaRequests.cameraRequestID == requestID,
+                  toolCameraRequestID == requestID, cameraBinding?.id == binding.id else {
+                await finishToolCamera(reason: "canceled", requestID: requestID)
+                return
+            }
+            localMediaRequests.markCameraVisible(requestID, batchID: context.batchID)
+        } catch is CancellationError {
+            await finishToolCamera(reason: "canceled", requestID: requestID)
+        } catch {
+            // 一旦停止任务接管批次，它负责封存并保留已拍图片；旧任务不得删掉它。
+            guard toolCameraRequestID == requestID,
+                  localMediaRequests.cameraRequestID == requestID, !cameraFinishing else { return }
+            if let context = pendingContext, agentCamera.archiveContext == context {
+                _ = try? await agentCamera.stop(reason: "start_failed")
+            }
+            guard toolCameraRequestID == requestID,
+                  localMediaRequests.cameraRequestID == requestID, !cameraFinishing else { return }
+            if let context = pendingContext {
+                _ = try? await AIMobileScreenFrameArchive.shared.finish(context: context, reason: "start_failed")
+                guard toolCameraRequestID == requestID,
+                      localMediaRequests.cameraRequestID == requestID, !cameraFinishing else { return }
+                if let binding = ownedBinding {
+                    try? await model.discardScreenFrameArchive(binding)
+                } else { try? await AIMobileScreenFrameArchive.shared.discard(context: context) }
+            }
+            guard toolCameraRequestID == requestID,
+                  localMediaRequests.cameraRequestID == requestID, !cameraFinishing else { return }
+            if let batchID = pendingContext?.batchID {
+                localMediaRequests.failFinishedCameraArchive(batchID: batchID)
+            }
+            model.showTransientError(error.localizedDescription)
+            if cameraBinding?.id == ownedBinding?.id { cameraBinding = nil }
+            localMediaRequests.failCamera(.failed, requestID: requestID)
+            toolCameraRequestID = nil
+            isCameraPresented = false
+        }
+    }
+
+    /// 先停止并封存同一批次，再在原会话展示可选图片；迟到的重复关闭不重复执行。
+    private func finishToolCamera(reason: String, requestID: UUID) async {
+        guard !cameraFinishing, toolCameraRequestID == requestID else { return }
+        cameraFinishing = true
+        defer { cameraFinishing = false }
+        if localMediaRequests.cameraRequestID == requestID {
+            _ = localMediaRequests.closeCamera(in: localMediaRequests.cameraSessionID)
+        }
+        guard let binding = cameraBinding else {
+            toolCameraRequestID = nil
+            isCameraPresented = false
+            return
+        }
+        do {
+            let batch = try await agentCamera.stop(reason: reason)
+            guard toolCameraRequestID == requestID, cameraBinding?.id == binding.id else { return }
+            if let batch {
+                localMediaRequests.finishCameraArchive(batchID: binding.id, count: batch.frameCount)
+            }
+            // 身份或目标会话改变时只保留批次，不向当前会话展示或导入旧图。
+            if model.cameraFrameBindingsForCurrentDraft().contains(where: { $0.id == binding.id }) {
+                if isCameraPresented { cameraReviewAfterDismiss = binding }
+                else { cameraFrameSelection = binding }
+            }
+        } catch {
+            guard toolCameraRequestID == requestID, cameraBinding?.id == binding.id else { return }
+            localMediaRequests.failFinishedCameraArchive(batchID: binding.id)
+            model.showTransientError("相机图片封存失败：\(error.localizedDescription)")
+        }
+        cameraBinding = nil
+        toolCameraRequestID = nil
+        isCameraPresented = false
     }
 
     private func openMusicLibrary() async {
@@ -4874,11 +5123,47 @@ final class AIMobileLocalMediaRequests: ObservableObject {
     private var lastCameraSessionID = ""
     private var lastCameraWorkspacePath = ""
     private var lastCameraPath = ""
+    private var lastCameraBatchID = ""
+    private var lastCameraRequestID: UUID?
+    private var cameraStartInFlight = false
+    private var cameraFrameCount = 0
     private var musicCompletion: CheckedContinuation<String, Error>?
+
+    #if DEBUG && targetEnvironment(simulator)
+    /// 使用独立对象模拟旧授权与旧封存结果迟到，绝不接触当前相机或生产账号。
+    static func verifyCameraRequestOwnership() -> Bool {
+        let state = AIMobileLocalMediaRequests()
+        state.presenterActive = true
+        do {
+            _ = try state.openCamera(in: "fixture-a", workspacePath: "/tmp")
+            guard let first = state.cameraRequestID, state.beginCameraOpening(requestID: first),
+                  state.closeCamera(in: "fixture-a"), state.cameraState == "stopping" else { return false }
+            // 旧授权尚未返回前，不能开启另一轮。
+            do { _ = try state.openCamera(in: "fixture-b", workspacePath: "/tmp"); return false }
+            catch { }
+            state.finishCameraOpening(requestID: first)
+            _ = try state.openCamera(in: "fixture-b", workspacePath: "/tmp")
+            guard let second = state.cameraRequestID, state.beginCameraOpening(requestID: second) else { return false }
+            state.failCamera(.permissionDenied, requestID: first)
+            state.finishCameraOpening(requestID: first)
+            state.recordCameraBatch("stale-batch", requestID: first)
+            guard state.cameraRequestID == second, state.cameraState == "opening" else { return false }
+            state.recordCameraBatch("fixture-batch", requestID: second)
+            state.markCameraVisible(second, batchID: "fixture-batch")
+            state.finishCameraOpening(requestID: second)
+            guard state.closeCamera(in: "fixture-b"), state.cameraState == "stopping" else { return false }
+            state.finishCameraArchive(batchID: "stale-batch", count: 9)
+            guard state.cameraState == "stopping" else { return false }
+            state.finishCameraArchive(batchID: "fixture-batch", count: 2)
+            return state.cameraState == "captured" && state.cameraStatus(in: "fixture-b")["frame_count"] == "2"
+        } catch { return false }
+    }
+    #endif
 
     func openCamera(in sessionID: String, workspacePath: String) throws -> String {
         guard presenterActive, UIApplication.shared.applicationState == .active,
-              cameraRequestID == nil, !sessionID.isEmpty, !workspacePath.isEmpty else {
+              cameraRequestID == nil, cameraState != "stopping",
+              !sessionID.isEmpty, !workspacePath.isEmpty else {
             throw AIMobileLocalMediaRequestError.unavailable
         }
         cameraSessionID = sessionID
@@ -4886,8 +5171,12 @@ final class AIMobileLocalMediaRequests: ObservableObject {
         lastCameraSessionID = sessionID
         lastCameraWorkspacePath = workspacePath
         lastCameraPath = ""
+        lastCameraBatchID = ""
+        cameraFrameCount = 0
         cameraState = "opening"
         let id = UUID()
+        lastCameraRequestID = id
+        cameraStartInFlight = false
         cameraRequestID = id
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(600))
@@ -4896,9 +5185,26 @@ final class AIMobileLocalMediaRequests: ObservableObject {
         return cameraState
     }
 
-    func markCameraVisible(_ requestID: UUID) {
+    func markCameraVisible(_ requestID: UUID, batchID: String) {
         guard cameraRequestID == requestID else { return }
         cameraState = "open"
+        lastCameraBatchID = batchID
+    }
+
+    func recordCameraBatch(_ batchID: String, requestID: UUID) {
+        guard cameraRequestID == requestID else { return }
+        lastCameraBatchID = batchID
+    }
+
+    func beginCameraOpening(requestID: UUID) -> Bool {
+        guard cameraRequestID == requestID else { return false }
+        cameraStartInFlight = true
+        return true
+    }
+
+    func updateCameraCount(_ count: Int, requestID: UUID) {
+        guard cameraRequestID == requestID else { return }
+        cameraFrameCount = count
     }
 
     @discardableResult
@@ -4907,13 +5213,40 @@ final class AIMobileLocalMediaRequests: ObservableObject {
         cameraRequestID = nil
         cameraSessionID = ""
         cameraWorkspacePath = ""
-        cameraState = "closed"
+        // 已创建批次需先排空采样队列并封存，再向 Agent 提供最终数量。
+        cameraState = cameraStartInFlight || !lastCameraBatchID.isEmpty ? "stopping" : "closed"
         return true
+    }
+
+    /// 取消发生在权限或建档等待时，要等旧启动任务退出才能开放下一轮。
+    func finishCameraOpening(requestID: UUID) {
+        guard lastCameraRequestID == requestID else { return }
+        cameraStartInFlight = false
+        guard cameraRequestID == nil,
+              cameraState == "stopping", lastCameraBatchID.isEmpty else { return }
+        cameraState = "closed"
+    }
+
+    func finishCameraArchive(batchID: String, count: Int) {
+        guard cameraState == "stopping", lastCameraBatchID == batchID else { return }
+        cameraFrameCount = count
+        cameraState = "captured"
+    }
+
+    func failFinishedCameraArchive(batchID: String) {
+        guard lastCameraBatchID == batchID else { return }
+        cameraState = "unavailable"
     }
 
     func cameraStatus(in sessionID: String) -> [String: String] {
         if cameraRequestID != nil, cameraSessionID == sessionID {
-            return ["state": cameraState]
+            return ["state": cameraState, "batch_id": lastCameraBatchID,
+                    "frame_count": String(cameraFrameCount)]
+        }
+        if lastCameraSessionID == sessionID,
+           cameraState == "stopping" || (cameraState == "captured" && !lastCameraBatchID.isEmpty) {
+            return ["state": cameraState, "batch_id": lastCameraBatchID,
+                    "frame_count": String(cameraFrameCount)]
         }
         let lastPhoto = URL(fileURLWithPath: lastCameraWorkspacePath,
                             isDirectory: true).appendingPathComponent(lastCameraPath)
@@ -4939,7 +5272,8 @@ final class AIMobileLocalMediaRequests: ObservableObject {
         cameraState = "captured"
     }
 
-    func failCamera(_ error: AIMobileLocalMediaRequestError) {
+    func failCamera(_ error: AIMobileLocalMediaRequestError, requestID: UUID? = nil) {
+        if let requestID, cameraRequestID != requestID { return }
         guard cameraRequestID != nil else { return }
         cameraRequestID = nil
         cameraSessionID = ""
@@ -4980,7 +5314,8 @@ final class AIMobileLocalMediaRequests: ObservableObject {
 
     func deactivate() {
         presenterActive = false
-        failCamera(.canceled)
+        // 退出页面与工具关闭共享同一封存流程，不能把仍在异步启动的请求直接标成已关闭。
+        if cameraRequestID != nil { _ = closeCamera(in: cameraSessionID) }
         failMusic(.canceled)
     }
 }

@@ -14,6 +14,7 @@
 		CB86796D266A41859B688E03 /* AccountCodeCooldownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB86796D266A41859B688E04 /* AccountCodeCooldownTests.swift */; };
 		6F03A9BA5D80FAE8B01671B8 /* ScreenFrameArchiveUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */; };
 		F77BA084695F31C9AD6308A7 /* AIMobileScreenFramesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699DD641EBF222F19503CD4B /* AIMobileScreenFramesView.swift */; };
+		C4A881E263A97B3D41E6C001 /* AIMobileCameraCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A881E263A97B3D41E6C002 /* AIMobileCameraCapture.swift */; };
 		3CE9DB0AABBB106D926C907E /* AIMobileScreenFrameArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BD3F9C5BD5EE3D987670129 /* AIMobileScreenFrameArchive.swift */; };
 		751C9C7EC4D79C407AB8992A /* MaiCloudDriveImagePager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */; };
 		0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29776A2C7E5D525FFA6CED8D /* AIMobileHostToolProvider.swift */; };
@@ -165,6 +166,7 @@
 		CB86796D266A41859B688E04 /* AccountCodeCooldownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCodeCooldownTests.swift; sourceTree = "<group>"; };
 		22A65816850A01D44D6F4A9F /* ScreenFrameArchiveUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenFrameArchiveUITests.swift; sourceTree = "<group>"; };
 		699DD641EBF222F19503CD4B /* AIMobileScreenFramesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileScreenFramesView.swift; sourceTree = "<group>"; };
+		C4A881E263A97B3D41E6C002 /* AIMobileCameraCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileCameraCapture.swift; sourceTree = "<group>"; };
 		8BD3F9C5BD5EE3D987670129 /* AIMobileScreenFrameArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIMobileScreenFrameArchive.swift; sourceTree = "<group>"; };
 		751C9C7EC4D79C407AB8992B /* MaiCloudDriveImagePager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaiCloudDriveImagePager.swift; sourceTree = "<group>"; };
 		0075BCCB2188B8EB8E6F11FA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -380,6 +382,7 @@
 				7090E768648CE5F2D55AD135 /* AIMobileScreenCapture.swift */,
 				8BD3F9C5BD5EE3D987670129 /* AIMobileScreenFrameArchive.swift */,
 				699DD641EBF222F19503CD4B /* AIMobileScreenFramesView.swift */,
+				C4A881E263A97B3D41E6C002 /* AIMobileCameraCapture.swift */,
 				2BD57C56FFB1D7BD773DD1A1 /* AIMobileSshTools.swift */,
 				C12D574F08359081230E0D3A /* MaiChatIMTools.swift */,
 				8888872A869DC80CF8DF58B6 /* MobileImageTools.swift */,
@@ -883,6 +886,7 @@
 				10E63571389FF61C9869CE9E /* AIAssistantModel.swift in Sources */,
 				91722667D29CD5A82A3A2E00 /* AIAssistantView.swift in Sources */,
 				F77BA084695F31C9AD6308A7 /* AIMobileScreenFramesView.swift in Sources */,
+				C4A881E263A97B3D41E6C001 /* AIMobileCameraCapture.swift in Sources */,
 				0329ABDC04BBAC38945C24FA /* AIMobileHostToolProvider.swift in Sources */,
 				F2D771B8A5334D159C238C01 /* AIMobileBrowserTools.swift in Sources */,
 				80A93D25352CFB7F9675EB89 /* AIMobileScreenCapture.swift in Sources */,
@@ -1047,7 +1051,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 143;
+				CURRENT_PROJECT_VERSION = 144;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -1224,7 +1228,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 143;
+				CURRENT_PROJECT_VERSION = 144;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

@@ -965,6 +965,16 @@ struct AIScreenFrameImportSnapshot: Sendable, Hashable {
     let workspace: URL
     let ownerSessionID: String
     let importTarget: AIAttachmentImportTarget
+    let isCamera: Bool
+
+    init(accountID: String, workspace: URL, ownerSessionID: String,
+         importTarget: AIAttachmentImportTarget, isCamera: Bool = false) {
+        self.accountID = accountID
+        self.workspace = workspace
+        self.ownerSessionID = ownerSessionID
+        self.importTarget = importTarget
+        self.isCamera = isCamera
+    }
 }
 
 struct AIScreenFrameImportBinding: Identifiable, Sendable, Equatable {
@@ -1389,6 +1399,9 @@ final class AIAssistantModel: ObservableObject {
     private var screenFrameSubmissionPins: Set<String> = []
     @Published private(set) var screenFrameImportRevision = 0
     private var screenFrameImports: [AIScreenFrameImportBinding] = []
+    // A warning must survive even when no readable batch can create a binding.
+    // The full snapshot keeps account, workspace, source and original draft separate.
+    private var unavailableFrameBatches: [AIScreenFrameImportSnapshot: Int] = [:]
     private(set) var firstMessageSessionID = ""
     private var emptyDraftToken = UUID()
     private var createdEmptyDraftSessions: [UUID: String] = [:]
@@ -3185,6 +3198,25 @@ final class AIAssistantModel: ObservableObject {
             ownerSessionID: owner, importTarget: target)
     }
 
+    // A camera owner is separate from the screen owner, even when both were
+    // started in the same Session. Length framing avoids ambiguous identities.
+    func makeCameraFrameImportSnapshot() throws -> AIScreenFrameImportSnapshot {
+        let screen = try makeScreenFrameImportSnapshot()
+        let identity = "\(screen.accountID.utf8.count):\(screen.accountID)\(screen.ownerSessionID.utf8.count):\(screen.ownerSessionID)"
+        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return AIScreenFrameImportSnapshot(accountID: screen.accountID, workspace: screen.workspace,
+            ownerSessionID: "camera:" + digest, importTarget: screen.importTarget, isCamera: true)
+    }
+
+    @discardableResult
+    func registerCameraFrameArchive(context: AIMobileScreenArchiveContext,
+                                    snapshot: AIScreenFrameImportSnapshot) throws -> AIScreenFrameImportBinding {
+        guard snapshot.isCamera, snapshot.ownerSessionID.hasPrefix("camera:") else {
+            throw AIBackendError(message: "相机图片的会话身份无效")
+        }
+        return try registerScreenFrameArchive(context: context, snapshot: snapshot)
+    }
+
     @discardableResult
     func registerScreenFrameArchive(context: AIMobileScreenArchiveContext,
                                     snapshot supplied: AIScreenFrameImportSnapshot? = nil) throws
@@ -3216,28 +3248,90 @@ final class AIAssistantModel: ObservableObject {
         return binding
     }
 
-    private func validateScreenFrameImport(_ binding: AIScreenFrameImportBinding) throws {
-        guard self === Self.shared, !binding.snapshot.accountID.isEmpty,
-              binding.snapshot.accountID == screenFrameCurrentAccountID,
-              binding.snapshot.workspace.standardizedFileURL.resolvingSymlinksInPath().path ==
+    private func validateScreenFrameSnapshot(_ snapshot: AIScreenFrameImportSnapshot) throws {
+        guard self === Self.shared, !snapshot.accountID.isEmpty,
+              snapshot.accountID == screenFrameCurrentAccountID,
+              snapshot.workspace.standardizedFileURL.resolvingSymlinksInPath().path ==
                 URL(fileURLWithPath: workspacePath, isDirectory: true)
                     .standardizedFileURL.resolvingSymlinksInPath().path,
-              binding.context.workspace.standardizedFileURL.resolvingSymlinksInPath().path ==
-                binding.snapshot.workspace.path,
-              binding.context.ownerSessionID == binding.snapshot.ownerSessionID,
-              attachmentSession(for: binding.snapshot.importTarget) != nil else {
+              attachmentSession(for: snapshot.importTarget) != nil else {
             throw AIBackendError(message: "账号、工作区或原会话已变化，截图已保留但未加入草稿")
         }
+    }
+
+    private func validateScreenFrameImport(_ binding: AIScreenFrameImportBinding) throws {
+        try validateScreenFrameSnapshot(binding.snapshot)
+        guard
+              binding.context.workspace.standardizedFileURL.resolvingSymlinksInPath().path ==
+                binding.snapshot.workspace.path,
+              binding.context.ownerSessionID == binding.snapshot.ownerSessionID else {
+            throw AIBackendError(message: "账号、工作区或原会话已变化，截图已保留但未加入草稿")
+        }
+    }
+
+    private func recordUnavailableFrameBatches(_ listing: AIMobileScreenArchiveListing,
+                                                snapshot: AIScreenFrameImportSnapshot) throws {
+        try validateScreenFrameSnapshot(snapshot)
+        let count = listing.unavailableBatches?.count ?? 0
+        guard unavailableFrameBatches[snapshot, default: 0] != count else { return }
+        if count == 0 { unavailableFrameBatches.removeValue(forKey: snapshot) }
+        else { unavailableFrameBatches[snapshot] = count }
+        screenFrameImportRevision &+= 1
+    }
+
+    func screenFrameArchiveUnavailableCountForCurrentDraft() -> Int {
+        guard let snapshot = try? makeScreenFrameImportSnapshot() else { return 0 }
+        return unavailableFrameBatches[snapshot, default: 0]
+    }
+
+    func cameraFrameArchiveUnavailableCountForCurrentDraft() -> Int {
+        guard let snapshot = try? makeCameraFrameImportSnapshot() else { return 0 }
+        return unavailableFrameBatches[snapshot, default: 0]
     }
 
     func screenFrameBindingsForCurrentDraft() -> [AIScreenFrameImportBinding] {
         let current = importTarget()
         return screenFrameImports.filter { binding in
-            guard (try? validateScreenFrameImport(binding)) != nil,
+            guard !binding.snapshot.isCamera,
+                  (try? validateScreenFrameImport(binding)) != nil,
                   let session = attachmentSession(for: binding.snapshot.importTarget) else { return false }
             return binding.snapshot.importTarget.remoteRoomKey == current.remoteRoomKey &&
                 session == attachmentSession(for: current)
         }
+    }
+
+    func cameraFrameBindingsForCurrentDraft() -> [AIScreenFrameImportBinding] {
+        let current = importTarget()
+        return screenFrameImports.filter { binding in
+            guard binding.snapshot.isCamera,
+                  (try? validateScreenFrameImport(binding)) != nil,
+                  let session = attachmentSession(for: binding.snapshot.importTarget) else { return false }
+            return binding.snapshot.importTarget.remoteRoomKey == current.remoteRoomKey &&
+                session == attachmentSession(for: current)
+        }
+    }
+
+    func restoreCameraFrameArchivesForCurrentDraft() async {
+        do {
+            let snapshot = try makeCameraFrameImportSnapshot()
+            let listing = try await AIMobileScreenFrameArchive.shared.list(
+                workspace: snapshot.workspace, sessionID: snapshot.ownerSessionID)
+            guard !Task.isCancelled else { return }
+            try recordUnavailableFrameBatches(listing, snapshot: snapshot)
+            for batch in listing.batches.sorted(by: { $0.startedAtMS < $1.startedAtMS }) {
+                let context = AIMobileScreenArchiveContext(workspace: snapshot.workspace,
+                    ownerSessionID: snapshot.ownerSessionID, batchID: batch.id)
+                let binding = AIScreenFrameImportBinding(context: context, snapshot: snapshot)
+                try validateScreenFrameImport(binding)
+                // A live or starting capture owns its batch; only recover orphaned recordings.
+                if batch.status == "recording", AIMobileCameraCapture.shared.archiveContext != context,
+                   AIMobileLocalMediaRequests.shared.cameraState != "opening" {
+                    _ = try await AIMobileScreenFrameArchive.shared.finish(context: context, reason: "interrupted")
+                    try validateScreenFrameImport(binding)
+                }
+                _ = try registerCameraFrameArchive(context: context, snapshot: snapshot)
+            }
+        } catch { /* No archive exists before the first camera capture. */ }
     }
 
     func screenFrameBinding(id: String) -> AIScreenFrameImportBinding? {
@@ -3252,6 +3346,7 @@ final class AIAssistantModel: ObservableObject {
             let listing = try await AIMobileScreenFrameArchive.shared.list(
                 workspace: snapshot.workspace, sessionID: snapshot.ownerSessionID)
             guard !Task.isCancelled else { return }
+            try recordUnavailableFrameBatches(listing, snapshot: snapshot)
             for batch in listing.batches.sorted(by: { $0.startedAtMS < $1.startedAtMS }) {
                 let context = AIMobileScreenArchiveContext(workspace: snapshot.workspace,
                     ownerSessionID: snapshot.ownerSessionID, batchID: batch.id)
@@ -3397,7 +3492,7 @@ final class AIAssistantModel: ObservableObject {
 
     private func releaseScreenFrameHistory(sessionID: String, workspace: URL) async {
         do {
-            try await AIMobileScreenFrameArchive.shared.releaseSession(
+            let unavailable = try await AIMobileScreenFrameArchive.shared.releaseSession(
                 workspace: workspace, sessionID: sessionID)
             let released = Set(screenFrameHistoryPins.filter { $0.value == sessionID }.keys)
             screenFrameHistoryPins = screenFrameHistoryPins.filter { $0.value != sessionID }
@@ -3409,6 +3504,9 @@ final class AIAssistantModel: ObservableObject {
                     $0.archiveReference.map { released.contains($0.referenceID) } ?? false
                 }
                 if pendingAttachments[key]?.isEmpty == true { pendingAttachments.removeValue(forKey: key) }
+            }
+            if unavailable > 0 {
+                showTransientError("对话已清理，部分旧图片批次不可读取，原文件仍保留。")
             }
         } catch {
             showTransientError("对话已清理，但截图引用清理失败：" + error.localizedDescription)

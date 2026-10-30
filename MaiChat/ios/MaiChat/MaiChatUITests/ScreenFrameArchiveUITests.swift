@@ -1,6 +1,69 @@
 import XCTest
 
 final class ScreenFrameArchiveUITests: XCTestCase {
+    /// 本机假账号和模拟器合成帧验证 Agent 相机流程，不请求真实相机或模型服务。
+    @MainActor
+    func testAgentCameraAutomaticallySamplesAndAddsSelectionToOriginalDraft() async throws {
+        #if DEBUG && targetEnvironment(simulator)
+        continueAfterFailure = false
+        let base = "http://127.0.0.1:18592"
+        let (status, response) = try await URLSession.shared.data(from: URL(string: base + "/test/status")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: status) as? [String: Any])
+        XCTAssertTrue((fixture["macSessions"] as? [String] ?? []).contains("ses_mock_mac"))
+        let (certificate, _) = try await URLSession.shared.data(from: URL(string: base + "/test/cert")!)
+        let app = XCUIApplication()
+        app.launchArguments = ["--agent-camera-ui-test"]
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PHONE"] = "sync-ui-test"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_PASSWORD"] = "local sync UI test passphrase"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_AUTH_PORT"] = "18592"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_SOCKET_PORT"] = "18593"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_MODEL_PORT"] = "18594"
+        app.launchEnvironment["MAICHAT_LOCAL_UI_CA_BASE64"] = certificate.base64EncodedString()
+        app.launch()
+        defer { app.terminate() }
+        let assistant = app.buttons["创作中心"]
+        XCTAssertTrue(assistant.waitForExistence(timeout: 35))
+        if app.buttons["稍后"].exists { app.buttons["稍后"].tap() }
+        assistant.tap()
+        let race = app.buttons["ai-camera-fixture-race"]
+        XCTAssertTrue(race.waitForExistence(timeout: 35))
+        race.tap()
+        let raceResult = app.staticTexts["ai-camera-fixture-race-result"]
+        XCTAssertTrue(raceResult.waitForExistence(timeout: 5))
+        XCTAssertEqual(raceResult.label, "相机请求代次通过")
+        let open = app.buttons["ai-camera-fixture-open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 35))
+        open.tap()
+        let stop = app.buttons["ai-camera-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        let threeFrames = app.staticTexts.matching(NSPredicate(
+            format: "label MATCHES %@", ".*已拍摄 ([3-9]|[1-9][0-9]+) 张"
+        )).firstMatch
+        XCTAssertTrue(threeFrames.waitForExistence(timeout: 15), "两秒采样应连续保存至少三张图片")
+        let recording = XCTAttachment(screenshot: app.screenshot())
+        recording.name = "agent-camera-three-frames"
+        recording.lifetime = .keepAlways
+        add(recording)
+        stop.tap()
+        XCTAssertTrue(app.buttons["ai-screen-frame-select-1"].waitForExistence(timeout: 15))
+        let grid = XCTAttachment(screenshot: app.screenshot())
+        grid.name = "agent-camera-stopped-grid"
+        grid.lifetime = .keepAlways
+        add(grid)
+        app.buttons["ai-screen-frame-select-0"].tap()
+        app.buttons["ai-screen-frames-add"].tap()
+        XCTAssertTrue(app.scrollViews["ai-pending-attachments"].waitForExistence(timeout: 15),
+                      "选择图片后应回到原会话草稿")
+        let archivedAttachment = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "ai-remove-attachment-.maichat/screen-frame-archive/")).firstMatch
+        XCTAssertTrue(archivedAttachment.exists, "草稿应引用归档原图")
+        XCTAssertTrue(open.exists)
+        #else
+        throw XCTSkip("相机合成帧验收只在 Debug 模拟器运行")
+        #endif
+    }
+
     @MainActor
     func testRealSamplerSelectionUsesOriginalFramesAndCleanupKeepsReferences() throws {
         #if targetEnvironment(simulator)

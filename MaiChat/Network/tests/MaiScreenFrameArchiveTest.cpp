@@ -282,6 +282,47 @@ static void reopen(const std::string& root) {
     CHECK(ok(root, {{"action", "list"}})["frames"].empty());
     std::puts("PASS: process reopen, original-path pins, idempotent release and scoped history deletion");
 }
+// A stale workspace key in an older batch must not hide a later valid batch.
+// The stale batch remains protected from direct get/retain and is never deleted.
+static void staleBatchIsolation(const std::string& root) {
+    const std::string tiny = png();
+    const std::string stale = begin(root);
+    const Json oldFrame = ok(root, append(stale, 0), &tiny)["frame"];
+    ok(root, {{"action", "finish"}, {"batch_id", stale}});
+    const std::string oldPath = oldFrame["path"];
+    const std::string manifestPath = root + "/" + oldPath.substr(0, oldPath.find_last_of('/')) + "/manifest.json";
+    Json manifest = Json::parse(read(manifestPath));
+    manifest["workspace_key"] = std::string(64, '0');
+    write(manifestPath, manifest.dump());
+    const std::string current = begin(root);
+    const Json frame = ok(root, append(current, 0), &tiny)["frame"];
+    ok(root, {{"action", "finish"}, {"batch_id", current}});
+    const Json listing = ok(root, {{"action", "list"}});
+    CHECK(listing["batches"].size() == 1 && listing["batches"][0]["id"] == current);
+    CHECK(listing["frames"].size() == 1 && listing["frames"][0]["id"] == frame["id"]);
+    CHECK(listing["unavailable_batches"].size() == 1 && listing["unavailable_batches"][0] == stale);
+    CHECK(request(root, {{"action", "get"}, {"batch_id", stale}, {"frame_id", oldFrame["id"]}})["ok"] == false);
+    CHECK(request(root, {{"action", "retain"}, {"batch_id", stale}, {"frame_id", oldFrame["id"]},
+        {"reference_id", "selection"}})["ok"] == false);
+    CHECK(request(root, {{"action", "discard"}, {"batch_id", stale}})["ok"] == false);
+    CHECK(exists(root + "/" + oldPath));
+    const std::string unchangedManifest = read(manifestPath);
+    const std::string currentPath = root + "/" + frame["path"].get<std::string>();
+    ok(root, {{"action", "retain"}, {"batch_id", current}, {"frame_id", frame["id"]},
+              {"reference_id", "history"}, {"usage_session_id", "session-to-delete"}});
+    ok(root, {{"action", "discard"}, {"batch_id", current}});
+    CHECK(exists(currentPath));
+    const Json released = ok(root, {{"action", "release_session"}}, nullptr, "session-to-delete");
+    CHECK(released["released_references"] == 1 && released["removed_batches"] == 1);
+    CHECK(released["unavailable_batch_count"] == 1);
+    CHECK(!exists(currentPath) && exists(root + "/" + oldPath));
+    CHECK(read(manifestPath) == unchangedManifest);
+    manifest["owner_session_id"] = "wrong-owner";
+    write(manifestPath, manifest.dump());
+    CHECK(request(root, {{"action", "list"}})["ok"] == false);
+    CHECK(request(root, {{"action", "release_session"}}, nullptr, "session-to-delete")["ok"] == false);
+    std::puts("PASS: stale batch does not hide valid batch and remains protected");
+}
 static int entry(int argc, const std::vector<std::string>& args) {
     try { CHECK(argc == 3); if (args[1] == "--run") run(args[2]);
           else if (args[1] == "--process-race") {
@@ -291,7 +332,9 @@ static int entry(int argc, const std::vector<std::string>& args) {
               CHECK(result["ok"] == true || result["errorCode"] == "rate_limited");
               std::puts(result["ok"] == true ? "race.accepted" : "race.rate_limited");
           }
-          else if (args[1] == "--reopen") reopen(args[2]); else CHECK(false); return 0; }
+          else if (args[1] == "--reopen") reopen(args[2]);
+          else if (args[1] == "--stale-batch") staleBatchIsolation(args[2]);
+          else CHECK(false); return 0; }
     catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }
 }
 #ifdef _WIN32

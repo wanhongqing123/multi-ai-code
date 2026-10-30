@@ -50,7 +50,13 @@ def file_digest(path):
 
 
 def draft(repo, tag):
-    release = json.loads(gh('api', f'repos/{repo}/releases/tags/{tag}'))
+    # 按 tag 查询的 REST 端点不返回草稿；枚举受认证账号可见的发布并精确匹配。
+    pages = json.loads(gh('api', '--paginate', '--slurp',
+                          f'repos/{repo}/releases?per_page=100'))
+    found = [release for page in pages for release in page if release.get('tag_name') == tag]
+    if len(found) != 1:
+        raise ValueError('Draft release tag was not found uniquely')
+    release = found[0]
     if not release.get('draft'):
         raise ValueError('Only draft releases can be assembled')
     return release

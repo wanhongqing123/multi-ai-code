@@ -49,6 +49,7 @@ import {
   listRemoteImMessagesForSummary,
   listRemoteImPeerMessagesBefore,
   restoreRemoteImImageAttachment,
+  restoreRemoteImFileAttachment,
   updateRemoteImMessageStatus
 } from './messageStore.js'
 import {
@@ -100,6 +101,7 @@ import {
   type CachedRemoteImImage
 } from './imageCache.js'
 import { retryRemoteImImage } from './imageRetry.js'
+import { retryRemoteImFile } from './fileRetry.js'
 import {
   loadRemoteImLocalImageForSend,
   readRemoteImLocalImageDataUrl,
@@ -3045,6 +3047,39 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       })
   )
 
+  // 单独恢复历史文件缓存，不经消息投递路由，避免旧文件触发重复任务。
+  // 同一账号消息同时只允许一个下载，避免不同窗口并发写入同一个缓存文件。
+  const retryingFiles = new Set<string>()
+  ipcMain.handle(
+    'remote-im:retry-file',
+    async (_event, input: { projectId: string; messageId: number }) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+        const projectId = typeof input?.projectId === 'string' ? input.projectId.trim() : ''
+        const key = JSON.stringify([securityGeneration, projectId, input?.messageId])
+        if (retryingFiles.has(key)) {
+          return { ok: false as const, error: '文件正在下载' }
+        }
+        retryingFiles.add(key)
+        try {
+          await retryRemoteImFile(projectId, input?.messageId, {
+            rootDir: rootDir(),
+            fetchImpl: (url) => net.fetch(url),
+            maxBytes: MAX_REMOTE_IM_FILE_BYTES,
+            listById: listRemoteImMessageById,
+            restore: restoreRemoteImFileAttachment,
+            isAccountCurrent: () => isRemoteImAccountSecurityGenerationCurrent(securityGeneration)
+          })
+          broadcastMessagesChanged(projectId)
+          return { ok: true as const }
+        } catch {
+          // 签名地址与供应商网络异常不展示到界面。
+          return { ok: false as const, error: '文件下载失败，请稍后重试' }
+        } finally {
+          retryingFiles.delete(key)
+        }
+      })
+  )
+
   // 图片预览只接受消息 id：实际路径从当前账号数据库中的可信附件记录读取，
   // 避免渲染层借 IPC 读取任意本地文件。
   ipcMain.handle(
@@ -3607,7 +3642,9 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               remoteMessageId: incoming.remoteMessageId,
               fileName: incoming.fileName,
               mimeType: incoming.mimeType,
-              maxBytes: MAX_REMOTE_IM_FILE_BYTES
+              maxBytes: MAX_REMOTE_IM_FILE_BYTES,
+              // 文件和图片都来自 IM 的下载域名；统一使用 Electron 网络栈以遵循系统代理。
+              fetchImpl: (url) => net.fetch(url)
             })
             const attachment: RemoteImFileAttachment = {
               ...fallbackAttachment,

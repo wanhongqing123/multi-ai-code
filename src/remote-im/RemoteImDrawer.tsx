@@ -172,11 +172,34 @@ function RemoteImImageMessage(props: { message: RemoteImMessage; projectId: stri
   )
 }
 
-function RemoteImFileMessage(props: {
+export function RemoteImFileMessage(props: {
   message: RemoteImMessage
+  projectId: string | null
   onPreview: (message: RemoteImMessage) => void
 }): JSX.Element {
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
+  const retryInFlight = useRef(false)
   const attachment = props.message.attachment?.type === 'file' ? props.message.attachment : null
+  const canRetry = Boolean(props.projectId && props.message.projectId === props.projectId &&
+    props.message.direction === 'incoming' && props.message.status === 'failed' &&
+    attachment?.remoteUrl && !attachment.localPath)
+  // 同步锁防止连续点击导致并行下载；恢复旧文件不会重新向 Agent 投递。
+  const retry = async (): Promise<void> => {
+    if (!props.projectId || retryInFlight.current) return
+    retryInFlight.current = true
+    setRetrying(true)
+    setRetryError(null)
+    try {
+      const result = await window.api.remoteIm.retryFile(props.projectId, props.message.id)
+      if (!result.ok) setRetryError(result.error)
+    } catch {
+      setRetryError('文件下载失败，请稍后重试')
+    } finally {
+      retryInFlight.current = false
+      setRetrying(false)
+    }
+  }
   const fileName = attachment?.fileName ?? props.message.content.replace(/^\[文件消息\]\s*/, '')
   const lowerName = (fileName || '').toLowerCase()
   // 仅 md/html 支持内嵌预览；普通文件显示为文件卡片。老消息可能没有 MIME，按扩展名兜底。
@@ -215,6 +238,12 @@ function RemoteImFileMessage(props: {
     <div className="remote-im-attachment-message">
       {props.message.captionAbove === true ? <RemoteImAttachmentCaption message={props.message} /> : null}
       {card}
+      {canRetry ? (
+        <button type="button" disabled={retrying} onClick={() => void retry()}>
+          {retrying ? '下载中…' : '重新下载文件'}
+        </button>
+      ) : null}
+      {retryError ? <div role="alert">{retryError}</div> : null}
       {props.message.captionAbove !== true ? <RemoteImAttachmentCaption message={props.message} /> : null}
     </div>
   )
@@ -703,7 +732,9 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                           {message.kind === 'image' ? (
                             <RemoteImImageMessage message={message} projectId={props.projectId} />
                           ) : message.kind === 'file' ? (
-                            <RemoteImFileMessage message={message} onPreview={handlePreviewFile} />
+                            <RemoteImFileMessage
+                              message={message} projectId={props.projectId} onPreview={handlePreviewFile}
+                            />
                           ) : message.kind === 'video' ? (
                             <RemoteImVideoMessage message={message} />
                           ) : (

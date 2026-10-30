@@ -186,6 +186,29 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
 }
 
 describe('remote IM message store', () => {
+  it('restores only the matching failed file once without changing delivery metadata', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const attachment = {
+      type: 'file' as const, localPath: null, remoteUrl: 'https://example.test/file',
+      sizeBytes: null, fileName: 'report.md', mimeType: 'text/markdown', sdkFileId: 'sdk-id'
+    }
+    const original = store.create({
+      projectId: 'project-1', provider: 'tencent-im', remoteMessageId: 'remote-file',
+      role: 'remote-user', direction: 'incoming', content: '[文件消息]', caption: '说明',
+      kind: 'file', attachment, status: 'failed', error: '下载失败', createdAt: 42
+    })
+    const restored = { ...attachment, localPath: '/cache/report.md' }
+    expect(store.restoreFileAttachment('other-project', original.id, attachment.remoteUrl, restored)).toBeNull()
+    expect(store.restoreFileAttachment('project-1', original.id, 'https://other.test/', restored)).toBeNull()
+    expect(store.restoreFileAttachment('project-1', original.id, attachment.remoteUrl, restored))
+      .toMatchObject({
+        id: original.id, status: 'received', error: null, caption: '说明',
+        remoteMessageId: 'remote-file', sentToAicliAt: null,
+        attachment: { localPath: '/cache/report.md', remoteUrl: attachment.remoteUrl }
+      })
+    expect(store.restoreFileAttachment('project-1', original.id, attachment.remoteUrl, restored)).toBeNull()
+    expect(store.list('project-1')).toHaveLength(1)
+  })
   it('restores a failed image in place without rerouting it or changing its caption', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     const attachment = {

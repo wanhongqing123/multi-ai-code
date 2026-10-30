@@ -40,6 +40,13 @@ beforeEach(() => {
 })
 
 describe('preload remote IM api', () => {
+  it('retries a file using only the project and message identifiers', async () => {
+    const api = await loadApi()
+    await api.remoteIm.retryFile('project-1', 42)
+    expect(electronMock.invoke).toHaveBeenCalledWith('remote-im:retry-file', {
+      projectId: 'project-1', messageId: 42
+    })
+  })
   it('retries an image using only its project and message identifiers', async () => {
     const api = await loadApi()
     await api.remoteIm.retryImage('project-1', 42)

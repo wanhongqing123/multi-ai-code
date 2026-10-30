@@ -355,6 +355,29 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
       ? updated : null
   }
 
+  // 失败文件只能恢复附件本身；先核对原账号库、消息归属与地址，不重新交给 Agent。
+  function restoreFileAttachment(
+    projectId: string,
+    id: number,
+    expectedUrl: string,
+    attachment: RemoteImFileAttachment
+  ): RemoteImMessage | null {
+    const current = listById(id)
+    if (!current || current.projectId !== projectId || current.direction !== 'incoming' ||
+        current.status !== 'failed' || current.kind !== 'file' ||
+        current.attachment?.type !== 'file' || current.attachment.localPath ||
+        current.attachment.remoteUrl !== expectedUrl || !attachment.localPath ||
+        attachment.remoteUrl !== expectedUrl) return null
+    database.prepare(`
+      UPDATE remote_im_messages
+      SET attachment_json = ?, status = 'received', error = NULL
+      WHERE id = ? AND project_id = ? AND status = 'failed'
+    `).run(serializeAttachmentJson(attachment), id, projectId)
+    const updated = listById(id)
+    return updated?.attachment?.type === 'file' && updated.attachment.localPath === attachment.localPath
+      ? updated : null
+  }
+
   // 键集分页取某会话更早的消息：严格早于 (beforeCreatedAt, beforeId)，
   // 升序返回，最多 limit 条。大历史下配合前端「加载更早」按需翻页。
   function listPeerBefore(
@@ -429,6 +452,7 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     listRecent,
     updateStatus,
     restoreImageAttachment,
+    restoreFileAttachment,
     failIfStreaming,
     clearPeer,
     listPeerBefore,
@@ -467,6 +491,12 @@ export function restoreRemoteImImageAttachment(
   projectId: string, id: number, expectedUrl: string, attachment: RemoteImImageAttachment
 ): RemoteImMessage | null {
   return defaultStore().restoreImageAttachment(projectId, id, expectedUrl, attachment)
+}
+
+export function restoreRemoteImFileAttachment(
+  projectId: string, id: number, expectedUrl: string, attachment: RemoteImFileAttachment
+): RemoteImMessage | null {
+  return defaultStore().restoreFileAttachment(projectId, id, expectedUrl, attachment)
 }
 
 export function failRemoteImMessageIfStreaming(id: number, error: string): RemoteImMessage | null {

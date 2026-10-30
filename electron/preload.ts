@@ -441,6 +441,11 @@ const api = {
       ipcRenderer.invoke('remote-im:retry-image', { projectId, messageId }) as Promise<
         { ok: true } | { ok: false; error: string }
       >,
+    // 文件重试同样只恢复缓存，不重新触发 Agent。
+    retryFile: (projectId: string, messageId: number) =>
+      ipcRenderer.invoke('remote-im:retry-file', { projectId, messageId }) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
     // 消息汇总视图：取回项目最近的消息全集（默认 3000 条，服务端硬顶 5000）。
     listMessagesForSummary: (projectId: string, limit = 3000) =>
       ipcRenderer.invoke('remote-im:list-messages-for-summary', { projectId, limit }) as Promise<

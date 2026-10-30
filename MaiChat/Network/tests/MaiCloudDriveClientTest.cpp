@@ -1,4 +1,5 @@
 #include "MaiCloudDriveClient.h"
+#include "MaiFirstPartyRouteInternal.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -19,6 +20,11 @@
 namespace {
 
 constexpr uint64_t kPartBytes = 8 * 1024 * 1024;
+
+int rejectFirstPartyRoute(const char*, const char*, void* context) {
+    ++*static_cast<int*>(context);
+    return MAI_FIRST_PARTY_ROUTE_UNAVAILABLE;
+}
 
 void require(bool value, const char* message) {
     if (!value) {
@@ -230,11 +236,24 @@ int main(int argc, char** argv) {
     author.signed_upload_host_suffix_utf8 = "localhost";
     author.connect_timeout_ms = 2000;
     author.transfer_timeout_ms = 5000;
+    int selectedRoutes = 0;
+    author.first_party_route_selector = rejectFirstPartyRoute;
+    author.first_party_route_context = &selectedRoutes;
     MaiCloudDriveOptions viewer = author;
     viewer.account_token_utf8 = "viewer-token";
 
     require(request(viewer, MAI_CLOUD_DRIVE_LIST_VIDEOS).body.find("\"videos\":[]") !=
             std::string::npos, "other account saw an unuploaded video");
+    require(selectedRoutes == 0, "local endpoint inherited first-party routing");
+    require(!maiFirstPartyRoute::eligible("https://ichat.life.evil/api", true) &&
+            !maiFirstPartyRoute::eligible("https://ichat.life/api", false),
+            "third-party upload or deceptive hostname inherited account routing");
+    MaiCloudDriveOptions blocked = author;
+    blocked.auth_base_url_utf8 = "https://ichat.life/api";
+    require(request(blocked, MAI_CLOUD_DRIVE_CREATE_FOLDER,
+                    R"({"name":"route-test"})").status == MAI_CLOUD_DRIVE_NETWORK_ERROR &&
+            selectedRoutes == 1,
+            "unavailable route must block account writes before network transmission");
     require(request(author, MAI_CLOUD_DRIVE_LIST_VIDEOS,
                     R"({"before":"bad cursor!"})").status ==
                     MAI_CLOUD_DRIVE_INVALID_ARGUMENT,
@@ -600,6 +619,8 @@ int main(int argc, char** argv) {
     require(request(session, MAI_SESSION_ATTACHMENT_CLEANUP_ROOM).status ==
             MAI_CLOUD_DRIVE_OK,
             "Session room cleanup did not reach the separate API");
+    require(selectedRoutes == 1,
+            "local cloud/OSS upload or download selected the first-party route");
 
     std::cout << "cloud drive local TLS media upload/cancel/resume/privacy passed\n";
     return 0;

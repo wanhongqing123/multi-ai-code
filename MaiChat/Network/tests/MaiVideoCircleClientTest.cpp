@@ -1,4 +1,5 @@
 #include "MaiVideoCircleClient.h"
+#include "MaiFirstPartyRouteInternal.h"
 
 #include <curl/curl.h>
 
@@ -12,6 +13,11 @@
 #include <thread>
 
 namespace {
+
+int rejectFirstPartyRoute(const char*, const char*, void* context) {
+    ++*static_cast<int*>(context);
+    return MAI_FIRST_PARTY_ROUTE_UNAVAILABLE;
+}
 
 struct CallResult {
     MaiVideoCircleStatus status{};
@@ -145,6 +151,9 @@ int main(int argc, char** argv) {
     author.signed_upload_host_suffix_utf8 = "localhost";
     author.connect_timeout_ms = 2000;
     author.transfer_timeout_ms = 5000;
+    int selectedRoutes = 0;
+    author.first_party_route_selector = rejectFirstPartyRoute;
+    author.first_party_route_context = &selectedRoutes;
     MaiVideoCircleOptions viewer = author;
     viewer.account_token_utf8 = "viewer-token";
 
@@ -152,6 +161,16 @@ int main(int argc, char** argv) {
     require(emptyFeed.status == MAI_VIDEO_CIRCLE_OK && emptyFeed.httpStatus == 200 &&
                 emptyFeed.body.find("\"posts\":[]") != std::string::npos,
             "initial viewer feed was not empty");
+    require(selectedRoutes == 0, "local endpoint inherited first-party routing");
+    require(!maiFirstPartyRoute::eligible("https://ichat.life.evil/api", true) &&
+            !maiFirstPartyRoute::eligible("https://ichat.life/maichat", false),
+            "third-party upload or deceptive hostname inherited account routing");
+    MaiVideoCircleOptions blocked = author;
+    blocked.auth_base_url_utf8 = "https://ichat.life/api";
+    require(request(blocked, MAI_VIDEO_CIRCLE_REPORT,
+                    R"({"post_id":"00000000-0000-0000-0000-000000000001","reason":"spam"})").status ==
+                MAI_VIDEO_CIRCLE_NETWORK_ERROR && selectedRoutes == 1,
+            "unavailable route must block account writes before network transmission");
 
     const CallResult signedUpload = request(author, MAI_VIDEO_CIRCLE_SIGN_UPLOAD,
         R"({"filename":"clip.mp4","size_bytes":1000})");
@@ -307,6 +326,8 @@ int main(int argc, char** argv) {
             "in-flight metadata request did not cancel");
     mai_video_circle_result_free(&canceledResult);
     mai_video_circle_cancel_destroy(cancel);
+    require(selectedRoutes == 1,
+            "local video-circle or signed OSS upload selected the first-party route");
 
     curl_global_cleanup();
     std::cout << "local TLS video-circle C ABI cases passed" << std::endl;

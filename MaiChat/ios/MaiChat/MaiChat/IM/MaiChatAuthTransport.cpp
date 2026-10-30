@@ -31,6 +31,7 @@ enum class AuthRoute { System, AliDoh, CloudflareDoh };
 std::mutex routeMutex;
 std::string cachedProxyKey;
 AuthRoute cachedRoute = AuthRoute::System;
+bool cachedRouteAvailable = false;
 std::chrono::steady_clock::time_point routeExpiry;
 #ifdef MAICHAT_AUTH_ROUTE_TEST
 // 测试只替换网络结果，正式构建不暴露线路或业务发送的注入入口。
@@ -39,6 +40,14 @@ CURLcode (*businessHook)() = nullptr;
 const char* testDohUrl = nullptr;
 curl_slist* testConnectTo = nullptr;
 #endif
+
+// 所有原生入口共用一次进程级初始化，包括不经账号客户端的云盘请求。
+bool ensureCurlInitialized() {
+    static std::once_flag initialization;
+    static CURLcode code = CURLE_FAILED_INIT;
+    std::call_once(initialization, [] { code = curl_global_init(CURL_GLOBAL_DEFAULT); });
+    return code == CURLE_OK;
+}
 
 struct ResponseCollector {
     uint8_t* bytes = nullptr;
@@ -257,25 +266,44 @@ bool waitForProbe(const std::shared_ptr<ProbeState>& state, int count, long time
 
 bool chooseRoute(const maiChatNetwork::SystemProxy& proxy, bool proxyValid,
                  const std::string& caPath, AuthRoute* route) {
-    const std::string key = proxyValid ?
+    const std::string key = (proxyValid ?
         std::to_string(proxy.direct) + ":" + std::to_string(proxy.type) + ":" + proxy.host + ":" +
-            std::to_string(proxy.port) : "unavailable";
+            std::to_string(proxy.port) : "unavailable") + "\n" + caPath;
     // 串行化选路，避免并发账号请求同时重复启动探测。
     std::lock_guard<std::mutex> lock(routeMutex);
     if (key == cachedProxyKey && std::chrono::steady_clock::now() < routeExpiry) {
         *route = cachedRoute;
-        return true;
+        return cachedRouteAvailable;
     }
     bool ok = proxyValid && waitForProbe(launchProbes(proxy, caPath, true), 1, 2500, route);
     if (!ok) ok = waitForProbe(launchProbes(proxy, caPath, false), 2, 7000, route);
-    if (!ok) return false;
     cachedProxyKey = key;
-    cachedRoute = *route;
-    routeExpiry = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    return true;
+    cachedRouteAvailable = ok;
+    if (ok) cachedRoute = *route;
+    // 失败短缓存合并并发请求，避免 N 个请求排队各自做 9.5 秒探测。
+    // 网络恢复后最多等待 5 秒即可重新探测；成功线路仍缓存 60 秒。
+    routeExpiry = std::chrono::steady_clock::now() + std::chrono::seconds(ok ? 60 : 5);
+    return ok;
 }
 
 }  // namespace
+
+extern "C" int maiChatSelectFirstPartyRoute(const char* url, const char* caPath, void*) {
+    // 严格限定账号服务的 HTTPS origin，避免把其他域名的凭据发到探测线路。
+    constexpr char origin[] = "https://ichat.life/";
+    if (!url || std::strncmp(url, origin, sizeof(origin) - 1) != 0 ||
+        std::strlen(url) > 4096 || !caPath || !caPath[0] || !ensureCurlInitialized()) return -1;
+    maiChatNetwork::SystemProxy proxy;
+    const bool valid = maiChatNetwork::selectSystemProxy(url, &proxy);
+    AuthRoute route = AuthRoute::System;
+    if (!chooseRoute(proxy, valid, caPath, &route)) return -1;
+    return static_cast<int>(route);
+}
+
+extern "C" void maiChatInvalidateFirstPartyRoute(void*) {
+    std::lock_guard<std::mutex> lock(routeMutex);
+    routeExpiry = {};
+}
 
 // 一次调用完成参数验证、系统代理选择、libcurl 初始化、传输和资源释放。
 // 生产服务先用无凭据请求选路；业务 POST 使用全新连接且禁自动跳转，不进行应用层重试。
@@ -293,10 +321,7 @@ extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, cons
     maiChatNetwork::SystemProxy proxy;
     const bool proxyValid = maiChatNetwork::selectSystemProxy(url, &proxy);
     // libcurl 是进程级组件，只初始化一次；每个账号请求仍使用独立 easy handle。
-    static std::once_flag curlInitialization;
-    static CURLcode initializationResult = CURLE_FAILED_INIT;
-    std::call_once(curlInitialization, [] { initializationResult = curl_global_init(CURL_GLOBAL_DEFAULT); });
-    if (initializationResult != CURLE_OK) {
+    if (!ensureCurlInitialized()) {
         result->transportCode = -3;
         return;
     }
@@ -338,8 +363,7 @@ extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, cons
         result->transportCode = collector.limitExceeded ? -2 : static_cast<int>(transferResult);
         if (production && transferResult != CURLE_OK) {
             // 请求可能已到达服务器；只让下次请求重新选路，绝不重放本次 POST。
-            std::lock_guard<std::mutex> lock(routeMutex);
-            routeExpiry = {};
+            maiChatInvalidateFirstPartyRoute(nullptr);
         }
         if (result->transportCode == 0 && collector.length > 0) {
             result->responseBody = collector.bytes;

@@ -417,6 +417,9 @@ struct MaiCloudDriveClient: Sendable {
                                     options.ca_path_utf8 = ca
                                     options.proxy_resolver = maiChatAttachmentProxyResolver
                                     options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                    // 账号控制请求使用健康探测选出的线路；OSS 仍独立选路。
+                                    options.first_party_route_selector = maiChatSelectFirstPartyRoute
+                                    options.first_party_route_invalidator = maiChatInvalidateFirstPartyRoute
                                     let invoke = { mai_cloud_drive_abort_resumable(
                                         &options, checkpoint, cancel.pointer, &native) }
                                     if let pem = certificate.pem {
@@ -513,6 +516,9 @@ struct MaiCloudDriveClient: Sendable {
                                         options.signed_upload_host_suffix_utf8 = host
                                         options.proxy_resolver = maiChatAttachmentProxyResolver
                                         options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                        // 播放签名刷新仍是账号请求，沿用登录的备用线路。
+                                        options.first_party_route_selector = maiChatSelectFirstPartyRoute
+                                        options.first_party_route_invalidator = maiChatInvalidateFirstPartyRoute
                                         if let pem = certificate.pem {
                                             return pem.withUnsafeBytes { bytes in
                                                 options.ca_pem = bytes.baseAddress?
@@ -744,6 +750,9 @@ struct MaiCloudDriveClient: Sendable {
                                     options.ca_path_utf8 = ca
                                     options.proxy_resolver = maiChatAttachmentProxyResolver
                                     options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                    // 上传会交替访问账号接口和 OSS；核心仅对账号接口使用此线路。
+                                    options.first_party_route_selector = maiChatSelectFirstPartyRoute
+                                    options.first_party_route_invalidator = maiChatInvalidateFirstPartyRoute
                                     options.signed_upload_host_suffix_utf8 = host
                                     options.retain_completed_checkpoint = 1
                                     let invokeUpload = {
@@ -856,6 +865,9 @@ struct MaiCloudDriveClient: Sendable {
                             options.signed_upload_host_suffix_utf8 = host
                             options.proxy_resolver = maiChatAttachmentProxyResolver
                             options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                            // 文件操作只在探测成功后发送一次，失败留给下一次重新选路。
+                            options.first_party_route_selector = maiChatSelectFirstPartyRoute
+                            options.first_party_route_invalidator = maiChatInvalidateFirstPartyRoute
                             let invokeRequest = { mai_cloud_drive_request(
                                 &options, action, json, cancel.pointer, &native) }
                             let invoke = {

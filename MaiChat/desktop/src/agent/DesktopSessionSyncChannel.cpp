@@ -151,8 +151,12 @@ void DesktopSessionSyncChannel::startWhenReady() {
     if (socket_ || !bearerProvider_) return;
     const QByteArray token = bearerProvider_().toUtf8();
     if (token.isEmpty() || url_.scheme() != QStringLiteral("wss")) return;
-    const QString proxy = proxyForUrl(url_);
-    if (proxy == QStringLiteral("unsupported")) return;
+    QString proxy = proxyForUrl(url_);
+    if (proxy == QStringLiteral("unsupported")) {
+        // 账号域名允许尝试直连，其他域名仍遵守原有代理限制。
+        if (url_.host() != QStringLiteral("ichat.life")) return;
+        proxy.clear();
+    }
     QByteArray ca = trustedCaPem_;
     if (ca.isEmpty()) {
         Q_INIT_RESOURCE(AuthCertificates);

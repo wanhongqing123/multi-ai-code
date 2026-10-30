@@ -14,4 +14,5 @@ python3 MaiChat/ios/MaiChat/scripts/test-auth-route-tls.py /private/tmp/maichat-
 
 - 现场网络观察：本机无代理的系统 DNS 请求超时；主机 curl 使用 `https://223.5.5.5/dns-query`、`https://1.1.1.1/dns-query` 分别直连生产 `auth/me` 均收到 401，启用了 HTTPS 证书和主机名验证，未发送凭据。不能据此推定任意网络或设备均可用。
 - 范围：云盘、视频圈、会话同步 WSS、模型供应商网络等不经过此账号传输，尚未获得本次备用线路。HTTP/3 / QUIC 尚未启用，不能代替 DNS 解析。
-- 未验证：真机安装、真机登录，以及 iOS 随包 libcurl 的实际 DoH 网络和证书行为。
+- 已安装并启动 iPhone 2.2.4 (144)；未验证真机登录，以及 iOS 随包 libcurl 的实际 DoH 网络和证书行为。
+- 共享入口：随后向云盘/视频圈暴露同一第一方选路与缓存失效 C 接口。入口严格限制 `https://ichat.life/`、要求 CA 路径、独立完成 curl 初始化；定向测试覆盖伪造 origin、缺少 CA、线路全部不可用和缓存失效。同步探测最长约 9.5 秒，排队和系统调度会延长等待；探测不支持中途取消，调用方应在选路前后检查取消。全线路失败缓存 5 秒以合并并发探测。

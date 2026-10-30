@@ -5,6 +5,7 @@
 #endif
 
 #include "MaiCloudDriveClient.h"
+#include "MaiFirstPartyRouteInternal.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -795,9 +796,18 @@ void performHttp(const MaiCloudDriveOptions* options, const std::string& url,
 #ifdef _WIN32
     else set(CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
 #endif
-    if (setup == CURLE_OK &&
-        !configureProxy(curl, options, url, result,
-                        &proxy, &proxyUser, &proxyPassword))
+    // Select before sending any business request. A signed OSS part must not
+    // inherit the account endpoint's DNS or proxy route.
+    const bool routed = options->first_party_route_selector &&
+        maiFirstPartyRoute::eligible(url, part == nullptr);
+    int route = MAI_FIRST_PARTY_ROUTE_SYSTEM;
+    if (setup == CURLE_OK && routed)
+        route = options->first_party_route_selector(url.c_str(), options->ca_path_utf8,
+                                                    options->first_party_route_context);
+    if (setup == CURLE_OK && route != MAI_FIRST_PARTY_ROUTE_SYSTEM)
+        setup = maiFirstPartyRoute::apply(curl, route);
+    else if (setup == CURLE_OK &&
+             !configureProxy(curl, options, url, result, &proxy, &proxyUser, &proxyPassword))
         setup = CURLE_COULDNT_RESOLVE_PROXY;
     if (part) {
         // Signed OSS URL: deliberately omit account Authorization and cookies.
@@ -835,6 +845,11 @@ void performHttp(const MaiCloudDriveOptions* options, const std::string& url,
     if (setup == CURLE_OK && !canceled(cancel)) {
         code = curl_easy_perform(curl);
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+        // The server may already have applied a write. Invalidate only for the
+        // next operation; never replay this request after an ambiguous failure.
+        if (routed && code != CURLE_OK && !canceled(cancel) &&
+            options->first_party_route_invalidator)
+            options->first_party_route_invalidator(options->first_party_route_context);
     }
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);

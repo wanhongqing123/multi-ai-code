@@ -405,6 +405,9 @@ struct MaiVideoCircleClient: Sendable {
                                 options.ca_path_utf8 = ca
                                 options.proxy_resolver = maiChatAttachmentProxyResolver
                                 options.proxy_context = Unmanaged.passUnretained(proxy).toOpaque()
+                                // 仅账号域名的签名和视频圈接口使用登录的备用线路。
+                                options.first_party_route_selector = maiChatSelectFirstPartyRoute
+                                options.first_party_route_invalidator = maiChatInvalidateFirstPartyRoute
                                 options.signed_upload_host_suffix_utf8 = host
                                 let invoke = {
                                     if case let .uploadFile(signedJSON, filePath, bytes) = kind {

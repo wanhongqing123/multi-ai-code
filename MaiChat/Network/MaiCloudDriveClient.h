@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MaiCurlDownload.h"
+#include "MaiFirstPartyRoute.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -95,6 +96,11 @@ typedef struct MaiCloudDriveOptions {
     const char* owner_device_slot_utf8;
     const char* owner_login_session_id_utf8;
     const char* session_id_utf8;
+    // Optional account-domain selection, called before each control request.
+    // Signed OSS uploads continue to use their own proxy configuration.
+    MaiFirstPartyRouteSelector first_party_route_selector;
+    MaiFirstPartyRouteInvalidator first_party_route_invalidator;
+    void* first_party_route_context;
 } MaiCloudDriveOptions;
 
 typedef struct MaiCloudDriveResult {

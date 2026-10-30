@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MaiCurlDownload.h"
+#include "MaiFirstPartyRoute.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -55,6 +56,11 @@ typedef struct MaiVideoCircleOptions {
     int transfer_timeout_ms; // <= 0 selects 30 seconds for metadata.
     // Null selects aliyuncs.com. Local TLS tests may set localhost.
     const char* signed_upload_host_suffix_utf8;
+    // Optional route selection for account control requests only; media PUTs
+    // to signed OSS URLs retain their independently selected system proxy.
+    MaiFirstPartyRouteSelector first_party_route_selector;
+    MaiFirstPartyRouteInvalidator first_party_route_invalidator;
+    void* first_party_route_context;
 } MaiVideoCircleOptions;
 
 typedef struct MaiVideoCircleResult {

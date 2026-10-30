@@ -584,10 +584,11 @@ private actor AIRemoteSessionTransport {
                 maiChatHttpProxyForURL($0, &proxyBytes, capacity)
             } == 1
             #endif
-            guard proxyFound else {
+            guard proxyFound || URL(string: url)?.host == "ichat.life" else {
                 throw AIBackendError(message: "当前网络代理不支持设备同步")
             }
-            let proxy = String(cString: proxyBytes)
+            // 账号域名在系统代理无法使用时允许直连；共享 WSS 核心继续校验原域名证书。
+            let proxy = proxyFound ? String(cString: proxyBytes) : ""
             let sink = AIRemoteSocketSink(self)
             guard let created = maiSessionSyncCreate(aiRemoteSocketEvent,
                 Unmanaged.passUnretained(sink).toOpaque()) else {

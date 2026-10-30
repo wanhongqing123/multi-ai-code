@@ -77,6 +77,8 @@ public:
                 int status = 200;
                 if (headers.startsWith("post /v1/auth/desktop/request ")) {
                     ++qrRequestCount;
+                    // 保持连接不响应，复现账号服务长时间无响应时的超时界面。
+                    if (holdQrResponse) return;
                     challenge = body.value(QStringLiteral("code_challenge")).toString();
                     platform = body.value(QStringLiteral("platform")).toString();
                     response = {{QStringLiteral("request_id"), requestId},
@@ -299,6 +301,7 @@ public:
     QString challenge;
     QString platform;
     int qrRequestCount = 0;
+    bool holdQrResponse = false;
     bool verifierValid = false;
     int claimStatus = 202;
     bool approvalRevoked = false;
@@ -359,8 +362,10 @@ private slots:
     void liveProductionAccountPasswordLogin();
     void liveProductionMainModelKeyGate();
     void liveProductionQrCreationAndCancellation();
+    void liveProductionQrDialog();
     void usesCompactDesktopSize();
     void defaultDesktopLoginStartsQrWithoutStoredToken();
+    void qrTimeoutShowsRetryAndDoesNotRepeatRequest();
     void showsQrAndMaiChatPasswordLoginHierarchy();
     void switchingToPasswordCancelsQrAndKeepsAccountDraft();
     void accountPasswordLoginUsesServerSignedCredential();
@@ -455,6 +460,22 @@ void LoginDialogTest::liveProductionQrCreationAndCancellation() {
     QVERIFY(qr.width() > 0 && qr.height() > 0);
 }
 
+// 只用于显式验收：以无账号的真实登录窗创建一次二维码，关闭时撤销请求。
+void LoginDialogTest::liveProductionQrDialog() {
+    if (!qEnvironmentVariableIsSet("MAICHAT_AUTH_LIVE_QR_DIALOG")) QSKIP("Live QR dialog is opt-in");
+    DesktopAuthClient auth(nullptr, QUrl(QStringLiteral("https://ichat.life/api/v1/")), false);
+    LoginDialog dialog(&auth);
+    auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
+    QSignalSpy rejected(&dialog, &QDialog::rejected);
+    dialog.show();
+    dialog.start();
+    QTRY_VERIFY_WITH_TIMEOUT(!qr->pixmap(Qt::ReturnByValue).isNull(), 20000);
+    const QString screenshot = qEnvironmentVariable("MAICHAT_AUTH_QR_CAPTURE");
+    if (!screenshot.isEmpty()) QVERIFY(dialog.grab().save(screenshot));
+    dialog.reject();
+    QTRY_COMPARE_WITH_TIMEOUT(rejected.size(), 1, 20000);
+}
+
 void LoginDialogTest::usesCompactDesktopSize() {
     LoginDialog dialog;
     dialog.show();
@@ -477,6 +498,27 @@ void LoginDialogTest::defaultDesktopLoginStartsQrWithoutStoredToken() {
     dialog.start();
     QTRY_COMPARE_WITH_TIMEOUT(server.qrRequestCount, 1, 5000);
     QCOMPARE(server.refreshCount, 0);
+}
+
+// 超时后必须显示可恢复的状态；只有用户点击重试后才再次创建二维码。
+void LoginDialogTest::qrTimeoutShowsRetryAndDoesNotRepeatRequest() {
+    FakeQrServer server;
+    server.holdQrResponse = true;
+    DesktopAuthClient auth(nullptr, server.url(), false);
+    LoginDialog dialog(&auth);
+    auto* qr = dialog.findChild<QLabel*>(QStringLiteral("loginQr"));
+    auto* retry = dialog.findChild<QPushButton*>(QStringLiteral("loginRetryButton"));
+    dialog.show();
+    dialog.start();
+    QTRY_COMPARE_WITH_TIMEOUT(server.qrRequestCount, 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(qr->text(), QStringLiteral("网络连接失败"), 22000);
+    QVERIFY(retry->isVisible());
+    QCOMPARE(server.qrRequestCount, 1);
+    server.holdQrResponse = false;
+    retry->click();
+    QTRY_COMPARE_WITH_TIMEOUT(server.qrRequestCount, 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!qr->pixmap(Qt::ReturnByValue).isNull(), 5000);
+    dialog.reject();
 }
 
 void LoginDialogTest::showsQrAndMaiChatPasswordLoginHierarchy() {

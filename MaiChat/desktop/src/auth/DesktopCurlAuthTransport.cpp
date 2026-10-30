@@ -13,7 +13,10 @@
 #include <curl/curl.h>
 
 #include <cstring>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 
 #ifdef Q_OS_MACOS
 static void initializeAuthCertificates() {
@@ -26,6 +29,14 @@ namespace {
 constexpr int kMaximumResponseBytes = 1024 * 1024;
 constexpr int kMaximumHeaderBytes = 16 * 1024;
 constexpr int kMaximumRequestBytes = 32 * 1024;
+
+#ifdef Q_OS_MACOS
+// 备用解析仅用于账号域名，业务地址仍由 DNS 动态解析，TLS 仍校验原域名。
+enum class MacAuthRoute { System, AliDoh, CloudflareDoh };
+std::mutex macRouteMutex;
+MacAuthRoute cachedMacRoute = MacAuthRoute::System;
+std::chrono::steady_clock::time_point macRouteExpiry;
+#endif
 
 struct ResponseCollector {
     QByteArray body;
@@ -110,6 +121,8 @@ DesktopCurlAuthResult performWithRoute(
     const QByteArray& bearer, const std::shared_ptr<std::atomic_bool>& cancelled,
 #ifdef Q_OS_WIN
     const DesktopServiceProxyRoute* route,
+#elif defined(Q_OS_MACOS)
+    MacAuthRoute route,
 #endif
     int probeTimeoutMs) {
     DesktopCurlAuthResult result;
@@ -189,6 +202,17 @@ DesktopCurlAuthResult performWithRoute(
         }
     }
 #endif
+#ifdef Q_OS_MACOS
+    if (route != MacAuthRoute::System) {
+        // 只在无凭据探测证实此路径可用后使用；禁用代理避免代理重复解析域名。
+        set(CURLOPT_PROXY, "");
+        set(CURLOPT_NOPROXY, "*");
+        set(CURLOPT_DOH_URL, route == MacAuthRoute::AliDoh ?
+            "https://223.5.5.5/dns-query" : "https://1.1.1.1/dns-query");
+        set(CURLOPT_DOH_SSL_VERIFYPEER, 1L);
+        set(CURLOPT_DOH_SSL_VERIFYHOST, 2L);
+    }
+#endif
     if (url.scheme() == QStringLiteral("http")) {
         // 本机测试服务不得经过环境代理，避免把测试中的令牌发到外部代理。
         set(CURLOPT_PROXY, "");
@@ -257,6 +281,71 @@ DesktopCurlAuthResult performWithRoute(
     return result;
 }
 
+#ifdef Q_OS_MACOS
+bool probeMacSystemRoute(const std::shared_ptr<std::atomic_bool>& cancelled) {
+    // macOS 系统 DNS 可能在 curl 超时后仍阻塞清理解析线程；隔离无凭据探测，
+    // 超时后后台自行退出，不能让它拖住备用线路，也不能引用调用方的栈。
+    struct ProbeState {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool done = false;
+        bool available = false;
+    };
+    auto state = std::make_shared<ProbeState>();
+    std::thread([state, cancelled] {
+        const auto result = performWithRoute(
+            QUrl(QStringLiteral("https://ichat.life/api/v1/auth/me")),
+            "GET", {}, {}, cancelled, MacAuthRoute::System, 2500);
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->available = result.error.isEmpty() && result.status == 401 && !result.body.isEmpty();
+            state->done = true;
+        }
+        state->changed.notify_one();
+    }).detach();
+    std::unique_lock<std::mutex> lock(state->mutex);
+    return state->changed.wait_for(lock, std::chrono::milliseconds(2500),
+                                   [&] { return state->done; }) && state->available;
+}
+
+bool probeMacFallbackRoutes(const std::shared_ptr<std::atomic_bool>& cancelled,
+                            MacAuthRoute* selected) {
+    // 两个备用只发送无凭据健康请求，先成功的线路用于之后的单次业务请求。
+    // 共享状态由线程持有，较慢的探测完成前调用方可以安全返回。
+    struct ProbeState {
+        std::mutex mutex;
+        std::condition_variable changed;
+        int completed = 0;
+        bool available = false;
+        MacAuthRoute route = MacAuthRoute::System;
+    };
+    auto state = std::make_shared<ProbeState>();
+    for (const auto route : {MacAuthRoute::AliDoh, MacAuthRoute::CloudflareDoh}) {
+        std::thread([state, cancelled, route] {
+            const auto result = performWithRoute(
+                QUrl(QStringLiteral("https://ichat.life/api/v1/auth/me")),
+                "GET", {}, {}, cancelled, route, 7000);
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                ++state->completed;
+                if (!state->available && result.error.isEmpty() && result.status == 401 &&
+                    !result.body.isEmpty()) {
+                    state->available = true;
+                    state->route = route;
+                }
+            }
+            state->changed.notify_one();
+        }).detach();
+    }
+    std::unique_lock<std::mutex> lock(state->mutex);
+    state->changed.wait_for(lock, std::chrono::milliseconds(7000),
+                            [&] { return state->available || state->completed == 2; });
+    if (!state->available) return false;
+    *selected = state->route;
+    return true;
+}
+#endif
+
 }  // namespace
 
 DesktopCurlAuthResult DesktopCurlAuthTransport::perform(
@@ -287,6 +376,39 @@ DesktopCurlAuthResult DesktopCurlAuthTransport::perform(
         return result;
     }
     return performWithRoute(url, method, body, bearer, cancelled, nullptr, 0);
+#elif defined(Q_OS_MACOS)
+    if (url.scheme() == QStringLiteral("https") &&
+        url.host() == QStringLiteral("ichat.life")) {
+        MacAuthRoute selected = MacAuthRoute::System;
+        bool cached = false;
+        {
+            std::lock_guard<std::mutex> lock(macRouteMutex);
+            cached = std::chrono::steady_clock::now() < macRouteExpiry;
+            if (cached) selected = cachedMacRoute;
+        }
+        if (!cached) {
+            // 只探测无凭据 GET，切勿对二维码或密码 POST 做失败重放。
+            if (probeMacSystemRoute(cancelled)) {
+                selected = MacAuthRoute::System;
+            } else if (!cancelled->load() && probeMacFallbackRoutes(cancelled, &selected)) {
+            } else {
+                DesktopCurlAuthResult result;
+                result.error = cancelled->load() ? QStringLiteral("账号请求已取消") :
+                    QStringLiteral("无法连接登录服务，请检查网络后重试");
+                return result;
+            }
+            std::lock_guard<std::mutex> lock(macRouteMutex);
+            cachedMacRoute = selected;
+            macRouteExpiry = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        }
+        const auto result = performWithRoute(url, method, body, bearer, cancelled, selected, 0);
+        if (!result.error.isEmpty()) {
+            std::lock_guard<std::mutex> lock(macRouteMutex);
+            macRouteExpiry = {};
+        }
+        return result;
+    }
+    return performWithRoute(url, method, body, bearer, cancelled, MacAuthRoute::System, 0);
 #else
     return performWithRoute(url, method, body, bearer, cancelled, 0);
 #endif

@@ -14,6 +14,8 @@ public:
         QString deepseekBaseUrl;
         std::function<QString(const QString&)> keyProvider;
         MaiModelImagePreparer prepareImage;
+        // 测试可注入确定的逐跳网络路由；正式 Mac 配置为空时查询系统代理。
+        std::function<bool(const std::string&, MaiModelProxy&)> proxyResolver;
     };
 
     explicit DesktopAccountModelClient(Config config);

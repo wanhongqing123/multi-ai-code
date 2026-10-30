@@ -7,7 +7,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -25,6 +28,29 @@
 namespace {
 
 using Json = nlohmann::json;
+
+// curl 默认只向初始来源发送 Authorization；逐跳处理时必须保留同一边界。
+std::string modelOrigin(const std::string& url) {
+    CURLU* parsed = curl_url();
+    if (!parsed) return {};
+    char* scheme = nullptr;
+    char* host = nullptr;
+    char* port = nullptr;
+    std::string origin;
+    if (curl_url_set(parsed, CURLUPART_URL, url.c_str(), 0) == CURLUE_OK &&
+        curl_url_get(parsed, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
+        curl_url_get(parsed, CURLUPART_HOST, &host, 0) == CURLUE_OK &&
+        curl_url_get(parsed, CURLUPART_PORT, &port, CURLU_DEFAULT_PORT) == CURLUE_OK) {
+        origin = std::string(scheme) + "://" + host + ":" + port;
+        std::transform(origin.begin(), origin.end(), origin.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    }
+    curl_free(scheme);
+    curl_free(host);
+    curl_free(port);
+    curl_url_cleanup(parsed);
+    return origin;
+}
 
 std::string stringField(const Json& object, const char* field) {
     return object.is_object() && object.contains(field) && object[field].is_string()
@@ -257,6 +283,9 @@ struct StreamContext {
     bool done = false;
     bool inactive = false;
     bool progressTimedOut = false;
+    bool manualRedirects = false;
+    bool redirectStatus = false;
+    bool redirectResponse = false;
     long inactivityTimeoutSeconds = 0;
     long progressTimeoutSeconds = 0;
     // 链路活动与生成进展是两个事实；保活证明连接仍有数据，不能证明模型仍在计算。
@@ -453,10 +482,27 @@ void handleLine(StreamContext& context, const std::string& line) {
     if (event.is_object()) handleEvent(context, event);
 }
 
-std::size_t headerCallback(char*, std::size_t size, std::size_t count, void* user) {
+std::size_t headerCallback(char* bytes, std::size_t size, std::size_t count, void* user) {
     auto& context = *static_cast<StreamContext*>(user);
     if (count != 0 && size > SIZE_MAX / count) return 0;
     const auto length = size * count;
+    if (context.manualRedirects && length >= 5 && std::memcmp(bytes, "HTTP/", 5) == 0) {
+        const std::string line(bytes, length);
+        const auto space = line.find(' ');
+        const int status = space == std::string::npos ? 0 : std::atoi(line.c_str() + space + 1);
+        context.redirectStatus = status >= 300 && status < 400;
+        context.redirectResponse = false;
+    } else if (context.manualRedirects && context.redirectStatus && !context.redirectResponse &&
+               length > 9) {
+        const std::string name(bytes, 9);
+        if (std::equal(name.begin(), name.end(),
+                       "location:", [](unsigned char left, unsigned char right) {
+                           return std::tolower(left) == right;
+                       })) {
+            const std::string value(bytes + 9, length - 9);
+            context.redirectResponse = value.find_first_not_of(" \t\r\n") != std::string::npos;
+        }
+    }
     // 响应头到达也是真实通信；只记时间，不保存可能带凭据的头字段。
     if (length > 0) context.lastStreamActivity = std::chrono::steady_clock::now();
     return context.cancel->load(std::memory_order_relaxed) ? 0 : length;
@@ -466,6 +512,8 @@ std::size_t writeCallback(char* bytes, std::size_t size, std::size_t count, void
     auto& context = *static_cast<StreamContext*>(user);
     if (count != 0 && size > SIZE_MAX / count) return 0;
     const std::size_t length = size * count;
+    // 手动逐跳时，中间重定向正文不能被当成供应商的流式输出。
+    if (context.redirectResponse) return length;
     context.responseBytes += length;
     if (length > 0) context.lastStreamActivity = std::chrono::steady_clock::now();
     if (context.cancel->load(std::memory_order_relaxed)) return 0;
@@ -540,59 +588,136 @@ public:
         std::string url = mConfig.baseUrl;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += "/responses";
+        const std::string originalOrigin = mConfig.proxyResolver ? modelOrigin(url) : std::string();
+        if (mConfig.proxyResolver && originalOrigin.empty())
+            return MaiError::make(MaiErrorCode::InvalidInput, "model URL is invalid");
         for (int attempt = 0;; ++attempt) {
-            CURL* curl = curl_easy_init();
-            if (!curl) return MaiError::make(MaiErrorCode::Internal, "curl_easy_init failed");
-            curl_slist* headers = nullptr;
-            headers = curl_slist_append(headers, "Content-Type: application/json");
-            headers = curl_slist_append(headers, "Accept: text/event-stream");
-            headers = curl_slist_append(headers, "Cache-Control: no-cache");
-            if (!mConfig.apiKey.empty())
-                headers =
-                    curl_slist_append(headers, ("Authorization: Bearer " + mConfig.apiKey).c_str());
+            std::string currentUrl = url;
+            bool post = true;
+            const auto attemptStarted = std::chrono::steady_clock::now();
+            auto lastStreamActivity = attemptStarted;
+            auto lastModelProgress = attemptStarted;
             StreamContext context;
-            context.sink = &sink;
-            context.cancel = &cancel;
-            context.inactivityTimeoutSeconds = mConfig.inactivityTimeoutSeconds;
-            context.progressTimeoutSeconds = mConfig.progressTimeoutSeconds;
             char transportError[CURL_ERROR_SIZE] = {};
-            curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, transportError);
-            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-#if defined(_WIN32)
-            // 内嵌 OpenSSL 没有随包 PEM 时使用 Windows 信任根；显式 CA 路径仍保持独立。
-            if (mConfig.caBundlePath.empty())
-                curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-#endif
-            if (!mConfig.caBundlePath.empty())
-                curl_easy_setopt(curl, CURLOPT_CAINFO, mConfig.caBundlePath.c_str());
-            curl_easy_setopt(curl, CURLOPT_POST, 1L);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
-                             static_cast<curl_off_t>(body.size()));
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
-            curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
-            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &context);
-            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
-            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &context);
-            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, mConfig.connectTimeoutSeconds);
-            if (mConfig.totalTimeoutSeconds > 0)
-                curl_easy_setopt(curl, CURLOPT_TIMEOUT, mConfig.totalTimeoutSeconds);
-            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
-            curl_easy_setopt(curl, CURLOPT_USERAGENT, "MaiAgent/0.1");
-            const CURLcode transfer = curl_easy_perform(curl);
-            std::string remainder;
-            if (context.lines.takeRemainder(remainder)) handleLine(context, remainder);
+            CURLcode transfer = CURLE_OK;
             long status = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
+            for (int redirects = 0;; ++redirects) {
+                if (cancel.load(std::memory_order_relaxed))
+                    return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
+                MaiModelProxy proxy;
+                if (mConfig.proxyResolver) {
+                    const bool resolved = mConfig.proxyResolver(currentUrl, proxy);
+                    if (cancel.load(std::memory_order_relaxed))
+                        return MaiError::make(MaiErrorCode::Canceled, "canceled by user");
+                    if (!resolved)
+                        return MaiError::make(MaiErrorCode::Network,
+                                              "model proxy selection failed");
+                }
+                CURL* curl = curl_easy_init();
+                if (!curl) return MaiError::make(MaiErrorCode::Internal, "curl_easy_init failed");
+                curl_slist* headers = nullptr;
+                headers = curl_slist_append(headers, "Content-Type: application/json");
+                headers = curl_slist_append(headers, "Accept: text/event-stream");
+                headers = curl_slist_append(headers, "Cache-Control: no-cache");
+                if (!mConfig.apiKey.empty() &&
+                    (!mConfig.proxyResolver || modelOrigin(currentUrl) == originalOrigin))
+                    headers = curl_slist_append(
+                        headers, ("Authorization: Bearer " + mConfig.apiKey).c_str());
+                context = StreamContext{};
+                context.manualRedirects = bool(mConfig.proxyResolver);
+                context.sink = &sink;
+                context.cancel = &cancel;
+                if (mConfig.proxyResolver) {
+                    context.lastStreamActivity = lastStreamActivity;
+                    context.lastModelProgress = lastModelProgress;
+                }
+                context.inactivityTimeoutSeconds = mConfig.inactivityTimeoutSeconds;
+                context.progressTimeoutSeconds = mConfig.progressTimeoutSeconds;
+                transportError[0] = 0;
+                curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, transportError);
+                curl_easy_setopt(curl, CURLOPT_URL, currentUrl.c_str());
+#if defined(_WIN32)
+                // 内嵌 OpenSSL 没有随包 PEM 时使用 Windows 信任根；显式 CA 路径仍保持独立。
+                if (mConfig.caBundlePath.empty())
+                    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA));
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+#endif
+                if (!mConfig.caBundlePath.empty())
+                    curl_easy_setopt(curl, CURLOPT_CAINFO, mConfig.caBundlePath.c_str());
+                if (post) {
+                    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+                    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
+                    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
+                                     static_cast<curl_off_t>(body.size()));
+                } else {
+                    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+                }
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &context);
+                curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+                curl_easy_setopt(curl, CURLOPT_HEADERDATA, &context);
+                curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+                curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
+                curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &context);
+                curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, mConfig.connectTimeoutSeconds);
+                if (mConfig.totalTimeoutSeconds > 0 && !mConfig.proxyResolver) {
+                    curl_easy_setopt(curl, CURLOPT_TIMEOUT, mConfig.totalTimeoutSeconds);
+                } else if (mConfig.totalTimeoutSeconds > 0) {
+                    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - attemptStarted)
+                                             .count();
+                    const auto remaining = mConfig.totalTimeoutSeconds * 1000LL - elapsed;
+                    if (remaining <= 0) {
+                        curl_slist_free_all(headers);
+                        curl_easy_cleanup(curl);
+                        // 与 curl 传输内的同一超时一致，仍由外层决定是否重试。
+                        transfer = CURLE_OPERATION_TIMEDOUT;
+                        break;
+                    }
+                    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(remaining));
+                }
+                if (mConfig.proxyResolver) {
+                    curl_easy_setopt(curl, CURLOPT_PROXY, proxy.url.c_str());
+                    curl_easy_setopt(curl, CURLOPT_NOPROXY, proxy.url.empty() ? "*" : "");
+                    curl_easy_setopt(curl, CURLOPT_PROXYUSERNAME, proxy.username.c_str());
+                    curl_easy_setopt(curl, CURLOPT_PROXYPASSWORD, proxy.password.c_str());
+                }
+                curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, mConfig.proxyResolver ? 0L : 1L);
+                curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+                curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+                curl_easy_setopt(curl, CURLOPT_USERAGENT, "MaiAgent/0.1");
+                transfer = curl_easy_perform(curl);
+                std::string remainder;
+                if (context.lines.takeRemainder(remainder)) handleLine(context, remainder);
+                curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+                char* target = nullptr;
+                if (mConfig.proxyResolver) curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &target);
+                const std::string nextUrl = target ? target : "";
+                lastStreamActivity = context.lastStreamActivity;
+                lastModelProgress = context.lastModelProgress;
+                curl_slist_free_all(headers);
+                curl_easy_cleanup(curl);
+                if (!mConfig.proxyResolver || transfer != CURLE_OK || nextUrl.empty() ||
+                    cancel.load(std::memory_order_relaxed))
+                    break;
+                // 与 curl 默认限制一致：最多 30 跳，且只允许默认重定向协议。
+                const std::string nextOrigin = modelOrigin(nextUrl);
+                if (redirects >= 30 || nextOrigin.empty() ||
+                    (nextOrigin.rfind("http://", 0) != 0 && nextOrigin.rfind("https://", 0) != 0 &&
+                     nextOrigin.rfind("ftp://", 0) != 0 && nextOrigin.rfind("ftps://", 0) != 0))
+                    return MaiError::make(MaiErrorCode::Protocol,
+                                          "model redirect is invalid or exceeds its limit");
+                // 307/308 会携带原始对话正文；即使去掉认证，也不能将其降级到明文链路。
+                if (modelOrigin(currentUrl).rfind("https://", 0) == 0 &&
+                    nextOrigin.rfind("https://", 0) != 0)
+                    return MaiError::make(
+                        MaiErrorCode::Protocol,
+                        "model redirect cannot downgrade an encrypted connection");
+                if (status == 301 || status == 302 || status == 303) post = false;
+                currentUrl = nextUrl;
+            }
 
             if (cancel.load(std::memory_order_relaxed))
                 return MaiError::make(MaiErrorCode::Canceled, "canceled by user");

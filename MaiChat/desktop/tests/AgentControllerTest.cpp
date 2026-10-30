@@ -193,6 +193,9 @@ private slots:
     void desktopReadsOutsideSessionWorkingDirectory();
     void desktopWriteOutsideWaitsForApproval();
     void accountModelClientRoutesBySelectedModelAndFreshKey();
+#ifdef Q_OS_MACOS
+    void accountModelClientUsesResolvedProxy();
+#endif
     void scheduledSessionPromptRunsOnceOnOwner();
     void scheduledSessionCatchesUpAfterOwnerRestarts();
 };
@@ -340,6 +343,66 @@ void AgentControllerTest::accountModelClientRoutesBySelectedModelAndFreshKey() {
         QCOMPARE(deepseek.requestCount, 2);
     }
 }
+
+
+#ifdef Q_OS_MACOS
+void AgentControllerTest::accountModelClientUsesResolvedProxy() {
+    // 本地假代理收到完整请求，证明账号客户端把目标 URL 交给路由并使用返回的代理。
+    struct Proxy {
+        httplib::Server server;
+        std::thread thread;
+        std::mutex mutex;
+        std::string target;
+        std::string authorization;
+        int count = 0;
+        int port = 0;
+        Proxy() {
+            server.Post(".*", [this](const httplib::Request& request, httplib::Response& response) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    target = request.target;
+                    authorization = request.get_header_value("Authorization");
+                    ++count;
+                }
+                response.set_content(
+                    "data: {\"type\":\"response.completed\",\"response\":"
+                    "{\"status\":\"completed\",\"output\":[]}}\n\n",
+                    "text/event-stream");
+            });
+            port = server.bind_to_any_port("127.0.0.1");
+            thread = std::thread([this] { server.listen_after_bind(); });
+            for (int i = 0; i < 200 && !server.is_running(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ~Proxy() {
+            server.stop();
+            if (thread.joinable()) thread.join();
+        }
+    } proxy;
+    QVERIFY(proxy.port > 0);
+    std::vector<std::string> resolved;
+    DesktopAccountModelClient::Config config;
+    config.glmBaseUrl = QStringLiteral("http://model.test");
+    config.keyProvider = [](const QString&) { return QStringLiteral("account-key"); };
+    config.proxyResolver = [&](const std::string& url, MaiModelProxy& route) {
+        resolved.push_back(url);
+        route.url = "http://127.0.0.1:" + std::to_string(proxy.port);
+        return true;
+    };
+    DesktopAccountModelClient client(config);
+    MaiModelRequest request;
+    request.model = "glm-5.3";
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    QVERIFY(!client.stream(request, sink, cancel));
+    QCOMPARE(resolved.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(resolved.front()), QStringLiteral("http://model.test/responses"));
+    std::lock_guard<std::mutex> lock(proxy.mutex);
+    QCOMPARE(proxy.count, 1);
+    QCOMPARE(QString::fromStdString(proxy.target), QStringLiteral("http://model.test/responses"));
+    QCOMPARE(QString::fromStdString(proxy.authorization), QStringLiteral("Bearer account-key"));
+}
+#endif
 
 void AgentControllerTest::desktopReadsOutsideSessionWorkingDirectory() {
     QTemporaryDir workspace;

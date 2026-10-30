@@ -163,6 +163,14 @@ struct MaiStreamSink {
 using MaiModelImagePreparer =
     std::function<MaiResult<std::string>(const std::string& source, const std::string& workspace)>;
 
+// 宿主为一次模型传输选择的网络路由；空地址表示显式直连。
+// 代理认证单独传递，不能拼到模型地址或记录到日志。
+struct MaiModelProxy {
+    std::string url;
+    std::string username;
+    std::string password;
+};
+
 struct MaiModelConfig {
     // 不带末尾斜杠，也不带具体路径。客户端按 wire 拼接端点。例如：
     //   https://open.bigmodel.cn/api/paas/v4   GLM
@@ -194,6 +202,11 @@ struct MaiModelConfig {
     // 不受这个滑动期限截断，原 totalTimeoutSeconds 的总时长语义仍保持独立。
     // 放在结构末尾，保留已有聚合初始化各字段的位置。
     long progressTimeoutSeconds = 900;
+    // 可选的逐目标网络路由，由宿主在模型工作线程同步查询；返回 false 拒绝请求。
+    // 未提供时保留 libcurl 原有环境代理和重定向行为。提供时，空地址显式直连，
+    // 非空地址覆盖环境代理；每个重定向目标重新查询，凭据仅用于该跳的代理。
+    // 回调和捕获对象必须在线程并发调用期间有效且线程安全，不得记录目标或凭据。
+    std::function<bool(const std::string&, MaiModelProxy&)> proxyResolver;
 };
 
 // 模型客户端。一个接口，多个 wire 实现。

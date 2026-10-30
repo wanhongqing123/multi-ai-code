@@ -555,6 +555,12 @@ if(MAIAGENT_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite)
   # 随库 OpenSSL 同时构建 SSL 和 Crypto；有 SSL 库的平台都运行本地 TLS 模拟测试。
   if(MAI_OPENSSL_SSL_TARGET)
+    # 模型重定向测试用真实 TLS 连接验证密钥和正文不降级到明文。
+    target_compile_definitions(MaiModelClientTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+      MAI_MODEL_CLIENT_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(MaiModelClientTests PRIVATE ${MAI_OPENSSL_INCLUDE_DIR})
+    target_link_libraries(MaiModelClientTests PRIVATE ${MAI_OPENSSL_SSL_TARGET}
+      ${MAI_OPENSSL_CRYPTO_TARGET})
     target_compile_definitions(MaiArkMediaToolsTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
       MAI_ARK_ASSET_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_include_directories(MaiArkMediaToolsTests PRIVATE ${MAI_OPENSSL_INCLUDE_DIR})
@@ -562,6 +568,9 @@ if(MAIAGENT_BUILD_TESTS)
       ${MAI_OPENSSL_CRYPTO_TARGET})
   elseif(NOT WIN32 AND NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     find_package(OpenSSL REQUIRED COMPONENTS SSL)
+    target_compile_definitions(MaiModelClientTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
+      MAI_MODEL_CLIENT_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(MaiModelClientTests PRIVATE OpenSSL::SSL)
     target_compile_definitions(MaiArkMediaToolsTests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT
       MAI_ARK_ASSET_TLS_TESTS MAI_AGENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(MaiArkMediaToolsTests PRIVATE OpenSSL::SSL)

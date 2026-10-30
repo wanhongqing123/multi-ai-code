@@ -1320,6 +1320,374 @@ void test_responses_needs_terminal_event_and_reports_incomplete() {
     }
 }
 
+// 通过本地 HTTP 服务观察代理收到的真实请求，目标域名只用于区分重定向来源。
+struct ProxyRequest {
+    std::string method;
+    std::string target;
+    std::string host;
+    std::string authorization;
+    std::string proxyAuthorization;
+    std::string body;
+};
+
+struct FakeModelProxy {
+    httplib::Server server;
+    std::thread thread;
+    std::mutex mutex;
+    std::vector<ProxyRequest> requests;
+    std::string redirectLocation;
+    int redirectStatus = 0;
+    int terminalStatus = 200;
+    int delayMs = 0;
+    int port = 0;
+
+    void start() {
+        auto handle = [this](const httplib::Request& request, httplib::Response& response) {
+            std::size_t count;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                requests.push_back({request.method, request.target,
+                                    request.get_header_value("Host"),
+                                    request.get_header_value("Authorization"),
+                                    request.get_header_value("Proxy-Authorization"), request.body});
+                count = requests.size();
+            }
+            if (delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+            if (redirectStatus != 0 && count == 1) {
+                response.status = redirectStatus;
+                response.set_header("Location", redirectLocation);
+                return;
+            }
+            response.status = terminalStatus;
+            response.set_content(
+                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\","
+                "\"output\":[]}}\n\n",
+                "text/event-stream");
+        };
+        server.Post(".*", handle);
+        server.Get(".*", handle);
+        port = server.bind_to_any_port("127.0.0.1");
+        thread = std::thread([this] { server.listen_after_bind(); });
+        for (int i = 0; i < 200 && !server.is_running(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    ~FakeModelProxy() {
+        server.stop();
+        if (thread.joinable()) thread.join();
+    }
+
+    std::string address() const {
+        return "http://127.0.0.1:" + std::to_string(port);
+    }
+
+    std::vector<ProxyRequest> received() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return requests;
+    }
+};
+
+// 测试中临时设置环境代理，结束后恢复，避免依赖开发机器的配置或影响后续测试。
+class ScopedProxyEnvironment {
+public:
+    ScopedProxyEnvironment(const char* name, const char* value) : mName(name) {
+        const char* previous = std::getenv(name);
+        if (previous) {
+            mHadValue = true;
+            mPrevious = previous;
+        }
+        set(value);
+    }
+
+    ~ScopedProxyEnvironment() {
+        if (mHadValue) {
+            set(mPrevious.c_str());
+        } else {
+#if defined(_WIN32)
+            _putenv_s(mName.c_str(), "");
+#else
+            unsetenv(mName.c_str());
+#endif
+        }
+    }
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(mName.c_str(), value);
+#else
+        setenv(mName.c_str(), value, 1);
+#endif
+    }
+
+    std::string mName;
+    std::string mPrevious;
+    bool mHadValue = false;
+};
+
+void test_responses_proxy_redirects() {
+    // NO_PROXY 覆盖了环境变量匹配目标的情况，系统代理选择仍应生效。
+    ScopedProxyEnvironment noProxy("no_proxy", "*");
+    ScopedProxyEnvironment upperNoProxy("NO_PROXY", "*");
+    for (const int status : {302, 307}) {
+        FakeModelProxy first;
+        FakeModelProxy second;
+        first.redirectStatus = status;
+        first.redirectLocation = "http://second.test/final";
+        first.start();
+        second.start();
+        std::vector<std::string> resolved;
+        MaiModelConfig config;
+        config.baseUrl = "http://first.test";
+        config.apiKey = "test-key";
+        config.wire = MaiWireApi::Responses;
+        config.maxRetries = 0;
+        config.proxyResolver = [&](const std::string& url, MaiModelProxy& proxy) {
+            resolved.push_back(url);
+            proxy.url =
+                url.find("first.test") != std::string::npos ? first.address() : second.address();
+            proxy.username = url.find("first.test") != std::string::npos ? "alpha" : "bravo";
+            proxy.password = url.find("first.test") != std::string::npos ? "one" : "two";
+            return true;
+        };
+        MaiModelRequest request;
+        request.model = "test-model";
+        const std::atomic<bool> cancel{false};
+        MaiStreamSink sink;
+        const MaiError error = makeMaiModelClient(config)->stream(request, sink, cancel);
+        CHECK(!error);
+        const auto firstRequests = first.received();
+        const auto secondRequests = second.received();
+        CHECK(resolved.size() == 2);
+        CHECK(firstRequests.size() == 1);
+        CHECK(secondRequests.size() == 1);
+        if (firstRequests.size() == 1 && secondRequests.size() == 1) {
+            CHECK(firstRequests[0].method == "POST");
+            CHECK(firstRequests[0].target == "http://first.test/responses");
+            CHECK(firstRequests[0].host == "first.test");
+            CHECK(firstRequests[0].authorization == "Bearer test-key");
+            CHECK(firstRequests[0].proxyAuthorization == "Basic YWxwaGE6b25l");
+            CHECK(secondRequests[0].target == "http://second.test/final");
+            CHECK(secondRequests[0].host == "second.test");
+            CHECK(secondRequests[0].authorization.empty());
+            CHECK(secondRequests[0].proxyAuthorization == "Basic YnJhdm86dHdv");
+            CHECK(secondRequests[0].method == (status == 302 ? "GET" : "POST"));
+            CHECK(status == 302 ? secondRequests[0].body.empty()
+                                : secondRequests[0].body == firstRequests[0].body);
+        }
+    }
+}
+
+void test_responses_proxy_same_origin_redirect() {
+    ScopedProxyEnvironment noProxy("no_proxy", "*");
+    ScopedProxyEnvironment upperNoProxy("NO_PROXY", "*");
+    FakeModelProxy proxy;
+    proxy.redirectStatus = 307;
+    proxy.redirectLocation = "/final";
+    proxy.start();
+    MaiModelConfig config;
+    config.baseUrl = "http://first.test";
+    config.apiKey = "test-key";
+    config.wire = MaiWireApi::Responses;
+    config.maxRetries = 0;
+    config.proxyResolver = [&](const std::string&, MaiModelProxy& route) {
+        route.url = proxy.address();
+        return true;
+    };
+    MaiModelRequest request;
+    request.model = "test-model";
+    const std::atomic<bool> cancel{false};
+    MaiStreamSink sink;
+    const MaiError error = makeMaiModelClient(config)->stream(request, sink, cancel);
+    CHECK(!error);
+    const auto received = proxy.received();
+    CHECK(received.size() == 2);
+    if (received.size() == 2) {
+        CHECK(received[1].target == "http://first.test/final");
+        CHECK(received[1].authorization == "Bearer test-key");
+        CHECK(received[1].method == "POST");
+        CHECK(received[1].body == received[0].body);
+    }
+}
+
+void test_responses_proxy_redirect_total_timeout() {
+    ScopedProxyEnvironment noProxy("no_proxy", "*");
+    ScopedProxyEnvironment upperNoProxy("NO_PROXY", "*");
+    FakeModelProxy first;
+    FakeModelProxy second;
+    first.redirectStatus = 307;
+    first.redirectLocation = "http://second.test/final";
+    first.delayMs = 1300;
+    second.delayMs = 1300;
+    first.start();
+    second.start();
+    MaiModelConfig config;
+    config.baseUrl = "http://first.test";
+    config.wire = MaiWireApi::Responses;
+    config.maxRetries = 0;
+    config.totalTimeoutSeconds = 2;
+    config.proxyResolver = [&](const std::string& url, MaiModelProxy& route) {
+        route.url =
+            url.find("first.test") != std::string::npos ? first.address() : second.address();
+        return true;
+    };
+    MaiModelRequest request;
+    request.model = "test-model";
+    const std::atomic<bool> cancel{false};
+    MaiStreamSink sink;
+    const MaiError error = makeMaiModelClient(config)->stream(request, sink, cancel);
+    // 每跳均小于两秒，但整条链超过两秒；重置计时会错误地得到成功结果。
+    CHECK(error.code() == MaiErrorCode::Network);
+    CHECK(error.message().find("Timeout") != std::string::npos);
+    CHECK(first.received().size() == 1);
+    CHECK(second.received().size() == 1);
+}
+
+void test_responses_without_location_retains_body() {
+    ScopedProxyEnvironment noProxy("no_proxy", "*");
+    ScopedProxyEnvironment upperNoProxy("NO_PROXY", "*");
+    FakeModelProxy destination;
+    destination.terminalStatus = 300;
+    destination.start();
+    MaiModelConfig config;
+    config.baseUrl = destination.address();
+    config.wire = MaiWireApi::Responses;
+    config.maxRetries = 0;
+    MaiModelRequest request;
+    request.model = "test-model";
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    CHECK(!makeMaiModelClient(config)->stream(request, sink, cancel));
+    config.proxyResolver = [](const std::string&, MaiModelProxy&) { return true; };
+    CHECK(!makeMaiModelClient(config)->stream(request, sink, cancel));
+    CHECK(destination.received().size() == 2);
+}
+
+void test_responses_proxy_resolver_timeout_retries_before_output() {
+    FakeModelProxy destination;
+    destination.start();
+    int resolutions = 0;
+    MaiModelConfig config;
+    config.baseUrl = destination.address();
+    config.wire = MaiWireApi::Responses;
+    config.totalTimeoutSeconds = 1;
+    config.maxRetries = 1;
+    config.retryInitialDelayMs = 0;
+    config.proxyResolver = [&](const std::string&, MaiModelProxy&) {
+        if (++resolutions == 1) std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        return true;
+    };
+    MaiModelRequest request;
+    request.model = "test-model";
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    const MaiError error = makeMaiModelClient(config)->stream(request, sink, cancel);
+    // 首次选路耗尽期限后仍应走原有重试；只有第二次真的发送模型请求。
+    CHECK(!error);
+    CHECK(resolutions == 2);
+    CHECK(destination.received().size() == 1);
+}
+
+#if defined(MAI_MODEL_CLIENT_TLS_TESTS)
+void test_responses_proxy_rejects_tls_downgrade() {
+    const std::string certificateRoot =
+        std::string(MAI_AGENT_SOURCE_DIR) + "/third_party/curl/tests/certs/";
+    const std::string certificate = certificateRoot + "Server-localhost-sv.crt";
+    const std::string privateKey = certificateRoot + "Server-localhost-sv.key";
+    const std::string authority = certificateRoot + "EdelCurlRoot-ca.crt";
+    httplib::SSLServer secure(certificate.c_str(), privateKey.c_str());
+    CHECK(secure.is_valid());
+    if (!secure.is_valid()) return;
+    FakeModelProxy plain;
+    plain.start();
+    std::mutex mutex;
+    std::vector<ProxyRequest> secureRequests;
+    std::atomic<int> redirectStatus{302};
+    secure.Post("/responses", [&](const httplib::Request& request, httplib::Response& response) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            secureRequests.push_back(
+                {request.method, request.target, request.get_header_value("Host"),
+                 request.get_header_value("Authorization"),
+                 request.get_header_value("Proxy-Authorization"), request.body});
+        }
+        response.status = redirectStatus.load();
+        response.set_header("Location", plain.address() + "/final");
+    });
+    const int securePort = secure.bind_to_any_port("127.0.0.1");
+    CHECK(securePort > 0);
+    if (securePort <= 0) return;
+    std::thread secureThread([&] { secure.listen_after_bind(); });
+    for (int i = 0; i < 200 && !secure.is_running(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    MaiModelConfig config;
+    config.baseUrl = "https://localhost:" + std::to_string(securePort);
+    config.caBundlePath = authority;
+    config.apiKey = "test-key";
+    config.wire = MaiWireApi::Responses;
+    config.maxRetries = 0;
+    std::vector<std::string> resolved;
+    config.proxyResolver = [&](const std::string& url, MaiModelProxy&) {
+        resolved.push_back(url);
+        return true;
+    };
+    MaiModelRequest request;
+    request.model = "test-model";
+    MaiStreamSink sink;
+    const std::atomic<bool> cancel{false};
+    // 302 会切换为 GET，307 会重发正文；两者都不能向明文目标发出请求。
+    for (const int status : {302, 307}) {
+        redirectStatus.store(status);
+        const MaiError error = makeMaiModelClient(config)->stream(request, sink, cancel);
+        CHECK(error.code() == MaiErrorCode::Protocol);
+        CHECK(error.message().find("downgrade") != std::string::npos);
+    }
+    secure.stop();
+    if (secureThread.joinable()) secureThread.join();
+    CHECK(resolved.size() == 2);
+    CHECK(plain.received().empty());
+    CHECK(secureRequests.size() == 2);
+    for (const auto& received : secureRequests) {
+        CHECK(received.authorization == "Bearer test-key");
+        CHECK(received.method == "POST");
+        CHECK(!received.body.empty());
+    }
+}
+#endif
+
+void test_responses_proxy_direct_and_cancel() {
+    FakeModelProxy destination;
+    destination.start();
+    // 本地监听器能证明空路由绕过环境代理，而不是仅验证回调被调用。
+    ScopedProxyEnvironment noProxy("no_proxy", "");
+    ScopedProxyEnvironment upperNoProxy("NO_PROXY", "");
+    ScopedProxyEnvironment httpProxy("http_proxy", "http://127.0.0.1:1");
+    MaiModelConfig config;
+    config.baseUrl = destination.address();
+    config.wire = MaiWireApi::Responses;
+    config.maxRetries = 0;
+    config.proxyResolver = [](const std::string&, MaiModelProxy& route) {
+        route.url.clear();
+        return true;
+    };
+    MaiModelRequest request;
+    request.model = "test-model";
+    std::atomic<bool> cancel{false};
+    MaiStreamSink sink;
+    const MaiError error = makeMaiModelClient(config)->stream(request, sink, cancel);
+    CHECK(!error);
+    CHECK(destination.received().size() == 1);
+
+    config.proxyResolver = [&](const std::string&, MaiModelProxy& route) {
+        route.url.clear();
+        cancel.store(true);
+        return true;
+    };
+    const MaiError canceled = makeMaiModelClient(config)->stream(request, sink, cancel);
+    CHECK(canceled.code() == MaiErrorCode::Canceled);
+    CHECK(destination.received().size() == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -1378,6 +1746,15 @@ int main() {
     test_responses_serializes_history_images_and_flat_tools();
     test_deepseek_effort_levels_reach_responses_wire();
     test_responses_needs_terminal_event_and_reports_incomplete();
+    test_responses_proxy_redirects();
+    test_responses_proxy_same_origin_redirect();
+    test_responses_proxy_redirect_total_timeout();
+    test_responses_without_location_retains_body();
+    test_responses_proxy_resolver_timeout_retries_before_output();
+#if defined(MAI_MODEL_CLIENT_TLS_TESTS)
+    test_responses_proxy_rejects_tls_downgrade();
+#endif
+    test_responses_proxy_direct_and_cancel();
     if (failures == 0) std::printf("llm tests passed\n");
     return failures == 0 ? 0 : 1;
 }

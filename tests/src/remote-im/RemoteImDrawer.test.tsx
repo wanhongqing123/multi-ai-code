@@ -114,6 +114,18 @@ function renderDrawer(overrides: Partial<RemoteImDrawerProps> = {}): string {
 }
 
 describe('RemoteImDrawer', () => {
+  it('offers attachment retry only for failed images in the current project', () => {
+    const failed: RemoteImMessage = {
+      ...messages[0], kind: 'image', status: 'failed', error: '下载失败',
+      attachment: { type: 'image', localPath: null, remoteUrl: 'https://example.test/a.png',
+        thumbnailUrl: null, width: null, height: null, sizeBytes: null,
+        fileName: 'a.png', mimeType: 'image/png', sdkImageId: null }
+    }
+    const markup = renderDrawer({ messages: [failed], selectedPeerUserId: 'phone_admin' })
+    expect(markup).toContain('重新下载图片')
+    const otherProject = renderDrawer({ messages: [{ ...failed, projectId: 'other' }], selectedPeerUserId: 'phone_admin' })
+    expect(otherProject).not.toContain('重新下载图片')
+  })
   it('moves a selected conversation scroll container to its latest message', () => {
     const container = { scrollHeight: 2048, scrollTop: 120 }
 

@@ -436,6 +436,11 @@ const api = {
       ipcRenderer.invoke('remote-im:list-messages', { projectId, limit }) as Promise<
         RemoteImMessage[]
       >,
+    // 仅重新下载该历史图片的附件，主进程不会把旧消息再次发送给 Agent。
+    retryImage: (projectId: string, messageId: number) =>
+      ipcRenderer.invoke('remote-im:retry-image', { projectId, messageId }) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
     // 消息汇总视图：取回项目最近的消息全集（默认 3000 条，服务端硬顶 5000）。
     listMessagesForSummary: (projectId: string, limit = 3000) =>
       ipcRenderer.invoke('remote-im:list-messages-for-summary', { projectId, limit }) as Promise<

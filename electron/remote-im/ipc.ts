@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, net } from 'electron'
 import { createHash, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { basename, join } from 'path'
@@ -48,6 +48,7 @@ import {
   listRemoteImMessages,
   listRemoteImMessagesForSummary,
   listRemoteImPeerMessagesBefore,
+  restoreRemoteImImageAttachment,
   updateRemoteImMessageStatus
 } from './messageStore.js'
 import {
@@ -98,6 +99,7 @@ import {
   remoteImImageCacheDirectory,
   type CachedRemoteImImage
 } from './imageCache.js'
+import { retryRemoteImImage } from './imageRetry.js'
 import {
   loadRemoteImLocalImageForSend,
   readRemoteImLocalImageDataUrl,
@@ -3019,6 +3021,30 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
       listRemoteImMessagesForSummary(projectId, limit ?? 3000)
   )
 
+  // 只恢复已入库的失败图片；不用重新投递路由，避免旧消息再次触发 Agent。
+  ipcMain.handle(
+    'remote-im:retry-image',
+    async (_event, input: { projectId: string; messageId: number }) =>
+      withRemoteImAccountBoundOperation(async (securityGeneration) => {
+        try {
+          const projectId = typeof input?.projectId === 'string' ? input.projectId.trim() : ''
+          const messageId = input?.messageId
+          await retryRemoteImImage(projectId, messageId, {
+            rootDir: rootDir(),
+            fetchImpl: (remoteUrl) => net.fetch(remoteUrl),
+            listById: listRemoteImMessageById,
+            restore: restoreRemoteImImageAttachment,
+            isAccountCurrent: () => isRemoteImAccountSecurityGenerationCurrent(securityGeneration)
+          })
+          broadcastMessagesChanged(projectId)
+          return { ok: true as const }
+        } catch {
+          // 下载地址可能带签名，不把网络异常里的地址回传给界面。
+          return { ok: false as const, error: '图片下载失败，请稍后重试' }
+        }
+      })
+  )
+
   // 图片预览只接受消息 id：实际路径从当前账号数据库中的可信附件记录读取，
   // 避免渲染层借 IPC 读取任意本地文件。
   ipcMain.handle(
@@ -3511,7 +3537,9 @@ export function registerRemoteImIpc(options: RegisterRemoteImIpcOptions = {}): v
               remoteUrl: incoming.imageUrl,
               remoteMessageId: incoming.remoteMessageId,
               fileName: incoming.fileName,
-              mimeType: incoming.mimeType
+              mimeType: incoming.mimeType,
+              // Electron 网络栈遵循系统代理；Node fetch 会绕过代理导致图片域名解析失败。
+              fetchImpl: (url) => net.fetch(url)
             })
             return {
               ok: true as const,

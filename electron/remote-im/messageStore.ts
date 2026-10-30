@@ -331,6 +331,30 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     return listById(id)
   }
 
+  // 只恢复已有入站图片的本地附件，不创建新消息或将旧消息重新交给 Agent。
+  // 下载期间消息可能已被删除或恢复；再次核对项目、状态和原始 URL，避免覆盖新状态。
+  function restoreImageAttachment(
+    projectId: string,
+    id: number,
+    expectedUrl: string,
+    attachment: RemoteImImageAttachment
+  ): RemoteImMessage | null {
+    const current = listById(id)
+    if (!current || current.projectId !== projectId || current.direction !== 'incoming' ||
+        current.status !== 'failed' || current.kind !== 'image' ||
+        current.attachment?.type !== 'image' || current.attachment.localPath ||
+        current.attachment.remoteUrl !== expectedUrl || !attachment.localPath ||
+        attachment.remoteUrl !== expectedUrl) return null
+    database.prepare(`
+      UPDATE remote_im_messages
+      SET attachment_json = ?, status = 'received', error = NULL
+      WHERE id = ? AND project_id = ? AND status = 'failed'
+    `).run(serializeAttachmentJson(attachment), id, projectId)
+    const updated = listById(id)
+    return updated?.attachment?.type === 'image' && updated.attachment.localPath === attachment.localPath
+      ? updated : null
+  }
+
   // 键集分页取某会话更早的消息：严格早于 (beforeCreatedAt, beforeId)，
   // 升序返回，最多 limit 条。大历史下配合前端「加载更早」按需翻页。
   function listPeerBefore(
@@ -404,6 +428,7 @@ export function createRemoteImMessageStore(database: RemoteImDatabase) {
     list,
     listRecent,
     updateStatus,
+    restoreImageAttachment,
     failIfStreaming,
     clearPeer,
     listPeerBefore,
@@ -436,6 +461,12 @@ export function updateRemoteImMessageStatus(
   input: UpdateRemoteImMessageStatusInput
 ): RemoteImMessage | null {
   return defaultStore().updateStatus(id, input)
+}
+
+export function restoreRemoteImImageAttachment(
+  projectId: string, id: number, expectedUrl: string, attachment: RemoteImImageAttachment
+): RemoteImMessage | null {
+  return defaultStore().restoreImageAttachment(projectId, id, expectedUrl, attachment)
 }
 
 export function failRemoteImMessageIfStreaming(id: number, error: string): RemoteImMessage | null {

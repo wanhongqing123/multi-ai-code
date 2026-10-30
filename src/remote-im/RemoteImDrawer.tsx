@@ -120,12 +120,32 @@ function RemoteImAttachmentCaption(props: { message: RemoteImMessage }): JSX.Ele
   return caption ? <RemoteImMarkdown content={caption} /> : null
 }
 
-function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element {
+function RemoteImImageMessage(props: { message: RemoteImMessage; projectId: string | null }): JSX.Element {
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
   const attachment = props.message.attachment?.type === 'image' ? props.message.attachment : null
   const imageSource = getRemoteImImageSource(
     attachment?.localPath ?? attachment?.thumbnailUrl ?? attachment?.remoteUrl
   )
   const fileName = attachment?.fileName ?? props.message.content.replace(/^\[图片消息\]\s*/, '')
+  const canRetry = Boolean(props.projectId && props.message.projectId === props.projectId &&
+    props.message.direction === 'incoming' && props.message.status === 'failed' &&
+    attachment?.remoteUrl && !attachment.localPath)
+
+  // 重试只补全原消息的图片缓存，失败仍保留原消息与错误，避免触发旧任务。
+  const retry = async (): Promise<void> => {
+    if (!props.projectId || retrying) return
+    setRetrying(true)
+    setRetryError(null)
+    try {
+      const result = await window.api.remoteIm.retryImage(props.projectId, props.message.id)
+      if (!result.ok) setRetryError(result.error)
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   return (
     <div className="remote-im-image-message">
@@ -141,6 +161,12 @@ function RemoteImImageMessage(props: { message: RemoteImMessage }): JSX.Element 
         <div className="remote-im-image-placeholder">图片暂不可预览</div>
       )}
       <div className="remote-im-image-caption">{fileName || props.message.content}</div>
+      {canRetry ? (
+        <button type="button" disabled={retrying} onClick={() => void retry()}>
+          {retrying ? '下载中…' : '重新下载图片'}
+        </button>
+      ) : null}
+      {retryError ? <div role="alert">{retryError}</div> : null}
       {props.message.captionAbove !== true ? <RemoteImAttachmentCaption message={props.message} /> : null}
     </div>
   )
@@ -675,7 +701,7 @@ export default function RemoteImDrawer(props: RemoteImDrawerProps): JSX.Element 
                         </div>
                         <div className="remote-im-bubble">
                           {message.kind === 'image' ? (
-                            <RemoteImImageMessage message={message} />
+                            <RemoteImImageMessage message={message} projectId={props.projectId} />
                           ) : message.kind === 'file' ? (
                             <RemoteImFileMessage message={message} onPreview={handlePreviewFile} />
                           ) : message.kind === 'video' ? (

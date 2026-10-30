@@ -93,6 +93,21 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
           }
         }
       }
+      if (sql.includes('UPDATE remote_im_messages') && sql.includes('SET attachment_json')) {
+        return {
+          run: (...args: unknown[]) => {
+            const row = rows.find((item) => item.id === args[1] && item.project_id === args[2] && item.status === 'failed')
+            if (row) {
+              row.attachment_json = args[0] as string
+              row.status = 'received'
+              row.error = null
+            }
+            return {}
+          },
+          get: () => undefined,
+          all: () => []
+        }
+      }
       if (sql.includes('UPDATE remote_im_messages')) {
         return {
           run: (...args: unknown[]) => {
@@ -169,6 +184,28 @@ function createFakeDatabase(seedRows: FakeRow[] = []): RemoteImDatabase {
 }
 
 describe('remote IM message store', () => {
+  it('restores a failed image in place without rerouting it or changing its caption', () => {
+    const store = createRemoteImMessageStore(createFakeDatabase())
+    const attachment = {
+      type: 'image' as const, localPath: null, remoteUrl: 'https://example.test/image',
+      thumbnailUrl: null, width: 10, height: 20, sizeBytes: null,
+      fileName: 'image.png', mimeType: 'image/png', sdkImageId: 'sdk-id'
+    }
+    const original = store.create({
+      projectId: 'project-1', provider: 'tencent-im', remoteMessageId: 'remote-1',
+      role: 'remote-user', direction: 'incoming', content: '[图片消息]', caption: '说明',
+      kind: 'image', attachment, status: 'failed', error: '下载失败', createdAt: 42
+    })
+    const restored = { ...attachment, localPath: '/cache/image.png' }
+    expect(store.restoreImageAttachment('other-project', original.id, attachment.remoteUrl, restored)).toBeNull()
+    expect(store.restoreImageAttachment('project-1', original.id, 'https://other.test/', restored)).toBeNull()
+    const result = store.restoreImageAttachment('project-1', original.id, attachment.remoteUrl, restored)
+    expect(result).toMatchObject({ id: original.id, status: 'received', error: null,
+      remoteMessageId: 'remote-1', caption: '说明', createdAt: 42, sentToAicliAt: null,
+      attachment: { localPath: '/cache/image.png', remoteUrl: attachment.remoteUrl } })
+    expect(store.restoreImageAttachment('project-1', original.id, attachment.remoteUrl, restored)).toBeNull()
+    expect(store.list('project-1')).toHaveLength(1)
+  })
   it('maps legacy text messages to text kind without attachment', () => {
     const store = createRemoteImMessageStore(createFakeDatabase())
     const message = store.create({

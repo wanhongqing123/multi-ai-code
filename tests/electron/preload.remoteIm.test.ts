@@ -40,6 +40,13 @@ beforeEach(() => {
 })
 
 describe('preload remote IM api', () => {
+  it('retries an image using only its project and message identifiers', async () => {
+    const api = await loadApi()
+    await api.remoteIm.retryImage('project-1', 42)
+    expect(electronMock.invoke).toHaveBeenCalledWith('remote-im:retry-image', {
+      projectId: 'project-1', messageId: 42
+    })
+  })
   it('exports diagnostics through a host-owned save dialog without accepting arbitrary file paths', async () => {
     const api = await loadApi()
     electronMock.invoke.mockResolvedValue({ ok: true, path: '/chosen/diagnostics.json' })

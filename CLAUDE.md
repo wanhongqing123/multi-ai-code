@@ -7,7 +7,7 @@ MaiAgent 核心及其服务已迁至 [MaiChat 仓库](https://github.com/wanhong
 |---|---|---|
 | `electron/` | Electron 主进程与原生能力（TS） | 遵循本文件及现有代码风格 |
 | `src/` | Electron 界面与客户端逻辑（TS） | 遵循本文件及现有代码风格 |
-| `third_party/aicli/codex/` | 定制 Codex 子模块 | 子模块自身规范与提交历史 |
+| `third_party/aicli/codex/` | Codex 子模块，只读参考 | 不修改其内容 |
 
 ## 参照系与互操作
 

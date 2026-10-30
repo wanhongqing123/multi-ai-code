@@ -8,6 +8,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <string>
+#include <thread>
 
 #include <curl/curl.h>
 
@@ -19,6 +24,21 @@ constexpr size_t kMaximumRequestBytes = 32 * 1024;
 constexpr long kConnectTimeoutMilliseconds = 10 * 1000;
 constexpr long kTotalTimeoutMilliseconds = 30 * 1000;
 constexpr long kReadStallTimeoutSeconds = 20;
+
+enum class AuthRoute { System, AliDoh, CloudflareDoh };
+
+// 缓存只复用同一系统代理配置下验证过的线路，网络/代理切换会重新探测。
+std::mutex routeMutex;
+std::string cachedProxyKey;
+AuthRoute cachedRoute = AuthRoute::System;
+std::chrono::steady_clock::time_point routeExpiry;
+#ifdef MAICHAT_AUTH_ROUTE_TEST
+// 测试只替换网络结果，正式构建不暴露线路或业务发送的注入入口。
+bool (*probeHook)(AuthRoute) = nullptr;
+CURLcode (*businessHook)() = nullptr;
+const char* testDohUrl = nullptr;
+curl_slist* testConnectTo = nullptr;
+#endif
 
 struct ResponseCollector {
     uint8_t* bytes = nullptr;
@@ -100,7 +120,7 @@ bool isValidRequest(const char* url, const char* method, const char* bearer, con
 // 每个 setopt 都核对返回值；任何配置失败都发生在发送 HTTP 请求之前。
 bool configureRequest(CURL* curl, const char* url, const char* method, const uint8_t* body, size_t bodyLength,
                       const char* caBundlePath, const maiChatNetwork::SystemProxy& proxy,
-                      ResponseCollector* collector) {
+                      ResponseCollector* collector, AuthRoute route = AuthRoute::System, long probeTimeoutMs = 0) {
     CURLcode setup = CURLE_OK;
     auto set = [&](CURLoption option, auto value) {
         if (setup == CURLE_OK) setup = curl_easy_setopt(curl, option, value);
@@ -113,8 +133,8 @@ bool configureRequest(CURL* curl, const char* url, const char* method, const uin
     set(CURLOPT_FRESH_CONNECT, 1L);
     set(CURLOPT_FORBID_REUSE, 1L);
     set(CURLOPT_SSL_SESSIONID_CACHE, 0L);
-    set(CURLOPT_CONNECTTIMEOUT_MS, kConnectTimeoutMilliseconds);
-    set(CURLOPT_TIMEOUT_MS, kTotalTimeoutMilliseconds);
+    set(CURLOPT_CONNECTTIMEOUT_MS, probeTimeoutMs > 0 ? probeTimeoutMs : kConnectTimeoutMilliseconds);
+    set(CURLOPT_TIMEOUT_MS, probeTimeoutMs > 0 ? probeTimeoutMs : kTotalTimeoutMilliseconds);
     set(CURLOPT_LOW_SPEED_LIMIT, 1L);
     set(CURLOPT_LOW_SPEED_TIME, kReadStallTimeoutSeconds);
     set(CURLOPT_NOSIGNAL, 1L);
@@ -128,6 +148,21 @@ bool configureRequest(CURL* curl, const char* url, const char* method, const uin
     set(CURLOPT_ACCEPT_ENCODING, "identity");
     if (caBundlePath != nullptr) set(CURLOPT_CAINFO, caBundlePath);
     if (setup != CURLE_OK || !maiChatNetwork::configureSystemProxy(curl, proxy)) return false;
+    if (route != AuthRoute::System) {
+        // 只对账号域名使用 DoH，HTTPS URL、SNI 和证书校验仍使用原始域名。
+        // 用户要求代理失效时可用直连备用；探测证明可用后才发送一次正式请求。
+        set(CURLOPT_PROXY, "");
+        set(CURLOPT_NOPROXY, "*");
+        set(CURLOPT_DOH_URL, route == AuthRoute::AliDoh ?
+            "https://223.5.5.5/dns-query" : "https://1.1.1.1/dns-query");
+        set(CURLOPT_DOH_SSL_VERIFYPEER, 1L);
+        set(CURLOPT_DOH_SSL_VERIFYHOST, 2L);
+#ifdef MAICHAT_AUTH_ROUTE_TEST
+        // 本机 TLS/DoH fixture 的端口由测试注入；生产构建没有这些覆盖项。
+        if (testDohUrl) set(CURLOPT_DOH_URL, testDohUrl);
+        if (testConnectTo) set(CURLOPT_CONNECT_TO, testConnectTo);
+#endif
+    }
     if (std::strcmp(method, "POST") == 0) {
         set(CURLOPT_POST, 1L);
         set(CURLOPT_POSTFIELDS, bodyLength == 0 ? static_cast<const void*>("") : body);
@@ -154,10 +189,96 @@ bool buildHeaders(curl_slist** headers, const char* method, const char* bearer) 
     return ready;
 }
 
+// 探测只访问未携带令牌的账号接口，不能重放登录、验证码或刷新等写请求。
+bool probeRoute(AuthRoute route, const maiChatNetwork::SystemProxy& proxy, const std::string& caPath,
+                long timeoutMs) {
+#ifdef MAICHAT_AUTH_ROUTE_TEST
+    if (probeHook) return probeHook(route);
+#endif
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+    ResponseCollector collector;
+    collector.bytes = static_cast<uint8_t*>(std::malloc(kMaximumResponseBytes));
+    bool success = false;
+    if (collector.bytes && configureRequest(curl, "https://ichat.life/api/v1/auth/me", "GET", nullptr, 0,
+                                             caPath.c_str(), proxy, &collector, route, timeoutMs)) {
+        const CURLcode code = curl_easy_perform(curl);
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        success = code == CURLE_OK && !collector.limitExceeded && status == 401 && collector.length > 0;
+    }
+    std::free(collector.bytes);
+    curl_easy_cleanup(curl);
+    return success;
+}
+
+struct ProbeState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int completed = 0;
+    bool available = false;
+    AuthRoute route = AuthRoute::System;
+};
+
+// DNS 清理可能超过 curl 超时：后台探测只持有拷贝，超时返回后不阻塞备用线路。
+std::shared_ptr<ProbeState> launchProbes(const maiChatNetwork::SystemProxy& proxy,
+                                         const std::string& caPath, bool system) {
+    auto state = std::make_shared<ProbeState>();
+    const auto start = [state, proxy, caPath](AuthRoute route, long timeout) {
+        std::thread([state, proxy, caPath, route, timeout] {
+            const bool ok = probeRoute(route, proxy, caPath, timeout);
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                ++state->completed;
+                if (ok && !state->available) {
+                    state->available = true;
+                    state->route = route;
+                }
+            }
+            state->changed.notify_one();
+        }).detach();
+    };
+    if (system) start(AuthRoute::System, 2500);
+    else {
+        start(AuthRoute::AliDoh, 7000);
+        start(AuthRoute::CloudflareDoh, 7000);
+    }
+    return state;
+}
+
+bool waitForProbe(const std::shared_ptr<ProbeState>& state, int count, long timeout, AuthRoute* route) {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    state->changed.wait_for(lock, std::chrono::milliseconds(timeout),
+                            [&] { return state->available || state->completed == count; });
+    if (!state->available) return false;
+    *route = state->route;
+    return true;
+}
+
+bool chooseRoute(const maiChatNetwork::SystemProxy& proxy, bool proxyValid,
+                 const std::string& caPath, AuthRoute* route) {
+    const std::string key = proxyValid ?
+        std::to_string(proxy.direct) + ":" + std::to_string(proxy.type) + ":" + proxy.host + ":" +
+            std::to_string(proxy.port) : "unavailable";
+    // 串行化选路，避免并发账号请求同时重复启动探测。
+    std::lock_guard<std::mutex> lock(routeMutex);
+    if (key == cachedProxyKey && std::chrono::steady_clock::now() < routeExpiry) {
+        *route = cachedRoute;
+        return true;
+    }
+    bool ok = proxyValid && waitForProbe(launchProbes(proxy, caPath, true), 1, 2500, route);
+    if (!ok) ok = waitForProbe(launchProbes(proxy, caPath, false), 2, 7000, route);
+    if (!ok) return false;
+    cachedProxyKey = key;
+    cachedRoute = *route;
+    routeExpiry = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    return true;
+}
+
 }  // namespace
 
 // 一次调用完成参数验证、系统代理选择、libcurl 初始化、传输和资源释放。
-// 前两步失败时不创建连接；POST 使用全新连接且禁自动跳转，不进行应用层重试。
+// 生产服务先用无凭据请求选路；业务 POST 使用全新连接且禁自动跳转，不进行应用层重试。
 // 成功响应的数据所有权交给调用方，失败时 body 保持空值并通过 transportCode 报告。
 extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, const char* bearer,
                                        const uint8_t* requestBody, size_t requestLength, const char* caBundlePath,
@@ -168,18 +289,25 @@ extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, cons
         result->transportCode = -1;
         return;
     }
-    // 必须先解析 iOS 当前代理；PAC 等无法安全解析的配置不可回退成直连。
+    // 先尝试系统代理；用户要求系统线路失败时允许账号服务走直连备选。
     maiChatNetwork::SystemProxy proxy;
-    if (!maiChatNetwork::selectSystemProxy(url, &proxy)) {
-        result->transportCode = -5;
-        return;
-    }
+    const bool proxyValid = maiChatNetwork::selectSystemProxy(url, &proxy);
     // libcurl 是进程级组件，只初始化一次；每个账号请求仍使用独立 easy handle。
     static std::once_flag curlInitialization;
     static CURLcode initializationResult = CURLE_FAILED_INIT;
     std::call_once(curlInitialization, [] { initializationResult = curl_global_init(CURL_GLOBAL_DEFAULT); });
     if (initializationResult != CURLE_OK) {
         result->transportCode = -3;
+        return;
+    }
+    AuthRoute route = AuthRoute::System;
+    const bool production = std::strncmp(url, "https://ichat.life/api/v1/", 26) == 0;
+    if (production && !chooseRoute(proxy, proxyValid, caBundlePath, &route)) {
+        result->transportCode = static_cast<int>(CURLE_COULDNT_CONNECT);
+        return;
+    }
+    if (!production && !proxyValid) {
+        result->transportCode = -5;
         return;
     }
     CURL* curl = curl_easy_init();
@@ -196,14 +324,23 @@ extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, cons
         return;
     }
     const bool configured =
-        configureRequest(curl, url, method, requestBody, requestLength, caBundlePath, proxy, &collector);
+        configureRequest(curl, url, method, requestBody, requestLength, caBundlePath, proxy, &collector, route);
     curl_slist* headers = nullptr;
     // 所有选项与 Header 设置成功才发送；Bearer 不进入错误字符串或日志。
     if (configured && buildHeaders(&headers, method, bearer) &&
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) == CURLE_OK) {
+#ifdef MAICHAT_AUTH_ROUTE_TEST
+        const CURLcode transferResult = businessHook ? businessHook() : curl_easy_perform(curl);
+#else
         const CURLcode transferResult = curl_easy_perform(curl);
+#endif
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result->statusCode);
         result->transportCode = collector.limitExceeded ? -2 : static_cast<int>(transferResult);
+        if (production && transferResult != CURLE_OK) {
+            // 请求可能已到达服务器；只让下次请求重新选路，绝不重放本次 POST。
+            std::lock_guard<std::mutex> lock(routeMutex);
+            routeExpiry = {};
+        }
         if (result->transportCode == 0 && collector.length > 0) {
             result->responseBody = collector.bytes;
             result->responseLength = collector.length;

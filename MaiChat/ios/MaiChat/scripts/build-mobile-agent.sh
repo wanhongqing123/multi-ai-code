@@ -7,7 +7,8 @@ repo_dir="$(cd "$PROJECT_DIR/../../.." && pwd)"
 # OpenSSL、FFmpeg、OpenCV 和 MaiAgent 共用稳定的分平台构建目录。
 # Xcode 切换或清理 DerivedData 时，只重做最终归档和 App 链接，不重编第三方源码。
 agent_arch="${ARCHS// /-}"
-agent_build="$repo_dir/MaiAgent/build/vendor/mobile-agent-$PLATFORM_NAME-$agent_arch"
+# 隔离验收可指定独立构建目录，避免覆盖正在使用的产品构建缓存。
+agent_build="${MAICHAT_MOBILE_AGENT_BUILD_DIR:-$repo_dir/MaiAgent/build/vendor/mobile-agent-$PLATFORM_NAME-$agent_arch}"
 cmake -S "$repo_dir/MaiChat/MobileAgentAdapter" -B "$agent_build" -G Ninja \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDKROOT" \
@@ -37,11 +38,20 @@ while IFS= read -r archive; do archive_list+=("$archive"); done < <(
     ! -path '*/vendor/ffmpeg-build/install/*' \
     ! -path '*/vendor/ffmpeg-build/vendor-build/*' \
     ! -path '*/vendor/ffmpeg-build/vendor-install/*' \
+    ! -path '*/vendor/quic-build/*' \
     | while IFS= read -r archive; do
         if [[ "$has_opencv_jpeg" == true && "$archive" == */libmai_pdf_jpeg_fallback.a ]]; then continue; fi
         printf '%s\n' "$archive"
       done
 )
+# 根据当前构建配置显式加入 QUIC 库；关闭后不把旧缓存归档带进 App。
+if /usr/bin/grep -q '^MAI_ENABLE_QUIC:BOOL=ON$' "$agent_build/CMakeCache.txt"; then
+  quic_lib_dir="$agent_build/maiagent/vendor/quic-build/install/lib"
+  for library in libngtcp2.a libngtcp2_crypto_ossl.a libnghttp3.a; do
+    test -f "$quic_lib_dir/$library"
+    archive_list+=("$quic_lib_dir/$library")
+  done
+fi
 for codec in libdav1d.a libx264.a libmp3lame.a; do
   archive_list+=("$agent_build/vendor/ffmpeg-build/vendor-install/lib/$codec")
 done
@@ -63,6 +73,10 @@ if [[ -n "${TARGET_BUILD_DIR:-}" && -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}" 
   mkdir -p "$pdf_licenses"
   cp "$repo_dir/MaiAgent/third_party/qpdf/LICENSE.txt" "$pdf_licenses/QPDF_LICENSE.txt"
   cp "$repo_dir/MaiAgent/third_party/qpdf/NOTICE.md" "$pdf_licenses/QPDF_NOTICE.md"
+  # QUIC 和 HTTP/3 库静态链接进 App，随包保留上游 MIT 许可证。
+  cp "$repo_dir/MaiAgent/third_party/ngtcp2/COPYING" "$pdf_licenses/NGTCP2_LICENSE.txt"
+  cp "$repo_dir/MaiAgent/third_party/nghttp3/COPYING" "$pdf_licenses/NGHTTP3_LICENSE.txt"
+  cp "$repo_dir/MaiAgent/third_party/curl-apple/COPYING" "$pdf_licenses/CURL_LICENSE.txt"
   effect_bundle="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/MaiAgentGraphics"
   mkdir -p "$effect_bundle"
   cp "$repo_dir/MaiAgent/Graphics/data/"*.effect "$effect_bundle/"

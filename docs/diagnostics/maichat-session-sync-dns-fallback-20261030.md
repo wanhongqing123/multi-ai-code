@@ -2,7 +2,7 @@
 
 ## 现象与范围
 
-用户反馈 MaiChat 的账号域名在本机网络异常时无法使用，要求登录、配置和其他账号服务具备备用线路。此次检查会话同步：用户没有报告或提供证据表明本次故障一定发生在 WSS，不能将账号 DNS 故障直接归因到 WSS。源码基线 `9348dccd0e720472fc3d05787f25945726caf7fe`，修改尚未提交。
+用户反馈 MaiChat 的账号域名在本机网络异常时无法使用，要求登录、配置和其他账号服务具备备用线路。此次检查会话同步：用户没有报告或提供证据表明本次故障一定发生在 WSS，不能将账号 DNS 故障直接归因到 WSS。源码基线 `9348dccd0e720472fc3d05787f25945726caf7fe`，修复提交 `9e4a864a3cc100453417f1dcfa14cf9c060ede9d`。
 
 旧实现以 websocketpp/ASIO 连接账号 WSS。iOS 使用创建时的系统代理；Mac 每次重建连接时重新读取代理。两端使用域名解析或 HTTP CONNECT，缺少备用 DNS；发生连接错误时未完成操作会失败，不自动重放。TCP WebSocket 不使用 curl QUIC。
 
@@ -20,6 +20,8 @@
 - 指定 arm64 模拟器 `34893056-B994-4CFE-96C2-5526174AC370` 的 iOS Debug App 编译成功；使用 generic 模拟器时因包含未支持的 x86_64 导致 OpenSSL 构建失败，不作为功能验证。
 - 本机独立 curl、无代理地以阿里 DoH 访问生产账号的无凭据 `auth/me`，取得 HTTP 401；该检查没有连接 WSS 或使用账号令牌。
 - 另以独立进程直接调用 WSS 的 `probeAddress`，没有预先启动账号或模型网络模块，使用 App 的 CA 包和阿里 DoH 探测成功；模块内部已负责初始化 curl。
+- Mac 基于提交 `9e4a864a3` 重新构建后，`desktop_session_sync_host_test` 和 `desktop_session_sync_channel_test` 均通过，以上本地 WSS TLS fixture 重跑通过。完整暂存 App 深度签名校验通过，92 个 Mach-O 未发现指向开发机的外部依赖；隔离数据目录、禁止网络和用户目录写入的 `--smoke` PID 6055 正常退出。正在使用的 `/Applications/MaiChat.app` PID 3073 未替换或中断。
+- Mac 候选版本 2.2.32，磁盘映像位于 `MaiChat/desktop/dist-v2232-sessionroute-9e4a864a3/MaiChat-macos-arm64-v2.2.32-sessionroute-9e4a864a3.dmg`，SHA-256 `a42938b24dc4d66ff23ca56e2075b0dcfa98230cb6c6ffc03e4fba1166381114`，`hdiutil verify` 通过；打包主程序 SHA-256 `8b398b4328f0dcbd470bc7899678a2c7bf9f878bdf6fb6e71831f1bff6a49505`。该包为 ad hoc 签名，未公证，未以真实账号完成该产物的跨设备同步。
 
 ## 未验证边界
 

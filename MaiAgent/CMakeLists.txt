@@ -79,8 +79,9 @@ add_library(mai_md4c STATIC
 target_include_directories(mai_md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c)
 
 # ── libcurl：源码进仓库，和别的第三方一致 ─────────────────────
-# third_party/curl 以 curl 8.11.1 完整发布包为基线；src/ 有内嵌 CLI 补丁，
-# 原始发布包 sha256 是 a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80。
+# Apple 使用 third_party/curl-apple 的 curl 8.19.0 完整发布包；src/ 有内嵌 CLI 补丁，
+# 原始发布包 sha256 是 4eb41489790d19e190d7ac7e18e82857cdd68af8f4e66b292ced562d333f11df。
+# 其他平台保留 curl 8.11.1，避免改变其 OpenSSL 版本要求与已有构建。
 #
 # 曾经想过只留 lib/ include/ 把 29M 压到 7M，但那样它就不再是"那个版本"
 # 了：升级时要重新做一遍裁剪决定，出问题时也没法直接和上游比对。
@@ -230,7 +231,70 @@ if(WIN32 AND NOT MAI_OPENSSL_CRYPTO_TARGET)
   set(OPENSSL_INCLUDE_DIR "${mai_openssl_windows_build}/include" CACHE PATH "" FORCE)
 endif()
 
-add_subdirectory(third_party/curl EXCLUDE_FROM_ALL)
+# 只在 Apple 平台启用固定源码构建的成熟 ngtcp2 后端。curl 配置时即查询依赖，
+# 因此先离线生成三个静态库；路径指向私有安装目录，不能混入 Homebrew 版本。
+option(MAI_ENABLE_QUIC "Enable the vendored HTTP/3 backend on Apple platforms" ${APPLE})
+if(APPLE)
+  # 新版 Apple SDK 声明了 pipe2，但 iOS 16 不提供该符号；curl 的通用检测只看
+  # SDK 会误判。使用上游 pipe + fcntl 兜底，保证旧系统也能启动网络线程。
+  set(HAVE_PIPE2 "" CACHE INTERNAL "pipe2 is unavailable on older Apple deployments" FORCE)
+endif()
+if(APPLE AND MAI_ENABLE_QUIC)
+  set(mai_quic_root "${CMAKE_CURRENT_BINARY_DIR}/vendor/quic-build")
+  set(mai_quic_install "${mai_quic_root}/install")
+  # QUIC 库在配置阶段构建；源码或脚本改变时必须重新配置并更新静态库，
+  # 否则增量构建会悄悄沿用上次生成的归档。CONFIGURE_DEPENDS 同时覆盖新增文件。
+  file(GLOB_RECURSE mai_quic_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ngtcp2/*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/nghttp3/*")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-quic-dependencies.sh"
+    ${mai_quic_inputs})
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    string(TOLOWER "${CMAKE_OSX_SYSROOT}" mai_quic_sysroot_lower)
+    if(mai_quic_sysroot_lower MATCHES "simulator")
+      set(mai_quic_sdk iphonesimulator)
+    else()
+      set(mai_quic_sdk iphoneos)
+    endif()
+  else()
+    set(mai_quic_sdk macosx)
+  endif()
+  if(CMAKE_OSX_ARCHITECTURES)
+    set(mai_quic_arch "${CMAKE_OSX_ARCHITECTURES}")
+  else()
+    set(mai_quic_arch "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+  endif()
+  execute_process(
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-quic-dependencies.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party" "${mai_quic_root}/build"
+      "${mai_quic_install}" "${MAI_OPENSSL_BUILD_DIR}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl" "${mai_quic_sdk}"
+      "${mai_quic_arch}" "${CMAKE_OSX_DEPLOYMENT_TARGET}"
+    RESULT_VARIABLE mai_quic_result
+    OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-quic-build.log"
+    ERROR_FILE "${CMAKE_CURRENT_BINARY_DIR}/mai-quic-build-error.log")
+  if(NOT mai_quic_result EQUAL 0)
+    message(FATAL_ERROR "Vendored QUIC build failed; see mai-quic-build-error.log")
+  endif()
+  set(USE_NGTCP2 ON CACHE BOOL "" FORCE)
+  set(USE_OPENSSL_QUIC OFF CACHE BOOL "" FORCE)
+  set(NGTCP2_INCLUDE_DIR "${mai_quic_install}/include" CACHE PATH "" FORCE)
+  set(NGTCP2_LIBRARY "${mai_quic_install}/lib/libngtcp2.a" CACHE FILEPATH "" FORCE)
+  set(NGTCP2_CRYPTO_OSSL_LIBRARY "${mai_quic_install}/lib/libngtcp2_crypto_ossl.a" CACHE FILEPATH "" FORCE)
+  set(NGHTTP3_INCLUDE_DIR "${mai_quic_install}/include" CACHE PATH "" FORCE)
+  set(NGHTTP3_LIBRARY "${mai_quic_install}/lib/libnghttp3.a" CACHE FILEPATH "" FORCE)
+elseif(APPLE)
+  # 同一个构建目录关闭功能时必须清除缓存开关，不能继续链接上次构建的库。
+  set(USE_NGTCP2 OFF CACHE BOOL "" FORCE)
+  set(USE_OPENSSL_QUIC OFF CACHE BOOL "" FORCE)
+endif()
+if(APPLE)
+  set(mai_curl_source "${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl-apple")
+else()
+  set(mai_curl_source "${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl")
+endif()
+add_subdirectory("${mai_curl_source}" third_party/curl EXCLUDE_FROM_ALL)
 
 # 私有 zlib 不与平台、媒体库共用符号；curl 传输压缩关闭，此副本仅供工作区工具和 qpdf。
 set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -397,7 +461,7 @@ target_include_directories(maiagent
   # 而它想守的"别当公开 API 用"靠注释说一句就够了。
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann
-          ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src
+          ${mai_curl_source}/src
           # RVM 只使用 C API 头；运行库由各宿主平台打包。
           # 头文件取自仓库内的官方 ONNX Runtime 源码，避免和预编译包维护两份。
           ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/include/onnxruntime/core/session
@@ -577,8 +641,8 @@ if(MAIAGENT_BUILD_TESTS)
   endif()
   add_executable(MaiCurlEmbeddedCliTests tests/MaiCurlEmbeddedCliTests.cpp)
   target_include_directories(MaiCurlEmbeddedCliTests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/curl/src
+    ${mai_curl_source}/include
+    ${mai_curl_source}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
   target_link_libraries(MaiCurlEmbeddedCliTests PRIVATE
     mai_curl_cli maiagent mai_thirdparty_for_tests)

@@ -39,6 +39,7 @@ bool (*probeHook)(AuthRoute) = nullptr;
 CURLcode (*businessHook)() = nullptr;
 const char* testDohUrl = nullptr;
 curl_slist* testConnectTo = nullptr;
+bool testForceDirect = false;
 #endif
 
 // 所有原生入口共用一次进程级初始化，包括不经账号客户端的云盘请求。
@@ -138,7 +139,13 @@ bool configureRequest(CURL* curl, const char* url, const char* method, const uin
     set(CURLOPT_PROTOCOLS_STR, "http,https");
     set(CURLOPT_FOLLOWLOCATION, 0L);
     set(CURLOPT_MAXREDIRS, 0L);
-    set(CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    // 仅对直连 HTTPS 尝试 HTTP/3；HTTP/SOCKS 代理仍使用原有 HTTP/1.1。
+    // libcurl 在握手未完成时回退，业务写请求本身仍只执行一次。
+    const curl_version_info_data* version = curl_version_info(CURLVERSION_NOW);
+    const bool direct = route != AuthRoute::System || proxy.direct;
+    const bool tryHttp3 = std::strncmp(url, "https://", 8) == 0 && direct && version &&
+                          (version->features & CURL_VERSION_HTTP3);
+    set(CURLOPT_HTTP_VERSION, long(tryHttp3 ? CURL_HTTP_VERSION_3 : CURL_HTTP_VERSION_1_1));
     set(CURLOPT_FRESH_CONNECT, 1L);
     set(CURLOPT_FORBID_REUSE, 1L);
     set(CURLOPT_SSL_SESSIONID_CACHE, 0L);
@@ -169,9 +176,12 @@ bool configureRequest(CURL* curl, const char* url, const char* method, const uin
 #ifdef MAICHAT_AUTH_ROUTE_TEST
         // 本机 TLS/DoH fixture 的端口由测试注入；生产构建没有这些覆盖项。
         if (testDohUrl) set(CURLOPT_DOH_URL, testDohUrl);
-        if (testConnectTo) set(CURLOPT_CONNECT_TO, testConnectTo);
 #endif
     }
+#ifdef MAICHAT_AUTH_ROUTE_TEST
+    // 实际 TLS/QUIC fixture 改变连接地址，原始 URL 与服务端证书名称仍受校验。
+    if (testConnectTo) set(CURLOPT_CONNECT_TO, testConnectTo);
+#endif
     if (std::strcmp(method, "POST") == 0) {
         set(CURLOPT_POST, 1L);
         set(CURLOPT_POSTFIELDS, bodyLength == 0 ? static_cast<const void*>("") : body);
@@ -319,7 +329,14 @@ extern "C" void maiChatAuthHttpPerform(const char* url, const char* method, cons
     }
     // 先尝试系统代理；用户要求系统线路失败时允许账号服务走直连备选。
     maiChatNetwork::SystemProxy proxy;
-    const bool proxyValid = maiChatNetwork::selectSystemProxy(url, &proxy);
+    bool proxyValid = maiChatNetwork::selectSystemProxy(url, &proxy);
+#ifdef MAICHAT_AUTH_ROUTE_TEST
+    // 真实设备可能配置代理；本机 QUIC fixture 明确模拟无代理线路。
+    if (testForceDirect) {
+        proxy = {};
+        proxyValid = true;
+    }
+#endif
     // libcurl 是进程级组件，只初始化一次；每个账号请求仍使用独立 easy handle。
     if (!ensureCurlInitialized()) {
         result->transportCode = -3;

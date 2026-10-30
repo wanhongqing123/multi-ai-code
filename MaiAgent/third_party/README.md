@@ -11,7 +11,10 @@
 | `nlohmann/json.hpp` | https://github.com/nlohmann/json | v3.11.3 |
 | `httplib/httplib.h` | https://github.com/yhirose/cpp-httplib | v0.18.3 |
 | `sqlite/sqlite3.{c,h}` | https://sqlite.org/ | 3.49.1（amalgamation） |
-| `curl/` | https://curl.se/ | 8.11.1（完整源码基线，含内嵌 CLI 补丁） |
+| `curl/` | https://curl.se/ | 8.11.1（非 Apple 平台，完整源码基线，含内嵌 CLI 补丁） |
+| `curl-apple/` | https://curl.se/ | 8.19.0（Apple 平台，完整源码基线，含内嵌 CLI 补丁） |
+| `ngtcp2/` | https://github.com/ngtcp2/ngtcp2 | 1.25.0（完整发行源码，MIT，QUIC 实现） |
+| `nghttp3/` | https://github.com/ngtcp2/nghttp3 | 1.18.0（完整发行源码，MIT，HTTP/3 实现） |
 | `zlib/` | https://zlib.net/ | 1.3.2（完整源码，SHA-256 `bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16`） |
 | `openssl/` | https://www.openssl.org/source/ | 3.5.9 LTS（源码基线，剔除示例私钥、测试与演示目录；原包 SHA-256 `603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a`） |
 | `libssh2/` | https://github.com/libssh2/libssh2 | 1.11.2 开发快照，固定提交 `740c2d33ad58720db1039031d2b6e13a3df9aab8` |
@@ -74,8 +77,12 @@ SQLite 有个历史怪癖——双引号括起来的东西如果不是已知列�
 
 ## libcurl
 
-`curl/` 以 curl 8.11.1 完整发布包为基线；`src/` 的内嵌 CLI 补丁使上游
+`curl-apple/` 以 curl 8.19.0 完整发布包为基线；`src/` 的内嵌 CLI 补丁使上游
 `argc/argv` 执行入口能在 App 工作线程反复调用。原始发布包 SHA-256：
+
+    4eb41489790d19e190d7ac7e18e82857cdd68af8f4e66b292ced562d333f11df
+
+其他平台暂用 `curl/` 的 8.11.1 完整源码，发行包 SHA-256：
 
     a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80
 
@@ -94,3 +101,7 @@ README 开头说的"没有网络的机器上也能构建"自相矛盾——交�
 
 注意它是 HTTP **客户端**，和这里的 httplib（HTTP **服务端**）是两回事，
 两个都要。
+
+`ngtcp2/` 和 `nghttp3/` 保留上游完整发行源码与许可证，供 curl 的 HTTP/3
+接入使用。Apple 平台从源码离线构建静态库，并使用 ngtcp2 的 OpenSSL 后端；
+来源和校验值见各自的 `MAI_UPSTREAM.md`。构建不得依赖机器上通过包管理器安装的版本。

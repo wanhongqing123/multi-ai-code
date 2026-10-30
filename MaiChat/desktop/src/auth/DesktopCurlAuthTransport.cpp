@@ -164,7 +164,21 @@ DesktopCurlAuthResult performWithRoute(
     set(CURLOPT_PROTOCOLS_STR, url.scheme() == QStringLiteral("https") ? "https" : "http");
     set(CURLOPT_FOLLOWLOCATION, 0L);
     set(CURLOPT_MAXREDIRS, 0L);
-    set(CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+#ifdef Q_OS_MACOS
+    // HTTP/3 仅用于直接 HTTPS 线路；curl 的 HTTP/SOCKS 代理不支持 QUIC。
+    // System 线路可能继承 curl 的环境代理，无法安全确认直连时保持 HTTP/1.1。
+    // CURL_HTTP_VERSION_3 在握手失败时降级连接；业务 POST 仍只调用 perform 一次。
+    const bool environmentProxy = !qEnvironmentVariableIsEmpty("https_proxy") ||
+                                  !qEnvironmentVariableIsEmpty("HTTPS_PROXY") ||
+                                  !qEnvironmentVariableIsEmpty("all_proxy") ||
+                                  !qEnvironmentVariableIsEmpty("ALL_PROXY");
+    const bool canTryHttp3 = url.scheme() == QStringLiteral("https") &&
+                             (route != MacAuthRoute::System || !environmentProxy) &&
+                             (version->features & CURL_VERSION_HTTP3);
+    set(CURLOPT_HTTP_VERSION, long(canTryHttp3 ? CURL_HTTP_VERSION_3 : CURL_HTTP_VERSION_1_1));
+#else
+    set(CURLOPT_HTTP_VERSION, long(CURL_HTTP_VERSION_1_1));
+#endif
     set(CURLOPT_FRESH_CONNECT, 1L);
     set(CURLOPT_FORBID_REUSE, 1L);
     set(CURLOPT_SSL_SESSIONID_CACHE, 0L);

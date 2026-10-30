@@ -654,7 +654,17 @@ elseif(APPLE)
       "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QPDF_LICENSE.txt"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/qpdf/NOTICE.md"
-      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QPDF_NOTICE.md")
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/QPDF_NOTICE.md"
+    # 静态链接的 QUIC 与 HTTP/3 库要求随产品保留各自的 MIT 许可。
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/ngtcp2/COPYING"
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/NGTCP2_LICENSE.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/nghttp3/COPYING"
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/NGHTTP3_LICENSE.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../MaiAgent/third_party/curl-apple/COPYING"
+      "$<TARGET_BUNDLE_DIR:maichat>/Contents/Resources/ThirdPartyLicenses/CURL_LICENSE.txt")
 endif()
 if(WIN32)
   # GUI 子系统（/SUBSYSTEM:WINDOWS）：不加时 exe 是控制台程序，双击启动会先弹一个

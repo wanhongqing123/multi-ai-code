@@ -21,6 +21,25 @@ static bool fakeProbe(AuthRoute route) {
 static CURLcode fakeBusiness() { ++sends; return CURLE_OPERATION_TIMEDOUT; }
 
 int main(int argc, char** argv) {
+    if (argc == 5 && std::string(argv[1]) == "--quic-write") {
+        // 经过真实账号传输入口发送测试 POST；连接到本机但仍校验原域名和测试 CA。
+        // 服务端记录每次收到的正文，用于验证失败与降级不会重放业务写入。
+        const std::string mapping = std::string("ichat.life:443:127.0.0.1:") + argv[2];
+        testConnectTo = curl_slist_append(nullptr, mapping.c_str());
+        testForceDirect = true;
+        systemWorks = true;
+        probeHook = fakeProbe;
+        const std::string body = argv[4];
+        MaiChatAuthHttpResult result{};
+        maiChatAuthHttpPerform("https://ichat.life/api/v1/auth/refresh", "POST", nullptr,
+            reinterpret_cast<const uint8_t*>(body.data()), body.size(), argv[3], &result);
+        const bool failureExpected = body == "ambiguous-fixture-body" || body == "untrusted-fixture-body";
+        assert(failureExpected ? result.transportCode != 0 : result.transportCode == 0 && result.statusCode == 200);
+        maiChatAuthHttpFreeResult(&result);
+        curl_slist_free_all(testConnectTo);
+        std::cout << "iOS auth QUIC write: PASS\n";
+        return 0;
+    }
     if (argc == 5 && std::string(argv[1]) == "--tls-bad-host") {
         assert(curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK);
         testDohUrl = argv[2];

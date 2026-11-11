@@ -44,6 +44,47 @@ const MIME_EXTENSIONS: Record<string, string> = {
   'image/webp': '.webp'
 }
 
+const IMAGE_DOWNLOAD_ATTEMPTS = 3
+const IMAGE_DOWNLOAD_RETRY_DELAY_MS = 250
+const RETRYABLE_IMAGE_NETWORK_CODES = new Set([
+  'ERR_FAILED', 'ERR_NETWORK_CHANGED', 'ERR_CONNECTION_RESET', 'ERR_CONNECTION_CLOSED',
+  'ERR_CONNECTION_ABORTED', 'ERR_CONNECTION_TIMED_OUT', 'ERR_TIMED_OUT', 'ERR_NAME_NOT_RESOLVED',
+  'ERR_INTERNET_DISCONNECTED', 'ERR_PROXY_CONNECTION_FAILED', 'ERR_TUNNEL_CONNECTION_FAILED',
+  'ERR_HTTP2_PROTOCOL_ERROR', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND',
+  'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'
+])
+
+function isRetryableImageDownloadError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  // Electron 与 Node 使用不同的网络错误；只重试连接故障，不重试 HTTP 拒绝、
+  // 无效地址、主动取消或文件写入失败。响应体中途断开也必须重新请求整张图片。
+  const chromiumCode = /net::(ERR_[A-Z0-9_]+)/.exec(error.message)?.[1]
+  if (chromiumCode && RETRYABLE_IMAGE_NETWORK_CODES.has(chromiumCode)) return true
+  const cause = error.cause as { code?: unknown } | undefined
+  const code = (error as Error & { code?: unknown }).code ?? cause?.code
+  return typeof code === 'string' && RETRYABLE_IMAGE_NETWORK_CODES.has(code)
+}
+
+async function downloadRemoteImImage(
+  remoteUrl: string,
+  fetchImpl: RemoteImImageFetch
+): Promise<{ bytes: Buffer; mimeType: string | null }> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetchImpl(remoteUrl)
+      if (!response.ok) throw new Error(`图片下载失败：HTTP ${response.status}`)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      const mimeType = response.headers?.get('content-type')?.split(';')[0]?.trim() || null
+      return { bytes, mimeType }
+    } catch (error) {
+      if (attempt >= IMAGE_DOWNLOAD_ATTEMPTS - 1 || !isRetryableImageDownloadError(error)) throw error
+      // 一次短暂网络故障不应立即把消息永久标成失败；总共最多请求三次，
+      // 重试仍在原接收/手动恢复操作内部，不重建消息，也不重新投递旧任务。
+      await new Promise<void>((resolve) => setTimeout(resolve, IMAGE_DOWNLOAD_RETRY_DELAY_MS * (attempt + 1)))
+    }
+  }
+}
+
 function sanitizePathPart(value: string, fallback: string): string {
   const sanitized = value
     .trim()
@@ -110,13 +151,7 @@ export async function cacheRemoteImImage(input: CacheRemoteImImageInput): Promis
   const fetchImpl = input.fetchImpl ?? (globalThis.fetch as unknown as RemoteImImageFetch)
   if (!fetchImpl) throw new Error('当前运行环境不支持下载图片')
 
-  const response = await fetchImpl(input.remoteUrl)
-  if (!response.ok) {
-    throw new Error(`图片下载失败：HTTP ${response.status}`)
-  }
-
-  const bytes = Buffer.from(await response.arrayBuffer())
-  const responseMimeType = response.headers?.get('content-type')?.split(';')[0]?.trim() || null
+  const { bytes, mimeType: responseMimeType } = await downloadRemoteImImage(input.remoteUrl, fetchImpl)
   const mimeType = responseMimeType || input.mimeType?.trim() || null
   const extension = normalizeImageExtension({
     fileName: input.fileName,

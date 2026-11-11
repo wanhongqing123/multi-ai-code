@@ -107,9 +107,10 @@ const v8EnvJson = capture(
 const v8Env = JSON.parse(v8EnvJson)
 
 // 只构建安装包实际需要的这几个二进制，避免重新构建整个 Codex workspace。
+// 发布产物必须使用提交里的锁文件；版本与依赖漂移应在源码验收时解决，不能由打包机悄悄重锁。
 const cargoBinaries = requiredBinaries.flatMap((entry) => ['--bin', entry.name])
 const cargoArgs =
-  profile === 'dev' ? ['build', ...cargoBinaries] : ['build', '--release', ...cargoBinaries]
+  profile === 'dev' ? ['build', '--locked', ...cargoBinaries] : ['build', '--release', '--locked', ...cargoBinaries]
 run('cargo', cargoArgs, { cwd: codexRsRoot, env: v8Env })
 // 先在构建目录验证原始产物并读取版本，再复制/strip。企业终端安全软件可能对
 // 新复制的可执行文件做延迟扫描，不能让这种本机策略把 manifest 静默写成 null。

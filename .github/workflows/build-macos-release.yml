@@ -1,0 +1,112 @@
+name: Build verified macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact parent repository commit to build
+        required: true
+        type: string
+      codex_version:
+        description: Expected Codex package version, including customization suffix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ inputs.source_commit }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # The standard macos-15 label is arm64; avoid an implicit latest-image migration.
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      EXPECTED_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      EXPECTED_CODEX_VERSION: ${{ inputs.codex_version }}
+      CARGO_BUILD_JOBS: '3'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Check source identity and architecture
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          python3 - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          assert re.fullmatch(r'[0-9a-f]{40}', os.environ['EXPECTED_SOURCE_COMMIT'])
+          cargo = tomllib.loads(Path('third_party/aicli/codex/codex-rs/Cargo.toml').read_text())
+          assert cargo['workspace']['package']['version'] == os.environ['EXPECTED_CODEX_VERSION']
+          PY
+          df -h .
+      - name: Install and check desktop sources
+        run: |
+          npm ci
+          npm run typecheck
+          npm run check:line-width
+          npm run test:remote-im
+      - name: Build optimized Codex and desktop installer
+        run: |
+          npm run build:aicli
+          git -C third_party/aicli/codex diff --exit-code
+          npm run dist:mac
+      - name: Verify packaged versions and write checksums
+        run: |
+          node --input-type=module - <<'JS'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+          import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+          import asar from '@electron/asar'
+          const app = 'release/mac-arm64/Multi-AI Code.app/Contents'
+          const archive = `${app}/Resources/app.asar`
+          const manifest = JSON.parse(asar.extractFile(archive, 'bin/aicli/manifest.json'))
+          const entry = manifest.entries.codex
+          const hostVersion = JSON.parse(asar.extractFile(archive, 'package.json')).version
+          const source = execFileSync('git', ['-C', 'third_party/aicli/codex', 'rev-parse', 'HEAD'],
+            { encoding: 'utf8' }).trim()
+          const codex = `${app}/Resources/app.asar.unpacked/bin/aicli/codex/darwin-arm64/codex`
+          const version = execFileSync(codex, ['--version'], { encoding: 'utf8' }).trim()
+          const expected = `codex-cli ${process.env.EXPECTED_CODEX_VERSION}`
+          if (version !== expected || entry.version !== expected || entry.sourceCommit !== source) {
+            throw new Error('Packaged Codex version or source does not match the frozen build')
+          }
+          const digest = path => createHash('sha256').update(readFileSync(path)).digest('hex')
+          const names = readdirSync('release').filter(n => /\.dmg(?:\.blockmap)?$/.test(n)).sort()
+          if (names.length !== 2) throw new Error('Expected exactly one DMG and its blockmap')
+          const prefix = `MultiAICode-${hostVersion}-arm64`
+          const verification = {
+            hostVersion, sourceCommit: process.env.EXPECTED_SOURCE_COMMIT, codexSourceCommit: source,
+            codexVersion: version, codexSha256: digest(codex),
+            assets: names.map(name => ({ name, sha256: digest(`release/${name}`) })),
+            validation: 'packaged native-module and version checks; desktop acceptance pending'
+          }
+          writeFileSync(`release/${prefix}-verification.json`, JSON.stringify(verification, null, 2) + '\n')
+          writeFileSync(`release/${prefix}-SHA256SUMS.txt`,
+            verification.assets.map(a => `${a.sha256}  ${a.name}`).join('\n') + '\n')
+          JS
+      # Keep outputs as workflow artifacts until the coordinator downloads and
+      # exercises the exact installer. Publishing the Release is a separate step.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multi-ai-code-macos-${{ inputs.source_commit }}
+          path: |
+            release/*.dmg
+            release/*.dmg.blockmap
+            release/*-verification.json
+            release/*-SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0

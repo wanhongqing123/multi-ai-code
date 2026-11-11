@@ -46,7 +46,7 @@ function transcriptAssistant(replyId: string, timestamp: string, content: string
 describe('Claude transcript remote IM replies', () => {
   it('maps a cwd to Claude Code project transcript directory', () => {
     expect(getClaudeProjectTranscriptDir('/Users/me/work/repo', '/tmp/claude-projects')).toBe(
-      '/tmp/claude-projects/-Users-me-work-repo'
+      join('/tmp/claude-projects', '-Users-me-work-repo')
     )
   })
 

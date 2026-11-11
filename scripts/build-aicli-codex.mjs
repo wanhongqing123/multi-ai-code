@@ -56,7 +56,9 @@ const CODEX_BINARIES = [
   //
   // 回归检查：node scripts/verify-codex-no-elevated.mjs
   { name: 'codex-windows-sandbox-setup', platforms: ['win32'], bundled: false },
-  { name: 'codex-command-runner', platforms: ['win32'], bundled: false }
+  { name: 'codex-command-runner', platforms: ['win32'], bundled: false },
+  // 上游 Windows ACL 集成测试使用的独立探针，没有产品运行时调用，不随安装包分发。
+  { name: 'codex-windows-managed-deny-probe', platforms: ['win32'], bundled: false }
 ]
 
 const requiredBinaries = CODEX_BINARIES.filter(

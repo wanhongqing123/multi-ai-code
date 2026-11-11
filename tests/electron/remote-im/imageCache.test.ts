@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm } from 'fs/promises'
-import { basename, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -141,9 +141,8 @@ describe('remote IM image cache', () => {
         bytes
       })
 
-      expect(result.localPath.startsWith(`${remoteImImageCacheDirectory(rootDir, 'project:/1')}/`)).toBe(
-        true
-      )
+      // Compare the directory itself so Windows separators cannot weaken the cache-boundary check.
+      expect(dirname(result.localPath)).toBe(remoteImImageCacheDirectory(rootDir, 'project:/1'))
       expect(basename(result.localPath)).toMatch(/^outgoing-[0-9a-f-]+\.png$/)
       expect(result.fileName).toBe('screen.png')
       await expect(readFile(result.localPath)).resolves.toEqual(Buffer.from(bytes))

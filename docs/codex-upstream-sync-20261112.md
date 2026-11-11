@@ -11,7 +11,7 @@
 ## 版本与兼容性
 
 - 宿主版本：`2.2.6`。
-- Codex 版本：`0.167.1+multi-ai.e58bf8f523`。最新正式标签是 `rust-v0.167.1`；本次同步的是更新的固定 `main`，因此以定制后缀明确标记来源，不能宣称是未经修改的正式标签内容。
+- Codex 版本：`0.167.1+multi-ai.e58bf8f523`。同步时核对的最新正式标签是 `rust-v0.167.1`；本次同步的是更新的固定 `main`，因此以定制后缀明确标记来源，不能宣称是未经修改的正式标签内容。
 - 消息转发使用上游 `ThreadItemPayload` 与生命周期 envelope 的规范入口，补齐新通知字段，保持原 IM 消息格式。
 - 官方 `main` 的工作区版本为 `0.0.0`，不能直接带入安装包；同时更新工作区版本和锁文件，并校验真实二进制、manifest 与发布记录一致。sourceCommit 记录合并后的子仓提交，后缀记录上游基线，两者含义不同。
 - 保留结构化 IM、逐条文本回复、异步提问、任务状态、错误转发、本地接管后的路由隔离、Windows 可选沙箱询问控制和显式危险模式。
@@ -39,8 +39,21 @@
 - PTY 启动回归在相同二进制下以 `TERM=dumb` 失败、以 `xterm-256color` 通过，测试只为其终端子进程设置明确的终端能力，未增加超时。
 - 大型侧边会话和重连测试使用项目已有的非内联 `boxed_future!` 工厂隔离 poll frame；macOS 三个相关用例在原 8 MiB 栈预算下通过。32 MiB 只作诊断对照，未进入正式构建或测试预算。
 - Windows 定向原生回归初次为 89/92 通过，另三项为两条权限菜单快照和 IM 测试栈溢出；堆分配边界已由 Windows 同场景在原 8 MiB 下验证红转绿，权限用例包括 Enter/fallback 后续断言通过。
-- 额外交互式侧边会话用例曾一次在图片拖拽释放后观察到坐标 199/197 的差异；加入日志后通过，移除前置日志后又连续 3 次通过，且保存错误诊断未命中。原断言和栈预算未改，没有据此声称已证明该偶发差异的根因或修复了生产缺陷。Windows 无插桩整组定向复验及正式优化构建继续执行。
-- macOS 新优化版 Code Mode host 已用 V1 stdio 协议完成握手、建立会话、在 V8 执行 JavaScript 得到 42，并正常关闭；正式包内的副本仍需单独复验。
+- 额外交互式侧边会话用例曾一次在图片拖拽释放后观察到坐标 199/197 的差异；加入日志后通过，移除前置日志后又连续 3 次通过，且保存错误诊断未命中。原断言和栈预算未改，没有据此声称已证明该偶发差异的根因或修复了生产缺陷。随后冻结源码的 Windows 无插桩定向组 95/95 通过，正式优化构建继续执行。
+- macOS 新优化版 Code Mode host 及正式 DMG 内副本都已用 V1 stdio 协议完成握手、建立会话、在 V8 执行 JavaScript 得到 42，并正常关闭。
 - 相关原生回归的复现、诊断对照与修正边界见 `docs/diagnostics/codex-upstream-sync-native-regressions-20261112.md`。
 - Windows 合作者核实并修正两处测试的 POSIX 路径假设，未修改生产路径；移除只验证已停用 elevated setup.exe 的集成测试，保留库测试。
-- 优化版产物、平台安装包和 GitHub 发布仍在执行中；此记录尚不表示已发布或用户运行中的旧版本已更新。
+- Mac 优化构建及安装包验收完成；Windows 正式产物和联合 GitHub 发布仍在执行中。用户运行中的旧版本未替换。
+
+## 冻结源码和 macOS 安装包
+
+- 冻结主仓：`21f97ee4f6a23866cfd73f37fb208e2fd4afa9b2`；冻结子仓：`ac71f246052620472c2693d56a79ad5a1304f3d5`。后续验收记录的文档更新不改变该构建来源。
+- macOS 27.2 / arm64 本机正式 release 构建退出 0，耗时 24 分 45 秒。打包输出 `.cache/release-2.2.6-macos-20261112/`，与旧包目录独立。
+- `MultiAICode-2.2.6-arm64.dmg`：296,859,371 B；SHA-256 `647070f50aa36b387afb29674593d68780111f5f2bf3d37caf1e2d8530bfeab4`。
+- 挂载该只读 DMG，核对宿主 2.2.6、真实 `codex-cli 0.167.1+multi-ai.e58bf8f523` 和 manifest 子仓完整提交；包内主进程与刚完成的生产构建摘要一致。
+- DMG 校验、应用 ad-hoc deep/strict 签名校验、包内 Electron ABI 130 的 SQLite 3.49.2 / node-pty 加载均通过；不是 Developer ID 公证包。
+- DMG 内 Code Mode host 通过真实 V1 stdio / V8 执行得到 42，正常关闭。
+- 从 DMG 启动全新数据与 Chromium profile，实际登录页绘制正常，preload 和版本 IPC 正常，前端异常数 0，测试进程退出 0；没有绑定真实 IM 账号。
+- 用新包自己的 Electron / node-pty 拉起与 DMG 摘要完全一致的内核，实际首启显示完整版本与登录菜单，取消后退出 0；临时 CODEX_HOME 与用户数据隔离。
+- GitHub 草稿 ID `442021899`，tag `electron-20261112`，target 为冻结主仓。DMG 直传遇到 EOF 后采用 18 个 16 MiB 分段，通过既有工作流 `43074437596` 校验合并；完整文件 API size/digest 与本地一致后删除所有分段。
+- 草稿现有正式 Mac 四项：DMG、blockmap、verification JSON、SHA256SUMS，均已 API 回读核对。Windows 95/95 无插桩、原 8 MiB 定向回归通过（4 leaky），不包括该平台不支持的 Unix socket 重连；Windows 正式优化编译及包内验收尚在执行，Release 仍未发布。

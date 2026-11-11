@@ -41,6 +41,15 @@ jobs:
           node-version: '22'
           cache: npm
       - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            third_party/aicli/codex/codex-rs/target/release
+          key: macos-15-codex-1.95-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-${{ inputs.source_commit }}
+          restore-keys: |
+            macos-15-codex-1.95-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-
       - name: Check source identity and architecture
         run: |
           test "$(uname -m)" = arm64

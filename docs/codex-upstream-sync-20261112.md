@@ -39,11 +39,11 @@
 - PTY 启动回归在相同二进制下以 `TERM=dumb` 失败、以 `xterm-256color` 通过，测试只为其终端子进程设置明确的终端能力，未增加超时。
 - 大型侧边会话和重连测试使用项目已有的非内联 `boxed_future!` 工厂隔离 poll frame；macOS 三个相关用例在原 8 MiB 栈预算下通过。32 MiB 只作诊断对照，未进入正式构建或测试预算。
 - Windows 定向原生回归初次为 89/92 通过，另三项为两条权限菜单快照和 IM 测试栈溢出；堆分配边界已由 Windows 同场景在原 8 MiB 下验证红转绿，权限用例包括 Enter/fallback 后续断言通过。
-- 额外交互式侧边会话用例曾一次在图片拖拽释放后观察到坐标 199/197 的差异；加入日志后通过，移除前置日志后又连续 3 次通过，且保存错误诊断未命中。原断言和栈预算未改，没有据此声称已证明该偶发差异的根因或修复了生产缺陷。随后冻结源码的 Windows 无插桩定向组 95/95 通过，正式优化构建继续执行。
+- 额外交互式侧边会话用例曾一次在图片拖拽释放后观察到坐标 199/197 的差异；加入日志后通过，移除前置日志后又连续 3 次通过，且保存错误诊断未命中。原断言和栈预算未改，没有据此声称已证明该偶发差异的根因或修复了生产缺陷。随后冻结源码的 Windows 无插桩定向组 95/95 通过，正式优化构建及安装包验收也已完成。
 - macOS 新优化版 Code Mode host 及正式 DMG 内副本都已用 V1 stdio 协议完成握手、建立会话、在 V8 执行 JavaScript 得到 42，并正常关闭。
 - 相关原生回归的复现、诊断对照与修正边界见 `docs/diagnostics/codex-upstream-sync-native-regressions-20261112.md`。
 - Windows 合作者核实并修正两处测试的 POSIX 路径假设，未修改生产路径；移除只验证已停用 elevated setup.exe 的集成测试，保留库测试。
-- Mac 优化构建及安装包验收完成；Windows 正式产物和联合 GitHub 发布仍在执行中。用户运行中的旧版本未替换。
+- 两端优化构建、包内验收和联合 GitHub 发布均已完成。验收使用隔离、未登录环境；完整登录后的主终端与真实 IM / 模型任务链路未复验，用户运行中的旧版本未替换。
 
 ## 冻结源码和 macOS 安装包
 
@@ -56,4 +56,23 @@
 - 从 DMG 启动全新数据与 Chromium profile，实际登录页绘制正常，preload 和版本 IPC 正常，前端异常数 0，测试进程退出 0；没有绑定真实 IM 账号。
 - 用新包自己的 Electron / node-pty 拉起与 DMG 摘要完全一致的内核，实际首启显示完整版本与登录菜单，取消后退出 0；临时 CODEX_HOME 与用户数据隔离。
 - GitHub 草稿 ID `442021899`，tag `electron-20261112`，target 为冻结主仓。DMG 直传遇到 EOF 后采用 18 个 16 MiB 分段，通过既有工作流 `43074437596` 校验合并；完整文件 API size/digest 与本地一致后删除所有分段。
-- 草稿现有正式 Mac 四项：DMG、blockmap、verification JSON、SHA256SUMS，均已 API 回读核对。Windows 95/95 无插桩、原 8 MiB 定向回归通过（4 leaky），不包括该平台不支持的 Unix socket 重连；Windows 正式优化编译及包内验收尚在执行，Release 仍未发布。
+- 正式 Mac 四项：DMG、blockmap、verification JSON、SHA256SUMS，均已 API 回读核对。Windows 95/95 无插桩、原 8 MiB 定向回归通过（4 leaky），不包括该平台不支持的 Unix socket 重连。
+
+## Windows 安装包
+
+- `house-multi-ai-code` 在 Windows 11 x64 完成实际构建与验收。Rust 1.95.0、VS2022 / MSVC 14.44.35207、2 个 Cargo job，保持源码 release 的 thin LTO / 4 codegen unit / line-tables-only 配置；`cargo build --locked --release --bin codex --bin codex-code-mode-host` 退出 0，耗时 63 分 54 秒。
+- `MultiAICode-2.2.6-x64.exe`：259,867,569 B；SHA-256 `19669303a2415ac5cc6c8a237409801b14061cba4fcdd6376a0a795b243afe9f`。
+- `MultiAICode-2.2.6-x64.zip`：351,823,668 B；SHA-256 `09b3f072d28137551c123306e244eb3396d45dbde1974e24ddf2671e28dc8a37`。
+- staging 和实际 ZIP 解压副本都核对真实宿主 2.2.6、`codex-cli 0.167.1+multi-ai.e58bf8f523`、manifest 完整 ac71 提交，拒绝旧 0.163.0 缓存。
+- 两个目录的 21 个 PE 文件在受控裸 PATH 下审计，无缺失 DLL 或仅由开发机 VC 运行库提供的依赖；包内 Electron 33.4.11 / ABI 130 真加载 SQLite 3.49.2、node-pty、koffi 3.1.5 和 TRTC。
+- 两个目录内 Code Mode V1 实际执行返回 42、正常退出；全新 root / profile 的实际登录窗口截图由 Windows 执行者亲自检查，无未捕获异常；宿主 IPC 的 cmd marker、包内 Codex 版本 PTY 均退出 0。另以独立 ConPTY 实开内核，看到正确版本与三项登录菜单，取消后退出 0，所有本轮 QA 进程已退出。
+- electron-builder 在 NSIS 后置加入 `resources/elevate.exe` 安装维护工具，最初 ZIP 未包含该文件。本轮从同一 staging 补齐相同的 107,520 B 文件，重新解压最终 ZIP；安装器静态提取、staging 和最终 ZIP 的 657 个文件 / 1,023,072,984 B 逐字节一致。
+- Windows 安装器和程序均为 NotSigned。没有执行安装器或覆盖现有安装；未连接真实账号、发送模型请求或验证完整登录后的主终端和真实 IM 链路。TRTC / koffi 证明范围为原生加载 / 系统调用，未验证真实远程控制会话。
+- Windows 六项：EXE、ZIP、EXE blockmap、latest.yml、verification JSON、SHA256SUMS；均直接上传成功，API size/digest 与本地上传前后重算一致，latest.yml 的 SHA-512 / size 与该 EXE 一致。
+
+## 正式发布
+
+- [Multi-AI Code 2.2.6 / electron-20261112](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20261112) 已于 2026-11-12 03:18:30 CST 发布，并设为 Latest。
+- 发布后 API 回读：`draft=false`、`prerelease=false`、10/10 正式资产为 uploaded；所有 size / SHA-256 与已验收的本地文件或 Windows 验收记录一致，没有遗留分段资产。
+- GitHub 标签实际指向 `21f97ee4f6a23866cfd73f37fb208e2fd4afa9b2`，子仓固定为 `ac71f246052620472c2693d56a79ad5a1304f3d5`。后续提交仅补充验收文档，不改变已发布二进制的源码身份。
+- 发布前协调者重新下载并校验 Windows verification / SHA256SUMS / latest.yml，逐项核对两个目录内版本、原生模块、Code Mode、GUI、PTY、首启、进程清理和安装器 / ZIP 内容一致性；同时重算 Mac 四项摘要并与 GitHub 10 项资产交叉核对。

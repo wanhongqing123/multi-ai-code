@@ -40,15 +40,25 @@ describe('Codex home selection at the native PTY boundary', () => {
     vi.unstubAllEnvs()
     rmSync(root, { recursive: true, force: true })
   })
-  function start(account: string, command = 'codex') {
+  function start(account: string, command = 'codex', args = ['resume', '--last']) {
     setActiveAccount(account)
     const proc = new PtyCCProcess({
-      cwd: repo, command, args: ['resume', '--last'],
+      cwd: repo, command, args,
       env: { CODEX_HOME: join(root, 'caller-codex'), Codex_Home: 'another-shared-home', Codex_Sqlite_Home: 'shared-db' }
     })
     proc.start()
     return proc
   }
+
+  it.each([{ args: [] }, { args: ['resume', '--last'] }, { args: ['fork', 'saved-session'] }])(
+    'starts bundled Codex with its embedded app server for $args', ({ args }) => {
+      const original = [...args]
+      start('account-a', 'codex', args)
+
+      expect(nativeSpawn.mock.calls[0][1]).toEqual(['--no-daemon', ...original])
+      expect(args).toEqual(original)
+    }
+  )
 
   // The user asked for one login and one history across accounts, so the home is
   // deliberately shared. It still must not be the caller's, the inherited

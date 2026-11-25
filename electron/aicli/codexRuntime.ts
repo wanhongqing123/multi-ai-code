@@ -1,6 +1,55 @@
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { homedir } from 'os'
+import { isCodexCommand } from './codexConfig.js'
+
+// Keep CLI administration/service commands on their own transport path. These
+// names and aliases follow the bundled kernel's cli/src/main.rs Subcommand.
+const CODEX_NON_INTERACTIVE_COMMANDS = new Set([
+  'tcp-tunnel', 'exec', 'e', 'review', 'login', 'git-credential', 'logout',
+  'mcp', 'plugin', 'app-server', 'remote-control', 'app', 'completion',
+  'update', 'doctor', 'sandbox', 'debug', 'execpolicy', 'apply', 'a', 'queue',
+  'archive', 'delete', 'migrate-rollouts', 'migrate-nfs-db', 'unarchive',
+  'cloud', 'cloud-tasks', 'responses-api-proxy', 'exec-server', 'features', 'help'
+])
+
+// Skip root option values when looking for a subcommand: a model/profile/path
+// named "login" is still a value, not a request to administer the CLI.
+const CODEX_VALUE_OPTIONS = new Set([
+  '--model', '-m', '--config', '-c', '--cd', '-C', '--profile', '-p',
+  '--local-provider', '--sandbox', '-s', '--ask-for-approval', '-a',
+  '--add-dir', '--enable', '--disable', '--multi-ai-code-im-ipc'
+])
+
+/**
+ * Select the embedded app server for the app's bundled interactive Codex.
+ * The product ships the kernel and code-mode host, not a daemon installation.
+ * Resume, fork and agents accept this root flag too. Explicit remote transport
+ * (which conflicts with --no-daemon) and service commands stay caller-owned.
+ */
+export function withEmbeddedCodexArgs(command: string, args: readonly string[]): string[] {
+  if (!isCodexCommand(command)) return [...args]
+  let firstPositional: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    // Everything after -- is literal prompt text, including flag/command names.
+    if (arg === '--') break
+    const option = arg.split('=', 1)[0]
+    if (['--no-daemon', '--remote', '--remote-auth-token-env', '--help', '-h', '--version', '-V']
+      .includes(option)) return [...args]
+    if (CODEX_VALUE_OPTIONS.has(option)) {
+      if (!arg.includes('=')) i++
+    } else if (arg === '--image' || arg === '-i') {
+      // Split image flags consume values up to the next option. An attached
+      // value (--image=path / -ipath) ends that group in upstream clap.
+      while (i + 1 < args.length && !args[i + 1].startsWith('-')) i++
+    } else if (!arg.startsWith('-') && firstPositional === undefined) {
+      firstPositional = arg
+    }
+  }
+  if (firstPositional && CODEX_NON_INTERACTIVE_COMMANDS.has(firstPositional)) return [...args]
+  return ['--no-daemon', ...args]
+}
 
 // Resolve existing ancestors too: the requested directory may not exist yet,
 // while its parent (or the home itself) can be a symlink/junction.

@@ -5,7 +5,7 @@ import { createRequire } from 'module'
 import type { IPty } from 'node-pty'
 import type { PtyDiagnosticState } from './sessionDiagnostics.js'
 import { isCodexCommand } from '../aicli/codexConfig.js'
-import { withCodexHome, dismissCodexUpgradeNotice } from '../aicli/codexRuntime.js'
+import { withCodexHome, dismissCodexUpgradeNotice, withEmbeddedCodexArgs } from '../aicli/codexRuntime.js'
 import { codexRuntimeDir, getActiveAccount } from '../store/paths.js'
 import {
   bundledCliMissingMessage,
@@ -218,7 +218,7 @@ export class PtyCCProcess extends EventEmitter {
     }
     const bundledCommand = aicli.bundledCommand
     const resolvedBundledCommand = bundledCommand ?? command
-    const args = this.opts.args ?? []
+    const args = withEmbeddedCodexArgs(command, this.opts.args ?? [])
 
     let env: Record<string, string> = {
       ...(process.env as Record<string, string>),

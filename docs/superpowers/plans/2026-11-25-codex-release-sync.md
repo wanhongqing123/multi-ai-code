@@ -36,8 +36,8 @@
 
 - [x] Request an independent diff/evidence review and resolve concrete findings.
 - [x] Record baseline, release URL, full commits, merge decisions, verification results and unverified boundaries in `docs/diagnostics/`.
-- [ ] Commit and push the submodule maintenance history first, then commit/push the parent gitlink and this task's documentation on `main`. Exclude all pre-existing untracked content.
-- [ ] Re-read remote refs and report exact commits and tests. Do not tag, publish a Release, run an installer or replace the installed application.
+- [x] Commit and push the submodule maintenance history first, then commit/push the parent gitlink and this task's documentation on `main`. Exclude all pre-existing untracked content.
+- [x] Re-read remote refs and report exact commits and tests. Do not tag, publish a Release, run an installer or replace the installed application.
 
 ## Evidence-driven scope additions
 

@@ -157,8 +157,20 @@ Ctrl+C 退出 0。宿主在 `withEmbeddedCodexArgs` 中对普通交互、resume/
 最终日志：`.cache/codex-0172-final-native.log`、`codex-0172-final-clean-build.log`、
 `codex-0172-final-raw-pe.json`、`codex-0172-final-version.log`、
 `codex-0172-host-typecheck-final.log`、`codex-0172-host-im-final.log`、
-`codex-0172-launch-tests.log`。快照失败输出另归档到 `.cache/snap-0172-red/`；
-框架会自动删除已通过断言对应的 `.snap.new`，相关字节恢复/诊断不能替代最终源码回归。
+`codex-0172-launch-tests.log`。辅助快照差异文件另归档到 `.cache/snap-0172-red/`；
+框架会自动删除已通过断言对应的 `.snap.new`，其中部分记录在诊断后按已捕获内容恢复，
+不能把这批辅助字节视为全套原始运行输出。最终结果以实际正式回归日志和提交内容为准。
+
+## 提交与远端核对
+
+2026-11-25 19:38 CST，先推送子仓 `multi-ai/im-bridge`，再推送父仓 `main`；
+两次 `git ls-remote` 均与本地提交一致，未 force-push：
+
+- 子仓远端：`6e09a1b58f759848942e3d5b7653ab714f045ada`。
+- 父仓源码集成：`229eb752783adeb083edbf176ddba7c614347f23`；其 gitlink 精确指向上述子仓。
+- 后续只补本份记录和执行计划收尾状态，不改变上述源码身份或产物。
+- 子仓工作树干净；父仓仅保留开始时已存在的未跟踪 MaiAgent、MaiChat 目录和
+  `codex-upstream-e58bf8f523-windows-validation-20261112.md`，没有擅自提交这些内容。
 
 ## 证明边界
 

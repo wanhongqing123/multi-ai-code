@@ -50,8 +50,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             third_party/aicli/codex/codex-rs/target/release
-          key: macos-15-codex-1.99.1-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-${{ inputs.source_commit }}
+          key: macos-15-codex-1.99.1-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # Cache entries are immutable. A failure may have cached only downloads;
+          # use a fresh primary key so later compiled dependencies can be retained.
           restore-keys: |
+            macos-15-codex-1.99.1-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-${{ inputs.source_commit }}-
+            macos-15-codex-1.99.1-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-${{ inputs.source_commit }}
             macos-15-codex-1.99.1-${{ hashFiles('third_party/aicli/codex/codex-rs/Cargo.lock') }}-
       - name: Check source identity and architecture
         run: |
@@ -71,11 +75,14 @@ jobs:
           npm run typecheck
           npm run check:line-width
           npm run test:remote-im
-      - name: Build optimized Codex and desktop installer
+      - name: Build optimized Codex
         run: |
           npm run build:aicli
           git -C third_party/aicli/codex diff --exit-code
-          npm run dist:mac
+      - name: Build desktop installer without publishing
+        run: |
+          # Only the coordinator publishes after exact package acceptance.
+          npm run dist:mac -- --publish never
       - name: Verify packaged versions and write checksums
         run: |
           node --input-type=module - <<'JS'
@@ -113,6 +120,9 @@ jobs:
       # Keep outputs as workflow artifacts until the coordinator downloads and
       # exercises the exact installer. Publishing the Release is a separate step.
       - uses: actions/upload-artifact@v4
+        # Retain any produced installer on failures too; failed/missing validation
+        # still fails the job and never authorizes publishing those outputs.
+        if: ${{ always() && !cancelled() }}
         with:
           name: multi-ai-code-macos-${{ inputs.source_commit }}
           path: |

@@ -30,6 +30,8 @@ jobs:
       CARGO_BUILD_JOBS: '3'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
+      # libgit2/SecureTransport failed fetching pinned V8 submodules; use system Git.
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
     steps:
       - uses: actions/checkout@v4
         with:

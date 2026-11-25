@@ -124,7 +124,7 @@ jobs:
         # still fails the job and never authorizes publishing those outputs.
         if: ${{ always() && !cancelled() }}
         with:
-          name: multi-ai-code-macos-${{ inputs.source_commit }}
+          name: multi-ai-code-macos-${{ inputs.source_commit }}-attempt-${{ github.run_attempt }}
           path: |
             release/*.dmg
             release/*.dmg.blockmap
@@ -135,7 +135,7 @@ jobs:
       # Retain dependency compilation even if a candidate fails validation. Cache
       # reuse never substitutes for the source, version, or installer checks above.
       - uses: actions/cache/save@v4
-        if: ${{ always() && steps.rust-cache.outputs.cache-primary-key != '' && steps.rust-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && steps.rust-cache.outputs.cache-primary-key != '' }}
         continue-on-error: true
         with:
           path: |

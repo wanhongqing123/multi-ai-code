@@ -233,7 +233,11 @@ Windows 执行者独立通过 Commit API 确认 `c28b1218c41bee1a3775574e525bfe6
 仅修改 artifact 名中的 run attempt 和 cache-save 条件。新 run `45636594514` 的
 workflow head 精确为该提交，job `139283609463`；初次回读仍为 queued。
 [第三轮 Actions run](https://github.com/wanhongqing123/multi-ai-code/actions/runs/45636594514)
-仍需实际构建及产物验收，不能用 workflow patch 复核替代执行结果。
+随后结束为 workflow `failure` / job `cancelled`，历时 15m1s、没有执行步骤。
+Windows 执行者独立用 `gh run view` 读取 annotations，GitHub 明确说明 hosted runner 多次
+尝试仍未获配，并标注 macOS arm64 runner 容量不足。因此不是人为取消或产品编译失败，
+也不能用 workflow patch 复核替代实际构建。原始摘要保留于
+`.cache/release-227-mac-run3-runner-failure.txt`。
 产品 input `39e8eed5`/`6e09a1b5` 由 Mac 协作者回报，尚未用新 job 的实际构建日志复核。
 
 Mac 协作者另回报已准备私有 Rust 1.99.1、独立的精确 detached 产品快照与 APFS 可写缓存克隆，
@@ -247,3 +251,6 @@ Mac 后续回报：本机备用首轮在编译前因 V8 缓存摘要不匹配被
 `feab9ae0384bebaa99c1d000654462c9d42123d587185c7876aaeef7d76ff749`，并称通过源码
 manifest pin 与 API digest 交叉核对后，用私有 TMPDIR 沿官方脚本重启。本段是 Mac 执行者回报，
 Windows 执行者未下载该 arm64 archive 或执行 Mac 本机构建。
+
+随后 Mac 协作者回报本机备用已进入 Rust 1.99.1 依赖编译，无新增错误；双方不再因该资源
+故障盲目重复 dispatch。此为协作者报告的在途状态，正式包与联合公开发布仍为 PENDING。

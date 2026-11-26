@@ -1,12 +1,13 @@
 # Multi-AI Code 2.2.7 Windows 发行构建与本机验收记录
 
-记录日期：2026-11-25，Asia/Shanghai。Windows 正式资产已验收并上传，联合公开发布仍待 Mac。
+记录日期：2026-11-25–26，Asia/Shanghai。Windows 与 Mac 正式资产均已验收并公开发布。
 本机 Windows 验收汇总于 `2026-11-25T13:15:15.011Z`
 （北京时间 21:15:15）通过。Windows 六项已于北京时间 21:17:59 独立远端回读一致。
-**联合公开发布仍为 PENDING；本记录不表示已经发布。**
+**联合 Release 已于 2026-11-26 16:15:20 CST 正式发布并设为 Latest。**
+[下载 Multi-AI Code 2.2.7](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20261125)。
 
 文中 `.cache/` 日志是执行者保留的本机证据，不随仓库分发；六项资产的公开 verification
-与 SHA256SUMS 将随指定联合 Release 发布。CI 日志可从文中相应 Actions run 链接查询。
+与 SHA256SUMS 已随指定联合 Release 发布。CI 日志可从文中相应 Actions run 链接查询。
 
 ## 冻结源码、版本与实际产物
 
@@ -19,7 +20,7 @@
 | 内核实际版本输出 | `codex-cli 0.172.0+multi-ai.3d86e43b07` |
 | Electron / Node ABI | `33.4.11` / `130` |
 | 平台 | 本机物理 Windows x64；没有运行干净 VM 或多版本 Windows 矩阵 |
-| 发行目标 | tag `electron-20261125`，release ID `458049005`；公开状态待远端核对 |
+| 发行目标 | tag `electron-20261125`，release ID `458049005`；draft=false、prerelease=false、Latest，公开核对通过 |
 | 产物根目录 | `.cache/electron-20261125-win32-x64-39e8eed5/` |
 | staging | 上述根目录的 `win-unpacked/` |
 | 最终 ZIP 提取目录 | 上述根目录的 `zip-extracted/` |
@@ -174,7 +175,7 @@ root 已亲自查看 `.cache/release-227-stage-ui.png` 与 `release-227-zip-ui.p
 ## 本地六项资产快照
 
 下表来自 `.cache/release-227-upload-manifest.json`；路径均在本轮产物根目录下。
-表中 SHA256 已与指定草稿的远端 size/digest 逐项核对一致；**尚不表示已经公开**。
+表中 SHA256 在草稿阶段已逐项核对；正式公开后又独立回读确认十项资产的原身份保持一致。
 
 | 文件 | 字节 | SHA256 |
 | --- | ---: | --- |
@@ -185,7 +186,7 @@ root 已亲自查看 `.cache/release-227-stage-ui.png` 与 `release-227-zip-ui.p
 | `MultiAICode-2.2.7-win32-x64.verification.json` | 26645 | `89d21446eaaa9e73f383c022eef5ed189f3584123cc831b5fe7aff2d36126200` |
 | `MultiAICode-2.2.7-win32-x64-SHA256SUMS.txt` | 474 | `869f8da49f476ff0fdba97bf9ae0bf8304ddab54b0763541248ca3590a7e27c4` |
 
-## 证明边界及待补远端事实
+## 证明边界及远端发布结果
 
 ### Mac 协作构建恢复（产品冻结未变）
 
@@ -214,20 +215,20 @@ Mac 既定 `CARGO_PROFILE_RELEASE_DEBUG=0` 与 Windows 源码 `line-tables-only`
 真实 host IPC/ConPTY，没有渲染完整登录后主终端。TRTC native load 不代表远程屏幕共享/控制
 会话已经验证。无生产源码插桩，没有以本机 Windows 结果替代 macOS 或干净 VM 验收。
 
-下列字段区分已经取得的远端证据与仍待完成的公开发布：
+下列字段记录本轮已取得的远端上传与公开发布证据：
 
 | 远端/落库事项 | 当前状态 / 待填字段 |
 | --- | --- |
 | 六项 Windows 资产上传 | **PASS**；21:17:59 API 回读 id=458049005、draft=true、target=39e8eed5；6/6 uploaded；名称/字节/完整 digest 与本地重新计算一致 |
 | 下载或服务端字节身份复核 | **PASS**；root 独立 API 证据见 `.cache/release-227-draft-readback.json`。Mac 协作者另回报流式读取完整安装器得到同一 SHA-256，并重算 SHA-512 核对 latest.yml；后者为协作者执行的证明，root 未重复下载整包 |
-| 联合发行公开 | **PENDING**；待填最终 release URL、`published_at`、draft/prerelease 实际状态及 macOS 结果引用 |
+| 联合发行公开 | **PASS**；`published_at=2026-11-26T08:15:20Z`，draft=false、prerelease=false；无凭据回读确认 Latest、tag→39e、gitlink→6e、十项资产及两份校验和一致 |
 | 诊断记录写入仓库 | 本文件；文档提交身份见 Git 历史。文档提交不改变发布源码与产物身份 |
 
 若汇总报告或资产在上传前重新生成，六项资产表必须随最终 manifest 同步更新。
 候选稿最初由文档子 Agent 仅通过本地报告生成；以上远端状态随后由 root 按实际上传和
 独立 API 回读补充。正式构建与应用验收由 root 自己执行，不能把文档生成误作验收。
 
-## Mac 第三轮与本机备用状态（仍待验收）
+## Mac 第三轮与本机备用状态（历史阶段，最终结果见后文）
 
 Windows 执行者独立通过 Commit API 确认 `c28b1218c41bee1a3775574e525bfe693141a286`
 仅修改 artifact 名中的 run attempt 和 cache-save 条件。新 run `45636594514` 的
@@ -244,7 +245,7 @@ Mac 协作者另回报已准备私有 Rust 1.99.1、独立的精确 detached 产
 采用 debug=0、3 jobs、thin LTO、4 codegen units；默认 Rust 1.96.1、现装 App 与账号保持不动。
 其本机约 18 GiB 空间，将以 4 GiB 阈值停止自己的构建且不删除历史缓存。
 这些为协作者回报的准备状态，不能冒称 Windows 执行者亲自在 Mac 运行了构建或验收。
-正式 Mac producer 与其实际工具链、profile、包内版本/manifest 和最终 DMG 验收结果仍待补齐。
+当时正式 Mac producer、包内版本/manifest 和最终 DMG 验收结果仍待补齐；后文补充最终证明。
 
 Mac 后续回报：本机备用首轮在编译前因 V8 缓存摘要不匹配被拦截，未放宽验证。
 其已重新取得官方 rusty-v8 v152.2.0 的私有缓存，archive 为 24581993 字节，SHA256
@@ -253,4 +254,88 @@ manifest pin 与 API digest 交叉核对后，用私有 TMPDIR 沿官方脚本�
 Windows 执行者未下载该 arm64 archive 或执行 Mac 本机构建。
 
 随后 Mac 协作者回报本机备用已进入 Rust 1.99.1 依赖编译，无新增错误；双方不再因该资源
-故障盲目重复 dispatch。此为协作者报告的在途状态，正式包与联合公开发布仍为 PENDING。
+故障盲目重复 dispatch。此为当时协作者报告的在途状态；后文记录了该构建后续的完整交付结果。
+
+## 联合发布最终闭环：2026-11-26
+
+联合发行已公开：[electron-20261125](https://github.com/wanhongqing123/multi-ai-code/releases/tag/electron-20261125)，
+release ID **458049005**，**Latest**，`draft=false`、`prerelease=false`。
+服务端 `published_at` 为 **2026-11-26T08:15:20Z**，即 **2026-11-26 16:15:20 Asia/Shanghai**。
+联合发布由 Mac 协作者协调执行；Windows root 在发布前独立核对十项资产，发布后独立匿名回读通过。
+
+产品冻结仍为父仓 `39e8eed575d9978535eba59a7a72a3a8a9ad1206`、
+Codex `6e09a1b58f759848942e3d5b7653ab714f045ada`，宿主 `2.2.7`、
+内核 `codex-cli 0.172.0+multi-ai.3d86e43b07`。后续 workflow/docs 提交没有替换该发行源码。
+Windows 六项保持已验收、上传的原字节身份，没有因 Mac 收尾而重编或覆盖。
+
+### 实际 Mac producer 与交接补正
+
+最终 Mac 产物来自**本机独立快照，不是 Actions artifact**：macOS 27.2 arm64、Apple M3 Pro、
+Xcode 27.1、Node 22.19.0、electron-builder 25.1.8；私有 Rust 1.99.1，默认 Homebrew
+Rust 1.96.1 与现装 App/账户未替换。实际 release profile 为 debug=0、incremental=0、
+3 jobs、thin LTO、4 codegen units，与 Windows 的 line-tables-only 分别记录。
+
+Mac 官方入口 `npm run build:aicli` 于 **2026-11-25T15:25:19Z**
+（当日 **23:25:19 CST**）退出 0，总耗时 **1843.184 秒，约 30 分 43 秒**；
+协作者报告其中 Cargo 为 30 分 21 秒。该时间和 profile 已进入下载核对过的 Mac verification。
+内核当晚完成后打包没有接续，协作者于次日交接承认当时尚无 DMG；此次收尾明确纠正了这段
+“内核结束但未继续打包”的交接空档，不能把它描述为持续运行的编译或新的 Cargo 故障。
+随后实际执行 `npm run dist:mac -- --publish never`，退出 0，再完成包验收、上传与协调发布。
+
+### Mac 执行者的实际验收及证明边界
+
+Mac 执行者分别在**只读挂载 DMG**和**独立复制 App**上验收通过。stage、DMG、copy 的
+536 个文件/符号链接、814548775 字节内容一致；kernel/helper/main JS 身份在两环境一致。
+版本/manifest 指向冻结源码；native smoke 为 Electron ABI 130、SQLite 3.49.2 与 node-pty；
+六种隔离配置均按预期得到未登录状态。静态分析覆盖列明的十个 Mach-O 镜像，无未解析依赖。
+otool 对 `Helper (GPU)` 路径的解释问题通过 SHA256 相同的临时副本检查解决，loader/rpath
+始终锚定原 bundle，实际运行仍使用原 bundle；没有为 QA 修改产品。
+
+两环境真实 GUI 登录界面与宿主 IPC/PTY 通过：默认请求 args 为空，宿主提供内嵌参数；
+Ctrl+C 保留复制语义、没有 ETX 转发，随后显式关闭 owned terminal，观察到 exitCode 0 / signal 1。
+这不是 GUI CLI 自然退出证明。独立 raw kernel PTY 显式 `--no-daemon`，看到三项登录菜单后
+Ctrl+C 退出 0，是另一项实际测试。gRPC 在同一 helper 验证两个 session、V8 `42`、状态隔离
+及关闭第一 session 后第二个继续执行；HTTP/2 连接关闭加 stdin EOF 后正常退出 0，未强杀。
+这不单独证明 EOF 是唯一退出原因。各 watchdog 退出 0、未超时/强杀，列明的 owned PID 均退出，
+bundle 可执行进程无残留。截图由 Mac 执行者亲自查看；Windows root 复核其报告，未冒称亲自在 Mac 操作。
+
+Mac 源码检查记录类型/行宽通过、IM 507 通过/2 跳过、launch/packaging 138 通过/2 跳过。
+App 为 **ad-hoc deep strict 验签通过**，没有 Developer ID、没有 Apple notarization；
+unused/dead_code 及 `__eh_frame` 超过 compact-unwind 编码范围、可能影响异常处理性能的 linker
+警告均保留。实际运行平台仅 macOS 27.2 arm64；Mach-O minOS 11.0 不代表已在 macOS 11 或 Intel 验收。
+没有真实账户/IM 登录、模型或付费请求，也没有完整已认证主终端/真实 IM 端到端任务。
+
+### 四项 Mac 正式资产
+
+以下本地下载字节身份与草稿、公开 API 的 size/digest 逐项一致：
+
+| 文件 | 字节 | SHA256 |
+| --- | ---: | --- |
+| `MultiAICode-2.2.7-arm64.dmg` | 302963678 | `d7704a8232a58d38086d372c1cb3aea31c4b693580ce6b659aec9b42f511485b` |
+| `MultiAICode-2.2.7-arm64.dmg.blockmap` | 317338 | `e8a62ed5868adb404153c8efe988da0157cabf394299d1afa18075b6e5cd2197` |
+| `MultiAICode-2.2.7-arm64-verification.json` | 94365 | `a0f8e22db295f73e9cf4ab6a3651be2ec17eedf624d6b663267cfad2ee86978f` |
+| `MultiAICode-2.2.7-arm64-SHA256SUMS.txt` | 305 | `5bd4c40151b319f93944cfdd4c4c8e9a78f174bce3e69b54977f56312a8ef5f8` |
+
+### root 独立核对与公开闭环
+
+发布前，Windows root 在北京时间 **16:12:09–16:14:56** 的认证草稿回读确认：
+十项资产名称、uploaded 状态、大小及完整 digest 全部一致；四项 Mac 文件均实际完整下载并计算
+SHA256，包括 **302963678 字节的整份 DMG**；Mac sums 覆盖三项非自身资产，metadata 经独立审阅。
+记录为 `.cache/release-227-combined-draft-readback.json`，其 `passed=true`。
+
+发布后 root 于 **2026-11-26T08:15:42.997557Z–08:15:50.842155Z**
+（北京时间 **16:15:42.997557–16:15:50.842155**）使用无凭据、无 cookies、无环境代理的
+公开 GET 再验，`.cache/release-227-public-readback.json` 的 `ok=true`：
+
+- release API 与 Latest API 都指向 ID 458049005、tag `electron-20261125`，且非草稿、非预发布。
+- tag 直接落在冻结父提交 `39e8eed5…`；该父提交的 Codex gitlink 为 `6e09a1b5…`。
+- 公开列表恰有 Windows 六项和 Mac 四项，十项均 uploaded；Windows 六项与原本地 manifest 一致。
+- Windows 与 Mac 两份 SHA256SUMS 均匿名下载 HTTP 200，摘要与公开资产一致，所有非自身条目覆盖匹配。
+- 公开 Release 页面 HTTP 200。匿名阶段没有声称再次下载全部十个大文件；整份 Mac DMG 的独立下载
+  已在发布前完成，匿名阶段核对公开元数据及两份 sums。
+
+Mac 执行证明位于本机 `.cache/release-227-mac-crosscheck-20261126/` 下载的 verification；
+`.cache/` 证据不随仓库分发，公开 verification 与 sums 已作为 Release 资产提供。
+
+详见 [Mac 执行者记录](multi-ai-code-227-macos-release-20261125.md) 与
+[最终 Release 说明](../releases/multi-ai-code-2.2.7-20261125.md)。
